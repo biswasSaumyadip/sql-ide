@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -70,6 +71,9 @@ public final class SqlAutocompleteEngine {
             "(?i)\\b(?:from|join|update|into|table)\\s+([`\"\\[]?[A-Za-z0-9_]+[`\"\\]]?)"
                     + "(?:\\s+(?:as\\s+)?([`\"\\[]?[A-Za-z0-9_]+[`\"\\]]?))?",
             Pattern.CASE_INSENSITIVE);
+    /** Caret is inside {@code INSERT INTO t (…)} column list (parens still open). */
+    private static final Pattern INSERT_COLUMN_LIST = Pattern.compile(
+            "(?i)\\bINSERT\\s+INTO\\s+([`\"\\[]?[A-Za-z0-9_]+[`\"\\]]?)\\s*\\(([^()]*)$");
 
     private static final Set<String> TABLE_CONTEXTS = Set.of(
             "FROM", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "OUTER", "CROSS",
@@ -79,10 +83,29 @@ public final class SqlAutocompleteEngine {
     private static final Set<String> JOIN_KEYWORDS = Set.of(
             "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "OUTER", "CROSS");
 
+    /** Catalogs / schemas whose objects should sink to the bottom of table suggestions. */
+    private static final Set<String> SYSTEM_CATALOGS = Set.of(
+            "INFORMATION_SCHEMA", "PG_CATALOG", "PG_TOAST", "SYS", "SYSTEM LOBS",
+            "MYSQL", "PERFORMANCE_SCHEMA");
+
+    /**
+     * Name prefixes typical of driver/meta tables that sometimes leak in as plain
+     * TABLE types (e.g. H2 {@code schema_auto_increment_columns}).
+     */
+    private static final String[] SYSTEM_NAME_PREFIXES = {
+            "schema_", "information_", "pg_", "sql_"
+    };
+
     private final SchemaCache cache;
+    private final Supplier<String> activeCatalog;
 
     public SqlAutocompleteEngine(SchemaCache cache) {
+        this(cache, () -> null);
+    }
+
+    public SqlAutocompleteEngine(SchemaCache cache, Supplier<String> activeCatalog) {
         this.cache = cache;
+        this.activeCatalog = activeCatalog == null ? () -> null : activeCatalog;
     }
 
     /** Auto-popup path — selective, like DataGrip's basic completion. */
@@ -118,6 +141,12 @@ public final class SqlAutocompleteEngine {
         int replaceStart = caret - prefix.length();
         String previous = previousToken(before, replaceStart);
         String previousUpper = previous.toUpperCase(Locale.ROOT);
+
+        // INSERT INTO t (col…) — only columns of that table, nothing else.
+        String insertTable = insertColumnListTable(before);
+        if (insertTable != null) {
+            return rank(columnSuggestions(insertTable, prefix, replaceStart, caret));
+        }
 
         if (!invoked && !shouldAutoPopup(before, prefix, previousUpper)) {
             return List.of();
@@ -183,6 +212,9 @@ public final class SqlAutocompleteEngine {
         if (beforeCaret.endsWith(".") || DOT_QUALIFIER.matcher(beforeCaret).find()) {
             return true;
         }
+        if (isInsertColumnListContext(beforeCaret)) {
+            return true;
+        }
         if (TABLE_CONTEXTS.contains(previousUpper)
                 || COLUMN_CONTEXTS.contains(previousUpper)
                 || JOIN_KEYWORDS.contains(previousUpper)) {
@@ -228,22 +260,26 @@ public final class SqlAutocompleteEngine {
             return List.of();
         }
         List<Suggestion> out = new ArrayList<>();
-        for (SchemaNode table : cache.tables()) {
+        for (SchemaNode table : cache.tables(activeCatalog())) {
             int score = matchScore(table.name(), prefix);
             if (score < 0) {
                 continue;
             }
             boolean view = table.type() == SchemaNode.NodeType.VIEW;
+            boolean system = isLowPriorityTable(table);
+            // User tables stay near the top; system / meta tables sink.
+            int boost = system ? -400 : 80;
+            String detail = view ? "view" : (system ? "system" : "table");
             out.add(new Suggestion(
-                    table.name(), table.name(), view ? "view" : "table", Kind.TABLE,
-                    start, end, score + 80, false));
+                    table.name(), table.name(), detail, Kind.TABLE,
+                    start, end, score + boost, false));
         }
         return out;
     }
 
     private List<Suggestion> columnSuggestions(String table, String prefix, int start, int end) {
         List<Suggestion> out = new ArrayList<>();
-        for (SchemaNode column : cache.columnsOf(table)) {
+        for (SchemaNode column : cache.columnsOf(table, activeCatalog())) {
             int score = matchScore(column.name(), prefix);
             if (score < 0) {
                 continue;
@@ -263,7 +299,7 @@ public final class SqlAutocompleteEngine {
         Set<String> seen = new LinkedHashSet<>();
         List<Suggestion> out = new ArrayList<>();
         for (String table : new LinkedHashSet<>(aliases.values())) {
-            for (SchemaNode column : cache.columnsOf(table)) {
+            for (SchemaNode column : cache.columnsOf(table, activeCatalog())) {
                 if (!seen.add(column.name().toLowerCase(Locale.ROOT))) {
                     continue;
                 }
@@ -285,7 +321,10 @@ public final class SqlAutocompleteEngine {
     private List<Suggestion> allColumnSuggestions(String prefix, int start, int end) {
         Set<String> seen = new LinkedHashSet<>();
         List<Suggestion> out = new ArrayList<>();
-        for (SchemaNode table : cache.tables()) {
+        for (SchemaNode table : cache.tables(activeCatalog())) {
+            if (isLowPriorityTable(table)) {
+                continue;
+            }
             for (SchemaNode column : table.children()) {
                 String key = column.name().toLowerCase(Locale.ROOT);
                 if (!seen.add(key)) {
@@ -309,6 +348,9 @@ public final class SqlAutocompleteEngine {
             Set<String> tablesInScope, String prefix, int start, int end) {
         List<Suggestion> out = new ArrayList<>();
         for (SchemaCache.JoinSuggestion join : cache.joinSuggestions(tablesInScope)) {
+            if (!joinTableInActiveCatalog(join.toTable())) {
+                continue;
+            }
             int score = matchScore(join.toTable(), prefix);
             if (score < 0 && !prefix.isEmpty()
                     && !join.insertText().toLowerCase(Locale.ROOT).contains(prefix.toLowerCase(Locale.ROOT))) {
@@ -402,6 +444,59 @@ public final class SqlAutocompleteEngine {
             aliases.put(table.toLowerCase(Locale.ROOT), table);
         }
         return aliases;
+    }
+
+    /** Table name when caret is inside an open {@code INSERT INTO t (…)} column list. */
+    static String insertColumnListTable(String beforeCaret) {
+        Matcher matcher = INSERT_COLUMN_LIST.matcher(beforeCaret);
+        if (!matcher.find()) {
+            return null;
+        }
+        return stripQuotes(matcher.group(1));
+    }
+
+    static boolean isInsertColumnListContext(String beforeCaret) {
+        return insertColumnListTable(beforeCaret) != null;
+    }
+
+    private String activeCatalog() {
+        String catalog = activeCatalog.get();
+        return catalog == null || catalog.isBlank() ? null : catalog;
+    }
+
+    private boolean joinTableInActiveCatalog(String tableName) {
+        String catalog = activeCatalog();
+        if (catalog == null) {
+            return true;
+        }
+        return cache.findTable(tableName, catalog)
+                .map(table -> {
+                    String meta = table.metadata(SchemaNode.META_CATALOG);
+                    return meta == null || meta.isBlank() || meta.equalsIgnoreCase(catalog);
+                })
+                .orElse(false);
+    }
+
+    /**
+     * System / meta tables that still appear in the cache (JDBC type was plain TABLE)
+     * but should rank below ordinary user tables.
+     */
+    static boolean isLowPriorityTable(SchemaNode table) {
+        String type = table.metadata(SchemaNode.META_TABLE_TYPE);
+        if (type != null && type.toUpperCase(Locale.ROOT).contains("SYSTEM")) {
+            return true;
+        }
+        String catalog = table.metadata(SchemaNode.META_CATALOG);
+        if (catalog != null && SYSTEM_CATALOGS.contains(catalog.toUpperCase(Locale.ROOT))) {
+            return true;
+        }
+        String name = table.name().toLowerCase(Locale.ROOT);
+        for (String prefix : SYSTEM_NAME_PREFIXES) {
+            if (name.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isJoinContext(String previousUpper) {

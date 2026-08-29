@@ -35,6 +35,7 @@ public final class EditorTabPane extends TabPane {
     private final ReadOnlyObjectWrapper<SqlEditorPane> activeEditor = new ReadOnlyObjectWrapper<>();
     private int untitledCounter;
     private Supplier<SchemaCache> schemaCache = SchemaCache::new;
+    private Supplier<String> activeCatalog = () -> null;
 
     public EditorTabPane() {
         getStyleClass().add("editor-tabs");
@@ -62,7 +63,7 @@ public final class EditorTabPane extends TabPane {
 
     /** Opens a new empty tab and selects it. */
     public void newTab() {
-        QueryTab tab = new QueryTab("query-" + (++untitledCounter) + ".sql", schemaCache);
+        QueryTab tab = new QueryTab("query-" + (++untitledCounter) + ".sql", schemaCache, activeCatalog);
         getTabs().add(tab);
         getSelectionModel().select(tab);
         tab.editor().requestFocus();
@@ -75,6 +76,23 @@ public final class EditorTabPane extends TabPane {
                 .filter(QueryTab.class::isInstance)
                 .map(QueryTab.class::cast)
                 .forEach(tab -> tab.editor().setSchemaCache(this.schemaCache));
+    }
+
+    /** Supplies the session's active database so table completions stay scoped to it. */
+    public void setActiveCatalog(Supplier<String> activeCatalog) {
+        this.activeCatalog = activeCatalog == null ? () -> null : activeCatalog;
+        getTabs().stream()
+                .filter(QueryTab.class::isInstance)
+                .map(QueryTab.class::cast)
+                .forEach(tab -> tab.editor().setActiveCatalog(this.activeCatalog));
+    }
+
+    /** Rebuilds each query editor's autocomplete engine after a schema refresh. */
+    public void refreshAutocompleteEngines() {
+        getTabs().stream()
+                .filter(QueryTab.class::isInstance)
+                .map(QueryTab.class::cast)
+                .forEach(tab -> tab.editor().refreshAutocompleteEngine());
     }
 
     /** Opens (or focuses) an object-viewer tab for the given table/view node. */
@@ -156,9 +174,10 @@ public final class EditorTabPane extends TabPane {
         private String baseline = "";
         private Path file;
 
-        QueryTab(String title, Supplier<SchemaCache> schemaCache) {
+        QueryTab(String title, Supplier<SchemaCache> schemaCache, Supplier<String> activeCatalog) {
             this.title = title;
             editor.setSchemaCache(schemaCache);
+            editor.setActiveCatalog(activeCatalog);
             setContent(editor);
 
             editor.textProperty().addListener((observable, previous, current) ->

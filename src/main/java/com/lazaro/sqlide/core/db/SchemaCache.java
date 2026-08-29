@@ -50,10 +50,28 @@ public final class SchemaCache {
 
     /** Flat list of every TABLE and VIEW across catalogs. */
     public List<SchemaNode> tables() {
+        return tables(null);
+    }
+
+    /**
+     * Tables and views, optionally restricted to {@code catalog}.
+     * When {@code catalog} is null/blank, returns every loaded catalog.
+     */
+    public List<SchemaNode> tables(String catalog) {
         List<SchemaNode> tables = new ArrayList<>();
-        for (SchemaNode catalog : catalogs) {
-            for (SchemaNode child : catalog.children()) {
+        String filter = catalog == null || catalog.isBlank() ? null : catalog;
+        for (SchemaNode db : catalogs) {
+            if (filter != null && !db.name().equalsIgnoreCase(filter)) {
+                continue;
+            }
+            for (SchemaNode child : db.children()) {
                 if (child.type() == NodeType.TABLE || child.type() == NodeType.VIEW) {
+                    if (filter != null) {
+                        String meta = child.metadata(SchemaNode.META_CATALOG);
+                        if (meta != null && !meta.isBlank() && !meta.equalsIgnoreCase(filter)) {
+                            continue;
+                        }
+                    }
                     tables.add(child);
                 }
             }
@@ -62,20 +80,44 @@ public final class SchemaCache {
     }
 
     public Optional<SchemaNode> findTable(String name) {
+        return findTable(name, null);
+    }
+
+    /**
+     * Locates a table by name. When {@code preferredCatalog} is set and multiple
+     * catalogs share the name, the match in that catalog wins.
+     */
+    public Optional<SchemaNode> findTable(String name, String preferredCatalog) {
         if (name == null || name.isBlank()) {
             return Optional.empty();
         }
         String needle = stripQuotes(name);
+        Optional<SchemaNode> fallback = Optional.empty();
         for (SchemaNode table : tables()) {
-            if (table.name().equalsIgnoreCase(needle)) {
+            if (!table.name().equalsIgnoreCase(needle)) {
+                continue;
+            }
+            if (preferredCatalog != null && !preferredCatalog.isBlank()) {
+                String meta = table.metadata(SchemaNode.META_CATALOG);
+                if (meta != null && meta.equalsIgnoreCase(preferredCatalog)) {
+                    return Optional.of(table);
+                }
+                if (fallback.isEmpty()) {
+                    fallback = Optional.of(table);
+                }
+            } else {
                 return Optional.of(table);
             }
         }
-        return Optional.empty();
+        return fallback;
     }
 
     public List<SchemaNode> columnsOf(String tableOrAlias) {
-        return findTable(tableOrAlias).map(SchemaNode::children).orElse(List.of());
+        return columnsOf(tableOrAlias, null);
+    }
+
+    public List<SchemaNode> columnsOf(String tableOrAlias, String preferredCatalog) {
+        return findTable(tableOrAlias, preferredCatalog).map(SchemaNode::children).orElse(List.of());
     }
 
     /**

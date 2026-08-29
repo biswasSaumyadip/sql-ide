@@ -87,6 +87,7 @@ public final class MainController {
         this.driver = registry.create(DriverRegistry.DEFAULT_DRIVER_ID);
         schemaTree.setDriver(driver);
         editors.setSchemaCache(() -> schemaCache);
+        editors.setActiveCatalog(() -> driver.activeCatalog().orElse(null));
     }
 
     // ---------------------------------------------------------------- view
@@ -335,10 +336,7 @@ public final class MainController {
                 return;
             }
             schemaCache.replace(nodes);
-            SqlEditorPane editor = editors.activeEditor();
-            if (editor != null) {
-                editor.refreshAutocompleteEngine();
-            }
+            editors.refreshAutocompleteEngines();
         }));
     }
 

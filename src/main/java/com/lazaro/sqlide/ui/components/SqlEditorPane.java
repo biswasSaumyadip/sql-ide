@@ -69,6 +69,7 @@ public final class SqlEditorPane extends BorderPane {
     private Subscription autocompleteSubscription;
 
     private Supplier<SchemaCache> schemaCache = SchemaCache::new;
+    private Supplier<String> activeCatalog = () -> null;
     private SqlAutocompleteEngine engine = new SqlAutocompleteEngine(new SchemaCache());
     /** Set when we insert '.' ourselves during chain-completion, so KEY_TYPED does not duplicate it. */
     private boolean suppressNextDotTyped;
@@ -118,11 +119,17 @@ public final class SqlEditorPane extends BorderPane {
     /** Swaps the schema snapshot used for completions. Safe to call at any time. */
     public void setSchemaCache(Supplier<SchemaCache> schemaCache) {
         this.schemaCache = schemaCache == null ? SchemaCache::new : schemaCache;
-        this.engine = new SqlAutocompleteEngine(this.schemaCache.get());
+        refreshAutocompleteEngine();
+    }
+
+    /** Supplies the session's active database so table completions stay scoped to it. */
+    public void setActiveCatalog(Supplier<String> activeCatalog) {
+        this.activeCatalog = activeCatalog == null ? () -> null : activeCatalog;
+        refreshAutocompleteEngine();
     }
 
     public void refreshAutocompleteEngine() {
-        this.engine = new SqlAutocompleteEngine(schemaCache.get());
+        this.engine = new SqlAutocompleteEngine(schemaCache.get(), activeCatalog);
     }
 
     /**
@@ -267,7 +274,7 @@ public final class SqlEditorPane extends BorderPane {
     }
 
     private void updateCompletions(boolean invoked) {
-        engine = new SqlAutocompleteEngine(schemaCache.get());
+        engine = new SqlAutocompleteEngine(schemaCache.get(), activeCatalog);
         String sql = codeArea.getText();
         int caret = codeArea.getCaretPosition();
 
