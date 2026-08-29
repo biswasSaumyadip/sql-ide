@@ -6,7 +6,9 @@ import com.lazaro.sqlide.core.db.ResultSetMapper;
 import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.collections.FXCollections;
+import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
+import javafx.css.PseudoClass;
 import javafx.scene.control.Label;
 import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
@@ -33,6 +35,9 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
     private static final int COLUMN_PADDING = 28;
     private static final int WIDTH_SAMPLE_ROWS = 60;
 
+    /** Active while no columns exist, so the empty header strip can be hidden. */
+    private static final PseudoClass EMPTY_GRID = PseudoClass.getPseudoClass("empty-grid");
+
     private final Label placeholder = new Label(PLACEHOLDER_IDLE);
 
     public DynamicResultTable() {
@@ -41,6 +46,10 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
 
         placeholder.getStyleClass().add("result-placeholder");
         setPlaceholder(placeholder);
+
+        pseudoClassStateChanged(EMPTY_GRID, true);
+        getColumns().addListener((ListChangeListener<TableColumn<ObservableList<String>, ?>>) change ->
+                pseudoClassStateChanged(EMPTY_GRID, getColumns().isEmpty()));
 
         setColumnResizePolicy(TableView.UNCONSTRAINED_RESIZE_POLICY);
         getSelectionModel().setCellSelectionEnabled(true);

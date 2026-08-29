@@ -1,0 +1,267 @@
+/* Application chrome. Token colours for the editor live in sql-editor.css and the
+   grid's own rules in result-table.css; both are loaded by their components. */
+
+.app-root {
+    -fx-background-color: #17181b;
+}
+
+/* ---------------------------------------------------------------- toolbar */
+
+.app-toolbar {
+    -fx-background-color: #1e1f22;
+    -fx-border-color: transparent transparent #303237 transparent;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 5px 8px;
+    -fx-spacing: 3px;
+}
+
+.app-toolbar .toolbar-separator {
+    -fx-padding: 0 5px;
+}
+
+/* AtlantaFX draws the separator line almost black on this surface; lift it so the
+   action groups read as groups. */
+.app-toolbar .toolbar-separator:vertical .line {
+    -fx-border-color: transparent #454951 transparent transparent;
+    -fx-border-width: 0 1 0 0;
+}
+
+.icon-button,
+.labelled-button {
+    -fx-background-color: transparent;
+    -fx-background-radius: 5px;
+    -fx-padding: 5px 8px;
+    -fx-graphic-text-gap: 7px;
+}
+
+.icon-button:hover,
+.labelled-button:hover {
+    -fx-background-color: #2b2d31;
+}
+
+.icon-button:disabled,
+.labelled-button:disabled {
+    -fx-opacity: 0.38;
+}
+
+.run-button {
+    -fx-font-weight: bold;
+}
+
+/* ---------------------------------------------------------------- icons */
+
+.icon {
+    -fx-stroke: #a4acb9;
+    -fx-stroke-line-cap: round;
+}
+
+.icon-run {
+    -fx-fill: #5fb56a;
+    -fx-stroke: transparent;
+}
+
+.icon-connect {
+    -fx-stroke: #6aa9e0;
+}
+
+.icon-disconnect {
+    -fx-stroke: #d08770;
+}
+
+.icon-refresh-head {
+    -fx-fill: #a4acb9;
+    -fx-stroke: transparent;
+}
+
+.icon-sidebar-rail {
+    -fx-fill: #a4acb9;
+    -fx-stroke: transparent;
+}
+
+.icon-database {
+    -fx-stroke: #6aa9e0;
+}
+
+.icon-table {
+    -fx-stroke: #8fbf7f;
+}
+
+.icon-view {
+    -fx-stroke: #c8a25e;
+}
+
+.icon-column {
+    -fx-stroke: #8b93a1;
+}
+
+.icon-key {
+    -fx-stroke: #e0c06a;
+}
+
+/* ---------------------------------------------------------------- sidebar */
+
+.sidebar {
+    -fx-background-color: #1b1c1f;
+}
+
+.sidebar-rail {
+    -fx-background-color: #1e1f22;
+    -fx-border-color: transparent #303237 transparent transparent;
+    -fx-border-width: 0 1 0 0;
+    -fx-padding: 6px 0 0 0;
+}
+
+.rail-button {
+    -fx-padding: 6px;
+}
+
+.panel-header-bar {
+    -fx-padding: 7px 10px;
+    -fx-border-color: transparent transparent #303237 transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.panel-header {
+    -fx-font-size: 10.5px;
+    -fx-font-weight: bold;
+    -fx-opacity: 0.62;
+}
+
+.schema-tree-pane {
+    -fx-background-color: #1b1c1f;
+}
+
+.schema-tree {
+    -fx-background-color: transparent;
+    -fx-border-width: 0;
+}
+
+.schema-tree .tree-cell {
+    -fx-background-color: transparent;
+    -fx-padding: 1px 4px;
+}
+
+.schema-tree .tree-cell:selected {
+    -fx-background-color: #2f5d8c;
+    -fx-background-radius: 4px;
+}
+
+.schema-node-name {
+    -fx-text-fill: #d6d9de;
+}
+
+.schema-node-detail {
+    -fx-text-fill: #7f848e;
+    -fx-font-size: 11px;
+}
+
+.schema-placeholder {
+    -fx-text-fill: #7f848e;
+    -fx-font-style: italic;
+}
+
+/* ---------------------------------------------------------------- editor tabs */
+
+.editor-tabs {
+    -fx-background-color: #1e1f22;
+}
+
+.editor-tabs .tab-header-area .tab-header-background {
+    -fx-background-color: #1e1f22;
+    -fx-border-color: transparent transparent #303237 transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.editor-tabs .tab {
+    -fx-background-color: transparent;
+    -fx-padding: 5px 10px;
+}
+
+.editor-tabs .tab:selected {
+    -fx-background-color: #26282d;
+}
+
+.editor-tabs .tab .tab-label {
+    -fx-text-fill: #b6bcc6;
+}
+
+.editor-tabs .tab:selected .tab-label {
+    -fx-text-fill: #eceff4;
+}
+
+/* ---------------------------------------------------------------- split panes */
+
+.split-pane {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+
+.split-pane > .split-pane-divider {
+    -fx-background-color: #303237;
+    -fx-padding: 0 1px;
+}
+
+.split-pane:vertical > .split-pane-divider {
+    -fx-padding: 1px 0;
+}
+
+/* ---------------------------------------------------------------- status bar */
+
+/* ---------------------------------------------------------------- results */
+
+/* With no columns the header strip is an empty band above the placeholder. */
+.result-table:empty-grid > .column-header-background {
+    -fx-min-height: 0;
+    -fx-pref-height: 0;
+    -fx-max-height: 0;
+}
+
+/* ---------------------------------------------------------------- status bar */
+
+.status-bar {
+    -fx-background-color: #1e1f22;
+    -fx-border-color: #303237 transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+    -fx-padding: 4px 10px;
+    -fx-min-height: 26px;
+}
+
+.status-text {
+    -fx-font-size: 11.5px;
+    -fx-text-fill: #a4acb9;
+}
+
+.status-caret {
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+}
+
+.status-result:error {
+    -fx-text-fill: #e06c75;
+}
+
+.status-dot-connected {
+    -fx-fill: #5fb56a;
+}
+
+.status-dot-disconnected {
+    -fx-fill: #6b7280;
+}
+
+.status-dot-busy {
+    -fx-fill: #e0c06a;
+}
+
+/* ---------------------------------------------------------------- dialogs */
+
+.connection-dialog {
+    -fx-padding: 12px;
+}
+
+.dialog-feedback {
+    -fx-font-size: 11.5px;
+    -fx-text-fill: #8fbf7f;
+}
+
+.dialog-feedback:error {
+    -fx-text-fill: #e06c75;
+}

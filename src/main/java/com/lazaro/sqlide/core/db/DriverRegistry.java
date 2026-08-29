@@ -12,6 +12,12 @@ import java.util.function.Supplier;
  */
 public final class DriverRegistry {
 
+    /**
+     * Driver opened when the user has not chosen otherwise. Declared here so that
+     * callers can resolve a driver without importing a concrete implementation.
+     */
+    public static final String DEFAULT_DRIVER_ID = JdbcSqlDriver.ID;
+
     private final Map<String, Supplier<DataSourceDriver>> factories = new LinkedHashMap<>();
 
     /** Registry pre-populated with the drivers that ship with the application. */

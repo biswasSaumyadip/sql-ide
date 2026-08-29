@@ -1,5 +1,7 @@
 package com.lazaro.sqlide.ui.components;
 
+import javafx.beans.binding.Bindings;
+import javafx.beans.value.ObservableValue;
 import javafx.concurrent.Task;
 import javafx.scene.Node;
 import javafx.scene.layout.BorderPane;
@@ -115,6 +117,19 @@ public final class SqlEditorPane extends BorderPane {
     /** The underlying editor, for callers that need to attach key bindings. */
     public CodeArea getCodeArea() {
         return codeArea;
+    }
+
+    /** Editor content, for observing modifications. */
+    public ObservableValue<String> textProperty() {
+        return codeArea.textProperty();
+    }
+
+    /** Caret position rendered for a status bar, e.g. {@code Ln 3, Col 12}. */
+    public ObservableValue<String> caretLocation() {
+        return Bindings.createStringBinding(
+                () -> "Ln %d, Col %d".formatted(codeArea.getCurrentParagraph() + 1, codeArea.getCaretColumn() + 1),
+                codeArea.currentParagraphProperty(),
+                codeArea.caretColumnProperty());
     }
 
     @Override
