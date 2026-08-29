@@ -1,5 +1,6 @@
 package com.lazaro.sqlide.core.db;
 
+import com.lazaro.sqlide.core.db.SchemaNode.NodeType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -16,15 +17,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SchemaIntrospectionServiceTest {
 
-    private DatabaseService databaseService;
+    private JdbcSqlDriver driver;
     private SchemaIntrospectionService schemaService;
     private String catalog;
 
     @BeforeEach
     void connectAndSeed() throws Exception {
-        databaseService = new DatabaseService();
-        databaseService.connectAsync(H2TestSupport.freshDatabase()).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
-        schemaService = new SchemaIntrospectionService(databaseService);
+        driver = new JdbcSqlDriver();
+        driver.connect(H2TestSupport.freshDatabase()).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        schemaService = driver.introspection();
 
         execute("""
                 CREATE TABLE customer (
@@ -36,9 +37,9 @@ class SchemaIntrospectionServiceTest {
                 """);
         execute("CREATE VIEW premium_customer AS SELECT id, email FROM customer WHERE balance > 100");
 
-        catalog = schemaService.fetchDatabasesAsync().get(TIMEOUT_SECONDS, TIMEOUT_UNIT)
+        catalog = driver.getSchemaTree().get(TIMEOUT_SECONDS, TIMEOUT_UNIT)
                 .stream()
-                .map(DatabaseNode::name)
+                .map(SchemaNode::name)
                 .filter(name -> name.toLowerCase(Locale.ROOT).startsWith("sqlide_test_"))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("test catalog was not reported by getCatalogs()"));
@@ -46,76 +47,112 @@ class SchemaIntrospectionServiceTest {
 
     @AfterEach
     void disconnect() {
-        databaseService.close();
+        driver.close();
     }
 
     @Test
-    @DisplayName("catalogs are discovered and returned sorted, without tables attached")
-    void discoversCatalogs() throws Exception {
-        List<DatabaseNode> databases = schemaService.fetchDatabasesAsync().get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+    @DisplayName("the schema tree starts at catalogs, unexpanded")
+    void schemaTreeStartsAtCatalogs() throws Exception {
+        List<SchemaNode> databases = driver.getSchemaTree().get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
 
         assertFalse(databases.isEmpty());
-        assertTrue(databases.stream().allMatch(database -> database.tables().isEmpty()),
-                "catalog listing must stay shallow so the tree can load lazily");
+        assertTrue(databases.stream().allMatch(node -> node.type() == NodeType.DATABASE),
+                "H2 exposes databases as catalogs");
+        assertTrue(databases.stream().allMatch(node -> node.children().isEmpty()),
+                "the top level must stay shallow so the tree can load lazily");
+        assertTrue(databases.stream().noneMatch(SchemaNode::isLeaf));
     }
 
     @Test
-    @DisplayName("tables and views are listed, system objects are not")
+    @DisplayName("tables and views are listed with the right node type, system objects are not")
     void listsTablesAndViews() throws Exception {
-        List<TableNode> tables = schemaService.fetchTablesAsync(catalog).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        List<SchemaNode> tables = schemaService.fetchTablesAsync(catalog).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
 
-        List<String> names = tables.stream().map(TableNode::name).toList();
+        List<String> names = tables.stream().map(SchemaNode::name).toList();
         assertTrue(names.contains("CUSTOMER"), "expected CUSTOMER in " + names);
         assertTrue(names.contains("PREMIUM_CUSTOMER"), "expected the view in " + names);
         assertFalse(names.contains("TABLES"), "INFORMATION_SCHEMA objects must be filtered out: " + names);
 
-        TableNode view = tables.stream().filter(t -> t.name().equals("PREMIUM_CUSTOMER")).findFirst().orElseThrow();
-        assertTrue(view.isView());
+        SchemaNode table = find(tables, "CUSTOMER");
+        assertEquals(NodeType.TABLE, table.type());
+        assertEquals(catalog, table.metadata(SchemaNode.META_CATALOG));
+        assertEquals(catalog + ".CUSTOMER", table.qualifiedName());
+
+        assertEquals(NodeType.VIEW, find(tables, "PREMIUM_CUSTOMER").type());
     }
 
     @Test
-    @DisplayName("columns carry type, nullability, ordering and primary key flags")
+    @DisplayName("columns carry type, nullability, ordering and primary key metadata")
     void describesColumns() throws Exception {
-        List<ColumnNode> columns =
+        List<SchemaNode> columns =
                 schemaService.fetchColumnsAsync(catalog, "CUSTOMER").get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
 
-        assertEquals(List.of("ID", "EMAIL", "BALANCE", "SIGNED_UP"), columns.stream().map(ColumnNode::name).toList());
+        assertEquals(List.of("ID", "EMAIL", "BALANCE", "SIGNED_UP"), columns.stream().map(SchemaNode::name).toList());
+        assertTrue(columns.stream().allMatch(SchemaNode::isLeaf));
 
-        ColumnNode id = columns.get(0);
-        assertTrue(id.primaryKey());
-        assertFalse(id.nullable());
-        assertEquals(1, id.position());
+        SchemaNode id = columns.get(0);
+        assertEquals(NodeType.COLUMN, id.type());
+        assertTrue(id.metadataFlag(SchemaNode.META_PRIMARY_KEY));
+        assertFalse(id.metadataFlag(SchemaNode.META_NULLABLE));
 
-        ColumnNode email = columns.get(1);
-        assertFalse(email.primaryKey());
-        assertFalse(email.nullable());
-        assertEquals("CHARACTER VARYING(255)", email.displayType());
+        SchemaNode email = columns.get(1);
+        assertFalse(email.metadataFlag(SchemaNode.META_PRIMARY_KEY));
+        assertFalse(email.metadataFlag(SchemaNode.META_NULLABLE));
+        assertEquals("CHARACTER VARYING(255)", email.metadata(SchemaNode.META_DATA_TYPE));
 
-        ColumnNode balance = columns.get(2);
-        assertTrue(balance.nullable());
-        assertEquals("DECIMAL(12,2)", balance.displayType());
+        SchemaNode balance = columns.get(2);
+        assertTrue(balance.metadataFlag(SchemaNode.META_NULLABLE));
+        assertEquals("DECIMAL(12,2)", balance.metadata(SchemaNode.META_DATA_TYPE));
 
         // A plain timestamp must not be decorated with a meaningless size.
-        assertEquals("TIMESTAMP", columns.get(3).displayType());
+        assertEquals("TIMESTAMP", columns.get(3).metadata(SchemaNode.META_DATA_TYPE));
     }
 
     @Test
-    @DisplayName("eager fetch returns one catalog fully populated with tables and columns")
+    @DisplayName("getChildren walks the tree one level at a time")
+    void getChildrenWalksTheTree() throws Exception {
+        SchemaNode database = find(driver.getSchemaTree().get(TIMEOUT_SECONDS, TIMEOUT_UNIT), catalog);
+
+        List<SchemaNode> tables = driver.getChildren(database).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        SchemaNode customer = find(tables, "CUSTOMER");
+
+        List<SchemaNode> columns = driver.getChildren(customer).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        assertEquals(4, columns.size());
+
+        assertTrue(driver.getChildren(columns.get(0)).get(TIMEOUT_SECONDS, TIMEOUT_UNIT).isEmpty(),
+                "a column has no children");
+    }
+
+    @Test
+    @DisplayName("eager fetch returns one catalog fully populated")
     void eagerFetchPopulatesEverything() throws Exception {
-        DatabaseNode database = schemaService.fetchDatabaseAsync(catalog).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        SchemaNode database = schemaService.fetchDatabaseAsync(catalog).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
 
         assertEquals(catalog, database.name());
-        assertFalse(database.tables().isEmpty());
-        TableNode customer = database.tables().stream()
-                .filter(table -> table.name().equals("CUSTOMER"))
+        assertEquals(NodeType.DATABASE, database.type());
+        assertEquals(4, find(database.children(), "CUSTOMER").children().size());
+    }
+
+    @Test
+    @DisplayName("type formatting only adds a size where it means something")
+    void formatsTypes() {
+        assertEquals("VARCHAR(255)", SchemaIntrospectionService.formatType("VARCHAR", 255, 0));
+        assertEquals("DECIMAL(10,2)", SchemaIntrospectionService.formatType("DECIMAL", 10, 2));
+        assertEquals("INT", SchemaIntrospectionService.formatType("INT", 10, 0));
+        assertEquals("TIMESTAMP", SchemaIntrospectionService.formatType("TIMESTAMP", 26, 6));
+        assertEquals("UNKNOWN", SchemaIntrospectionService.formatType(null, 0, 0));
+    }
+
+    private static SchemaNode find(List<SchemaNode> nodes, String name) {
+        return nodes.stream()
+                .filter(node -> node.name().equals(name))
                 .findFirst()
-                .orElseThrow();
-        assertEquals(4, customer.columns().size());
-        assertEquals(catalog + ".CUSTOMER", customer.qualifiedName());
+                .orElseThrow(() -> new AssertionError("no node named " + name + " in "
+                        + nodes.stream().map(SchemaNode::name).toList()));
     }
 
     private void execute(String sql) throws Exception {
-        QueryResult result = databaseService.executeQueryAsync(sql).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        QueryResult result = driver.executeQueryAsync(sql).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
         if (result.isError()) {
             throw new AssertionError("seed statement failed: " + result.errorMessage());
         }

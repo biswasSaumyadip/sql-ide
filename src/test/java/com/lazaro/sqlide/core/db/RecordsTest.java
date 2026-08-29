@@ -1,14 +1,20 @@
 package com.lazaro.sqlide.core.db;
 
+import com.lazaro.sqlide.core.db.SchemaNode.NodeType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -83,28 +89,71 @@ class RecordsTest {
     }
 
     @Test
-    @DisplayName("ColumnNode renders sizes only where they carry meaning")
-    void rendersTypes() {
-        assertEquals("VARCHAR(255)", column("VARCHAR", 255, 0).displayType());
-        assertEquals("DECIMAL(10,2)", column("DECIMAL", 10, 2).displayType());
-        assertEquals("INT", column("INT", 10, 0).displayType());
-        assertEquals("TIMESTAMP", column("TIMESTAMP", 26, 6).displayType());
-        assertEquals("id : INT  [PK]", new ColumnNode("id", "INT", 10, 0, false, 1, true).label());
+    @DisplayName("SchemaNode defends its collections against later mutation")
+    void schemaNodeIsImmutable() {
+        List<SchemaNode> children = new ArrayList<>();
+        children.add(SchemaNode.of("id", NodeType.COLUMN));
+        Map<String, String> metadata = new HashMap<>();
+        metadata.put(SchemaNode.META_CATALOG, "sales");
+
+        var table = new SchemaNode("orders", NodeType.TABLE, children, metadata);
+        children.clear();
+        metadata.clear();
+
+        assertEquals(1, table.children().size());
+        assertEquals("sales", table.metadata(SchemaNode.META_CATALOG));
+        assertThrows(UnsupportedOperationException.class, () -> table.children().clear());
+        assertThrows(UnsupportedOperationException.class,
+                () -> table.metadata().put("x", "y"));
     }
 
     @Test
-    @DisplayName("schema nodes defend their collections")
-    void nodesAreImmutable() {
-        var table = TableNode.of("sales", "orders", "TABLE");
-        assertEquals("sales.orders", table.qualifiedName());
-        assertThrows(UnsupportedOperationException.class, () -> table.columns().add(column("x", 1, 0)));
+    @DisplayName("SchemaNode reports leaves by type, not by whether children were loaded")
+    void schemaNodeLeafDependsOnType() {
+        var unexpandedTable = SchemaNode.of("orders", NodeType.TABLE);
+        assertTrue(unexpandedTable.children().isEmpty());
+        assertFalse(unexpandedTable.isLeaf(), "an unexpanded table is not a leaf");
 
-        var database = DatabaseNode.of("sales").withTables(List.of(table));
-        assertEquals(1, database.tables().size());
-        assertThrows(UnsupportedOperationException.class, () -> database.tables().clear());
+        assertTrue(SchemaNode.of("id", NodeType.COLUMN).isLeaf());
+        assertFalse(NodeType.COLUMN.isContainer());
+        assertTrue(NodeType.DATABASE.isContainer());
     }
 
-    private static ColumnNode column(String type, int size, int scale) {
-        return new ColumnNode("c", type, size, scale, true, 1, false);
+    @Test
+    @DisplayName("SchemaNode qualifies its name only when a catalog is known")
+    void schemaNodeQualifiesName() {
+        assertEquals("sales.orders",
+                SchemaNode.of("orders", NodeType.TABLE, Map.of(SchemaNode.META_CATALOG, "sales")).qualifiedName());
+        assertEquals("orders", SchemaNode.of("orders", NodeType.TABLE).qualifiedName());
+        assertEquals("orders",
+                SchemaNode.of("orders", NodeType.TABLE, Map.of(SchemaNode.META_CATALOG, "")).qualifiedName());
+    }
+
+    @Test
+    @DisplayName("the registry hands out drivers by id and rejects unknown ones")
+    void registryResolvesDrivers() {
+        var registry = DriverRegistry.withDefaults();
+
+        assertTrue(registry.isRegistered(JdbcSqlDriver.ID));
+        try (DataSourceDriver driver = registry.create(JdbcSqlDriver.ID)) {
+            assertInstanceOf(JdbcSqlDriver.class, driver);
+            assertEquals(JdbcSqlDriver.ID, driver.capabilities().id());
+            assertFalse(driver.isConnected(), "a freshly created driver must not be connected");
+        }
+
+        var failure = assertThrows(IllegalArgumentException.class, () -> registry.create("redis"));
+        assertTrue(failure.getMessage().contains("redis"));
+    }
+
+    @Test
+    @DisplayName("the registry accepts additional drivers at runtime")
+    void registryAcceptsNewDrivers() {
+        var registry = new DriverRegistry();
+        registry.register("jdbc-custom", JdbcSqlDriver::new);
+
+        assertEquals(Set.of("jdbc-custom"), registry.ids());
+        try (DataSourceDriver driver = registry.create("jdbc-custom")) {
+            assertNotNull(driver);
+        }
     }
 }

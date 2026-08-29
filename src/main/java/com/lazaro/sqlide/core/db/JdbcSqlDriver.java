@@ -4,12 +4,15 @@ import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 
 import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -18,46 +21,87 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Owns the connection pool and executes SQL off the caller's thread.
+ * JDBC implementation of {@link DataSourceDriver}, pooling connections with HikariCP.
  *
- * <p>This class is deliberately free of any JavaFX dependency: it hands back plain
- * {@link QueryResult} records and never touches the scene graph. Every returned
- * {@link CompletableFuture} is completed on a pooled worker thread, so callers on
- * the JavaFX Application Thread must marshal results back themselves.
- *
- * <p>Query failures are reported as a {@link QueryResult#isError() failed result}
- * rather than an exceptional future; connection failures complete exceptionally,
- * because they are lifecycle problems rather than statement problems.
+ * <p>Deliberately free of any JavaFX dependency: it hands back plain
+ * {@link QueryResult} and {@link SchemaNode} values and never touches the scene
+ * graph. Every returned {@link CompletableFuture} is completed on a pooled worker
+ * thread, so callers on the JavaFX Application Thread must marshal results back
+ * themselves.
  */
-public final class DatabaseService implements AutoCloseable {
+public final class JdbcSqlDriver implements DataSourceDriver {
+
+    /** Registry key under which this driver is published. */
+    public static final String ID = "jdbc-mysql";
 
     /** Hard cap on rows materialised per query, to bound memory. */
     public static final int MAX_ROWS = 1_000;
+
+    private static final DriverCapabilities CAPABILITIES = new DriverCapabilities(
+            ID,
+            "JDBC (MySQL, MariaDB, PostgreSQL, H2)",
+            true,
+            true,
+            true,
+            MAX_ROWS);
 
     private static final int POOL_SIZE = 4;
     private static final long CONNECTION_TIMEOUT_MS = 10_000L;
 
     private final ExecutorService executor = Executors.newFixedThreadPool(POOL_SIZE, workerThreadFactory());
+    private final SchemaIntrospectionService introspection = new SchemaIntrospectionService(this);
 
     private volatile HikariDataSource dataSource;
     private volatile ConnectionConfig config;
 
     // ---------------------------------------------------------------- lifecycle
 
+    @Override
+    public DriverCapabilities capabilities() {
+        return CAPABILITIES;
+    }
+
     /**
      * Replaces any existing pool with one built from {@code newConfig}, validating
      * the credentials eagerly. The future fails if the server rejects the connection.
      */
-    public CompletableFuture<ConnectionConfig> connectAsync(ConnectionConfig newConfig) {
+    @Override
+    public CompletableFuture<Void> connect(ConnectionConfig newConfig) {
         Objects.requireNonNull(newConfig, "config must not be null");
-        return CompletableFuture.supplyAsync(() -> openPool(newConfig), executor);
+        return CompletableFuture.runAsync(() -> openPool(newConfig), executor);
     }
 
+    /**
+     * Opens a single throwaway connection, leaving the live pool untouched, and
+     * reports what answered.
+     */
+    @Override
+    public CompletableFuture<String> testConnection(ConnectionConfig candidate) {
+        Objects.requireNonNull(candidate, "config must not be null");
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                Class.forName(candidate.driver().driverClassName());
+            } catch (ClassNotFoundException e) {
+                throw new CompletionException(
+                        new SQLException("JDBC driver not on the classpath: " + candidate.driver().driverClassName(), e));
+            }
+            try (Connection connection = java.sql.DriverManager.getConnection(
+                    candidate.jdbcUrl(), candidate.user(), candidate.password())) {
+                DatabaseMetaData metaData = connection.getMetaData();
+                return "%s %s".formatted(metaData.getDatabaseProductName(), metaData.getDatabaseProductVersion());
+            } catch (SQLException e) {
+                throw new CompletionException(e);
+            }
+        }, executor);
+    }
+
+    @Override
     public boolean isConnected() {
         HikariDataSource current = dataSource;
         return current != null && !current.isClosed();
     }
 
+    @Override
     public Optional<ConnectionConfig> currentConfig() {
         return Optional.ofNullable(config);
     }
@@ -106,6 +150,7 @@ public final class DatabaseService implements AutoCloseable {
      * Executes an arbitrary statement asynchronously. Handles both result-producing
      * queries and DML/DDL, and always resolves to a {@link QueryResult}.
      */
+    @Override
     public CompletableFuture<QueryResult> executeQueryAsync(String sql) {
         String statement = sql == null ? "" : sql.trim();
         if (statement.isEmpty()) {
@@ -137,9 +182,26 @@ public final class DatabaseService implements AutoCloseable {
         }
     }
 
+    // ---------------------------------------------------------------- schema
+
+    @Override
+    public CompletableFuture<List<SchemaNode>> getSchemaTree() {
+        return introspection.fetchDatabasesAsync();
+    }
+
+    @Override
+    public CompletableFuture<List<SchemaNode>> getChildren(SchemaNode parent) {
+        return introspection.fetchChildrenAsync(parent);
+    }
+
+    /** Direct access to introspection, for callers that need more than the tree. */
+    public SchemaIntrospectionService introspection() {
+        return introspection;
+    }
+
     // ---------------------------------------------------------------- internals
 
-    private ConnectionConfig openPool(ConnectionConfig newConfig) {
+    private void openPool(ConnectionConfig newConfig) {
         disconnect();
 
         HikariConfig hikariConfig = new HikariConfig();
@@ -159,7 +221,6 @@ public final class DatabaseService implements AutoCloseable {
         HikariDataSource created = new HikariDataSource(hikariConfig);
         dataSource = created;
         config = newConfig;
-        return newConfig;
     }
 
     private static long elapsedMs(long startNanos) {

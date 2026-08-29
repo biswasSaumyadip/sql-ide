@@ -12,7 +12,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * Turns a live {@link ResultSet} into a detached {@link QueryResult}.
  *
- * <p>Shared by {@link DatabaseService} and by the UI layer so that both drain rows
+ * <p>Shared by {@link JdbcSqlDriver} and by the UI layer so that both drain rows
  * identically. Every method here performs blocking JDBC I/O and must therefore run
  * on a background thread, never on the JavaFX Application Thread.
  */
@@ -23,9 +23,9 @@ public final class ResultSetMapper {
     private ResultSetMapper() {
     }
 
-    /** Drains up to {@link DatabaseService#MAX_ROWS} rows, timing the work from now. */
+    /** Drains up to {@link JdbcSqlDriver#MAX_ROWS} rows, timing the work from now. */
     public static QueryResult drain(ResultSet resultSet) throws SQLException {
-        return drain(resultSet, DatabaseService.MAX_ROWS, System.nanoTime());
+        return drain(resultSet, JdbcSqlDriver.MAX_ROWS, System.nanoTime());
     }
 
     /**

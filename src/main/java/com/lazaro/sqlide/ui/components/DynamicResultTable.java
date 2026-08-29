@@ -1,6 +1,6 @@
 package com.lazaro.sqlide.ui.components;
 
-import com.lazaro.sqlide.core.db.DatabaseService;
+import com.lazaro.sqlide.core.db.JdbcSqlDriver;
 import com.lazaro.sqlide.core.db.QueryResult;
 import com.lazaro.sqlide.core.db.ResultSetMapper;
 import javafx.application.Platform;
@@ -99,7 +99,7 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
                     "Draining a ResultSet on the JavaFX Application Thread would freeze the UI. "
                             + "Call this from a Task or CompletableFuture, or use setResult(QueryResult).");
         }
-        QueryResult result = ResultSetMapper.drain(resultSet, DatabaseService.MAX_ROWS, System.nanoTime());
+        QueryResult result = ResultSetMapper.drain(resultSet, JdbcSqlDriver.MAX_ROWS, System.nanoTime());
         Platform.runLater(() -> setResult(result));
     }
 

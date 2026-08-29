@@ -43,12 +43,15 @@ The codebase is split so that nothing touching JDBC knows about JavaFX:
 com.lazaro.sqlide
 ├── Main.java                       application entry point, theme bootstrap
 ├── core.db
-│   ├── ConnectionConfig            endpoint + credentials, builds the JDBC URL
-│   ├── QueryResult                 detached outcome of one statement
-│   ├── DatabaseService             Hikari pool, async execution
+│   ├── DataSourceDriver            the interface the UI talks to
+│   ├── DriverCapabilities          what a driver supports
+│   ├── DriverRegistry              driver id -> factory
+│   ├── JdbcSqlDriver               JDBC/HikariCP implementation
 │   ├── SchemaIntrospectionService  DatabaseMetaData reader
 │   ├── ResultSetMapper             drains a cursor into a QueryResult
-│   └── DatabaseNode/TableNode/ColumnNode
+│   ├── ConnectionConfig            endpoint + credentials, builds the JDBC URL
+│   ├── QueryResult                 detached outcome of one statement
+│   └── SchemaNode                  one entry in the structure tree
 └── ui.components
     ├── SqlEditorPane               RichTextFX editor, line numbers
     ├── SqlSyntaxHighlighter        pure regex tokeniser (no JavaFX types)
@@ -57,6 +60,18 @@ com.lazaro.sqlide
 
 `core.db` has no JavaFX imports at all and is covered by its own tests, so it can
 be exercised headlessly.
+
+**Driver abstraction:** the UI depends only on `DataSourceDriver`, obtained from
+`DriverRegistry`. `JdbcSqlDriver` (registered as `jdbc-mysql`) is the only
+implementation today, but nothing above the interface names it. Structure is
+returned as generic `SchemaNode` values whose type-specific attributes live in a
+metadata map, so a non-relational backend could populate the same tree.
+
+**Lazy schema loading:** `getSchemaTree()` returns only the top level with children
+unloaded; `getChildren(node)` fetches one level at a time. Introspecting an entire
+server upfront would be unusable on a large database. An empty `children()` list
+therefore does not mean "leaf" — use `SchemaNode.isLeaf()`, which is decided by
+node type.
 
 **Concurrency rule:** no database call ever runs on the JavaFX Application Thread.
 Every query goes through a `javafx.concurrent.Task` or `CompletableFuture`, and UI
@@ -77,10 +92,35 @@ The `core.db` suite runs against a throwaway in-memory H2 database, so it needs 
 running server. The SQL tokeniser is tested through `SqlSyntaxHighlighter.tokenize`,
 which returns plain offsets and therefore needs no JavaFX toolkit either.
 
+### MySQL integration test
+
+`MySqlIntegrationTest` drives a real MySQL server through `DataSourceDriver`. It
+**skips itself** when nothing answers, so the normal build stays self-contained.
+Point it at any server:
+
+```bash
+./gradlew test -Dsqlide.mysql.host=127.0.0.1 -Dsqlide.mysql.port=3306 \
+               -Dsqlide.mysql.user=root -Dsqlide.mysql.password=secret
+```
+
+Defaults are `127.0.0.1:3307`, user `root`, empty password. To spin up a disposable
+server on Windows without touching an installed instance:
+
+```powershell
+$base = "C:\Program Files\MySQL\MySQL Server 8.0"
+$data = "$env:TEMP\sqlide-mysql-data"
+& "$base\bin\mysqld.exe" --no-defaults --initialize-insecure --basedir="$base" --datadir="$data"
+& "$base\bin\mysqld.exe" --no-defaults --basedir="$base" --datadir="$data" --port=3307 --mysqlx=0 --console
+```
+
+Keep the data directory outside `build/`, or `gradlew clean` will fail trying to
+delete files the running server holds open.
+
 ## Roadmap
 
 - [x] **Phase 1** — Gradle build, JavaFX + AtlantaFX bootstrap window
-- [x] **Phase 2** — Headless engine: `DatabaseService`, `SchemaIntrospectionService`
+- [x] **Phase 2** — Headless engine: driver + `SchemaIntrospectionService`
 - [x] **Phase 3** — `SqlEditorPane` (syntax highlighting), `DynamicResultTable`
+- [x] **Phase 3.5** — `DataSourceDriver` interface, `SchemaNode`, `DriverRegistry`
 - [ ] **Phase 4** — Main layout: schema tree, split panes, toolbar
 - [ ] **Phase 5** — Concurrency bridge wiring UI actions to background services

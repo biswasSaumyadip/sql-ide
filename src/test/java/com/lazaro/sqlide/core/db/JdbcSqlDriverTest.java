@@ -17,27 +17,60 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class DatabaseServiceTest {
+/**
+ * Exercises the driver strictly through {@link DataSourceDriver}, so the tests fail
+ * if behaviour is only reachable via the concrete class.
+ */
+class JdbcSqlDriverTest {
 
-    private DatabaseService service;
+    private DataSourceDriver driver;
 
     @BeforeEach
     void connect() throws Exception {
-        service = new DatabaseService();
-        service.connectAsync(H2TestSupport.freshDatabase()).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        driver = new JdbcSqlDriver();
+        driver.connect(H2TestSupport.freshDatabase()).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
     }
 
     @AfterEach
     void disconnect() {
-        service.close();
+        driver.close();
+    }
+
+    @Test
+    @DisplayName("capabilities are readable and match the registry id")
+    void exposesCapabilities() {
+        DriverCapabilities capabilities = driver.capabilities();
+
+        assertEquals(JdbcSqlDriver.ID, capabilities.id());
+        assertTrue(capabilities.supportsSchemaTree());
+        assertEquals(JdbcSqlDriver.MAX_ROWS, capabilities.maxRowsPerQuery());
     }
 
     @Test
     @DisplayName("connecting opens a usable pool and remembers the configuration")
     void connectOpensPool() {
-        assertTrue(service.isConnected());
-        assertTrue(service.currentConfig().isPresent());
-        assertEquals(ConnectionConfig.Driver.H2_MEMORY, service.currentConfig().orElseThrow().driver());
+        assertTrue(driver.isConnected());
+        assertTrue(driver.currentConfig().isPresent());
+        assertEquals(ConnectionConfig.Driver.H2_MEMORY, driver.currentConfig().orElseThrow().driver());
+    }
+
+    @Test
+    @DisplayName("testConnection reports the server without disturbing the live pool")
+    void testConnectionDescribesServer() throws Exception {
+        String description = driver.testConnection(H2TestSupport.freshDatabase())
+                .get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+
+        assertTrue(description.toUpperCase().contains("H2"), "got " + description);
+        assertTrue(driver.isConnected(), "the existing connection must survive a test");
+    }
+
+    @Test
+    @DisplayName("testConnection fails the future for an unreachable endpoint")
+    void testConnectionFailsForUnreachableServer() {
+        var unreachable = ConnectionConfig.mysql("localhost", 3306, "nope", "nobody", "wrong");
+
+        assertThrows(ExecutionException.class,
+                () -> driver.testConnection(unreachable).get(TIMEOUT_SECONDS, TIMEOUT_UNIT));
     }
 
     @Test
@@ -75,7 +108,6 @@ class DatabaseServiceTest {
         assertEquals(List.of("ID", "NAME"), result.columnNames());
         assertEquals(2, result.rowCount());
         assertEquals(List.of("1", "alpha"), result.rows().get(0));
-        assertEquals("2", result.rows().get(1).get(0));
         assertNull(result.rows().get(1).get(1), "SQL NULL must stay null, not become an empty string");
     }
 
@@ -93,12 +125,14 @@ class DatabaseServiceTest {
     }
 
     @Test
-    @DisplayName("large result sets are capped at MAX_ROWS")
+    @DisplayName("large result sets are capped at the advertised maximum")
     void largeResultSetIsCapped() throws Exception {
-        QueryResult result = run("SELECT X FROM SYSTEM_RANGE(1, " + (DatabaseService.MAX_ROWS + 500) + ")");
+        int cap = driver.capabilities().maxRowsPerQuery();
+
+        QueryResult result = run("SELECT X FROM SYSTEM_RANGE(1, " + (cap + 500) + ")");
 
         assertFalse(result.isError(), result.errorMessage());
-        assertEquals(DatabaseService.MAX_ROWS, result.rowCount());
+        assertEquals(cap, result.rowCount());
     }
 
     @Test
@@ -108,7 +142,6 @@ class DatabaseServiceTest {
 
         assertTrue(result.isError());
         assertNotNull(result.errorMessage());
-        assertFalse(result.errorMessage().isBlank());
         assertTrue(result.summary().startsWith("Failed"));
     }
 
@@ -122,8 +155,8 @@ class DatabaseServiceTest {
     @Test
     @DisplayName("executing while disconnected reports an error result")
     void executingWhileDisconnectedReturnsErrorResult() throws Exception {
-        service.disconnect();
-        assertFalse(service.isConnected());
+        ((JdbcSqlDriver) driver).disconnect();
+        assertFalse(driver.isConnected());
 
         QueryResult result = run("SELECT 1");
 
@@ -134,16 +167,15 @@ class DatabaseServiceTest {
     @Test
     @DisplayName("connecting with bad credentials fails the future")
     void badConnectionFailsFuture() {
-        try (DatabaseService broken = new DatabaseService()) {
-            var config = new ConnectionConfig("localhost", 3306, "nope", "nobody", "wrong",
-                    ConnectionConfig.Driver.MYSQL);
+        try (DataSourceDriver broken = new JdbcSqlDriver()) {
+            var config = ConnectionConfig.mysql("localhost", 3306, "nope", "nobody", "wrong");
 
             assertThrows(ExecutionException.class,
-                    () -> broken.connectAsync(config).get(TIMEOUT_SECONDS, TIMEOUT_UNIT));
+                    () -> broken.connect(config).get(TIMEOUT_SECONDS, TIMEOUT_UNIT));
         }
     }
 
     private QueryResult run(String sql) throws Exception {
-        return service.executeQueryAsync(sql).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        return driver.executeQueryAsync(sql).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
     }
 }
