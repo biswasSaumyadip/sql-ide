@@ -8,7 +8,9 @@ import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
+import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
@@ -46,6 +48,8 @@ public final class SchemaTreeView extends VBox {
 
     private DataSourceDriver driver;
     private Consumer<SchemaNode> onActivate = node -> { };
+    private Consumer<SchemaNode> onViewObject = node -> { };
+    private Consumer<SchemaNode> onUseDatabase = node -> { };
     private Runnable onConnectRequested = () -> { };
 
     public SchemaTreeView() {
@@ -64,9 +68,41 @@ public final class SchemaTreeView extends VBox {
         tree.setRoot(new TreeItem<>(SchemaNode.of("root", NodeType.DATABASE)));
         tree.setOnMouseClicked(event -> {
             if (event.getClickCount() == 2) {
-                activateSelection();
+                TreeItem<SchemaNode> selected = tree.getSelectionModel().getSelectedItem();
+                if (selected != null && selected.getValue() != null && !isPlaceholder(selected.getValue())) {
+                    SchemaNode node = selected.getValue();
+                    if (node.type() == NodeType.DATABASE || node.type() == NodeType.SCHEMA) {
+                        onUseDatabase.accept(node);
+                    } else if (node.type() == NodeType.TABLE || node.type() == NodeType.VIEW) {
+                        onUseDatabase.accept(node);
+                        onViewObject.accept(node);
+                    } else {
+                        onActivate.accept(node);
+                    }
+                }
             }
         });
+
+        MenuItem useDatabase = new MenuItem("Use database");
+        useDatabase.setOnAction(event -> useSelectedDatabase());
+        MenuItem insertName = new MenuItem("Insert name");
+        insertName.setOnAction(event -> activateSelection());
+        MenuItem viewProperties = new MenuItem("View DDL / Properties");
+        viewProperties.setOnAction(event -> viewSelectedObject());
+        ContextMenu menu = new ContextMenu(useDatabase, insertName, viewProperties);
+        menu.setOnShowing(event -> {
+            TreeItem<SchemaNode> selected = tree.getSelectionModel().getSelectedItem();
+            SchemaNode value = selected == null ? null : selected.getValue();
+            boolean usable = value != null && !isPlaceholder(value)
+                    && (value.type() == NodeType.DATABASE || value.type() == NodeType.SCHEMA
+                    || value.type() == NodeType.TABLE || value.type() == NodeType.VIEW);
+            boolean object = value != null
+                    && (value.type() == NodeType.TABLE || value.type() == NodeType.VIEW);
+            useDatabase.setDisable(!usable);
+            viewProperties.setDisable(!object);
+            insertName.setDisable(value == null || isPlaceholder(value));
+        });
+        tree.setContextMenu(menu);
 
         emptyTitle.getStyleClass().add("empty-state-title");
         emptyDetail.getStyleClass().add("empty-state-detail");
@@ -109,9 +145,22 @@ public final class SchemaTreeView extends VBox {
         this.onConnectRequested = onConnectRequested == null ? () -> { } : onConnectRequested;
     }
 
-    /** Called when a node is double-clicked, so the controller can paste it into the editor. */
+    /** Called when a node is double-clicked (columns/databases) or Insert is chosen. */
     public void setOnActivate(Consumer<SchemaNode> onActivate) {
         this.onActivate = onActivate == null ? node -> { } : onActivate;
+    }
+
+    /** Called for table/view double-click or "View DDL / Properties". */
+    public void setOnViewObject(Consumer<SchemaNode> onViewObject) {
+        this.onViewObject = onViewObject == null ? node -> { } : onViewObject;
+    }
+
+    /**
+     * Called when the user wants to switch the session catalog — database/schema
+     * double-click, table double-click (uses the table's catalog), or the context menu.
+     */
+    public void setOnUseDatabase(Consumer<SchemaNode> onUseDatabase) {
+        this.onUseDatabase = onUseDatabase == null ? node -> { } : onUseDatabase;
     }
 
     /** Reloads the top level. Safe to call from the JavaFX Application Thread. */
@@ -187,6 +236,21 @@ public final class SchemaTreeView extends VBox {
         TreeItem<SchemaNode> selected = tree.getSelectionModel().getSelectedItem();
         if (selected != null && selected.getValue() != null && !isPlaceholder(selected.getValue())) {
             onActivate.accept(selected.getValue());
+        }
+    }
+
+    private void viewSelectedObject() {
+        TreeItem<SchemaNode> selected = tree.getSelectionModel().getSelectedItem();
+        if (selected != null && selected.getValue() != null
+                && (selected.getValue().type() == NodeType.TABLE || selected.getValue().type() == NodeType.VIEW)) {
+            onViewObject.accept(selected.getValue());
+        }
+    }
+
+    private void useSelectedDatabase() {
+        TreeItem<SchemaNode> selected = tree.getSelectionModel().getSelectedItem();
+        if (selected != null && selected.getValue() != null && !isPlaceholder(selected.getValue())) {
+            onUseDatabase.accept(selected.getValue());
         }
     }
 

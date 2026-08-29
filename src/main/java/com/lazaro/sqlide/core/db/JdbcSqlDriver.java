@@ -53,6 +53,8 @@ public final class JdbcSqlDriver implements DataSourceDriver {
 
     private volatile HikariDataSource dataSource;
     private volatile ConnectionConfig config;
+    /** Applied to every borrowed connection before statement execution. */
+    private volatile String activeCatalog;
 
     // ---------------------------------------------------------------- lifecycle
 
@@ -111,6 +113,7 @@ public final class JdbcSqlDriver implements DataSourceDriver {
         HikariDataSource current = dataSource;
         dataSource = null;
         config = null;
+        activeCatalog = null;
         if (current != null && !current.isClosed()) {
             current.close();
         }
@@ -167,6 +170,7 @@ public final class JdbcSqlDriver implements DataSourceDriver {
         try (Connection connection = getConnection();
              Statement statement = connection.createStatement()) {
 
+            applyActiveCatalog(connection);
             statement.setMaxRows(MAX_ROWS);
             boolean producedResultSet = statement.execute(sql);
 
@@ -192,6 +196,34 @@ public final class JdbcSqlDriver implements DataSourceDriver {
     @Override
     public CompletableFuture<List<SchemaNode>> getChildren(SchemaNode parent) {
         return introspection.fetchChildrenAsync(parent);
+    }
+
+    @Override
+    public CompletableFuture<List<SchemaNode>> getFullSchema() {
+        return introspection.fetchFullSchemaAsync();
+    }
+
+    @Override
+    public CompletableFuture<Void> setActiveCatalog(String catalog) {
+        String normalized = catalog == null || catalog.isBlank() ? null : catalog.trim();
+        return CompletableFuture.runAsync(() -> {
+            activeCatalog = normalized;
+            if (normalized == null) {
+                return;
+            }
+            // Probe once so a bad name fails here instead of on the next query.
+            try (Connection connection = getConnection()) {
+                applyActiveCatalog(connection);
+            } catch (SQLException e) {
+                activeCatalog = null;
+                throw new CompletionException(e);
+            }
+        }, executor);
+    }
+
+    @Override
+    public Optional<String> activeCatalog() {
+        return Optional.ofNullable(activeCatalog);
     }
 
     /** Direct access to introspection, for callers that need more than the tree. */
@@ -221,6 +253,24 @@ public final class JdbcSqlDriver implements DataSourceDriver {
         HikariDataSource created = new HikariDataSource(hikariConfig);
         dataSource = created;
         config = newConfig;
+        activeCatalog = newConfig.database().isBlank() ? null : newConfig.database();
+    }
+
+    /** Prefer setCatalog (MySQL); fall back to setSchema (PostgreSQL). */
+    private void applyActiveCatalog(Connection connection) throws SQLException {
+        String catalog = activeCatalog;
+        if (catalog == null || catalog.isBlank()) {
+            return;
+        }
+        try {
+            connection.setCatalog(catalog);
+        } catch (SQLException primary) {
+            try {
+                connection.setSchema(catalog);
+            } catch (SQLException ignored) {
+                throw primary;
+            }
+        }
     }
 
     private static long elapsedMs(long startNanos) {

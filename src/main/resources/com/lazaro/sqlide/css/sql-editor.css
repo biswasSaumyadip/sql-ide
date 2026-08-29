@@ -69,3 +69,82 @@
 .sql-editor .text.sql-punctuation {
     -fx-fill: #9aa2ad;
 }
+
+/* ---------------------------------------------------------------- autocomplete popup */
+
+.sql-completion-list {
+    -fx-background-color: #1e1f22;
+    -fx-control-inner-background: #1e1f22;
+    -fx-border-color: #3d4450;
+    -fx-border-width: 1;
+    -fx-background-radius: 6px;
+    -fx-border-radius: 6px;
+    -fx-padding: 2px 0;
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 12px;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.45), 12, 0.2, 0, 4);
+}
+
+.sql-completion-list .list-cell {
+    -fx-text-fill: #d6d9de;
+    -fx-padding: 2px 0;
+    -fx-background-color: transparent;
+    -fx-background-radius: 0;
+}
+
+.sql-completion-list .list-cell:filled:selected,
+.sql-completion-list .list-cell:filled:selected:focused {
+    -fx-background-color: #2f5d8c;
+}
+
+.sql-completion-list .list-cell:filled:hover {
+    -fx-background-color: #262a32;
+}
+
+.sql-completion-list .list-cell:filled:selected:hover {
+    -fx-background-color: derive(#2f5d8c, 8%);
+}
+
+.sql-completion-badge {
+    -fx-min-width: 18px;
+    -fx-alignment: center;
+    -fx-font-size: 10px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #1e1f22;
+    -fx-background-radius: 3px;
+    -fx-padding: 1px 4px;
+}
+
+.sql-completion-badge-keyword {
+    -fx-background-color: #c8a25e;
+}
+
+.sql-completion-badge-table {
+    -fx-background-color: #8fbf7f;
+}
+
+.sql-completion-badge-column {
+    -fx-background-color: #6aa9e0;
+}
+
+.sql-completion-badge-join {
+    -fx-background-color: #d08770;
+}
+
+.sql-completion-name {
+    -fx-text-fill: #eceff4;
+    -fx-font-weight: bold;
+}
+
+.sql-completion-detail {
+    -fx-text-fill: #7f848e;
+    -fx-font-size: 11px;
+}
+
+.sql-completion-list .list-cell:filled:selected .sql-completion-name {
+    -fx-text-fill: #ffffff;
+}
+
+.sql-completion-list .list-cell:filled:selected .sql-completion-detail {
+    -fx-text-fill: #c5d4e8;
+}

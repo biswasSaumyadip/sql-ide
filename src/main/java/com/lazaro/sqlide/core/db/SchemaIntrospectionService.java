@@ -86,6 +86,36 @@ public final class SchemaIntrospectionService {
     }
 
     /**
+     * One table/view with columns as children and indexes, foreign keys and generated
+     * DDL packed into its metadata map — the payload the object viewer and cache want.
+     */
+    public CompletableFuture<SchemaNode> fetchTableDetailsAsync(String catalog, String table) {
+        Objects.requireNonNull(catalog, "catalog must not be null");
+        Objects.requireNonNull(table, "table must not be null");
+        return supplyAsync(connection -> readTableDetails(connection, catalog, table));
+    }
+
+    /**
+     * Eagerly loads every catalog with every table fully detailed. Used once per
+     * connection (and on Refresh) so autocomplete never hits the network per keystroke.
+     */
+    public CompletableFuture<List<SchemaNode>> fetchFullSchemaAsync() {
+        return supplyAsync(connection -> {
+            List<SchemaNode> databases = readDatabases(connection);
+            List<SchemaNode> loaded = new ArrayList<>(databases.size());
+            for (SchemaNode database : databases) {
+                List<SchemaNode> tables = readTables(connection, database.name());
+                List<SchemaNode> detailed = new ArrayList<>(tables.size());
+                for (SchemaNode table : tables) {
+                    detailed.add(readTableDetails(connection, database.name(), table.name(), table));
+                }
+                loaded.add(database.withChildren(detailed));
+            }
+            return List.copyOf(loaded);
+        });
+    }
+
+    /**
      * Eagerly loads one catalog with all of its tables and columns. Convenient for
      * small schemas; prefer the lazy per-level calls for large servers.
      */
@@ -94,7 +124,7 @@ public final class SchemaIntrospectionService {
         return supplyAsync(connection -> {
             List<SchemaNode> tables = new ArrayList<>();
             for (SchemaNode table : readTables(connection, catalog)) {
-                tables.add(table.withChildren(readColumns(connection, catalog, table.name())));
+                tables.add(readTableDetails(connection, catalog, table.name(), table));
             }
             return new SchemaNode(catalog, NodeType.DATABASE, tables, Map.of());
         });
@@ -176,6 +206,154 @@ public final class SchemaIntrospectionService {
         }
         columns.sort(Comparator.comparingInt(PositionedColumn::position));
         return columns.stream().map(PositionedColumn::node).toList();
+    }
+
+    private static SchemaNode readTableDetails(Connection connection, String catalog, String table)
+            throws SQLException {
+        List<SchemaNode> tables = readTables(connection, catalog);
+        SchemaNode base = tables.stream()
+                .filter(node -> node.name().equalsIgnoreCase(table))
+                .findFirst()
+                .orElse(SchemaNode.of(table, NodeType.TABLE, Map.of(SchemaNode.META_CATALOG, catalog)));
+        return readTableDetails(connection, catalog, table, base);
+    }
+
+    private static SchemaNode readTableDetails(
+            Connection connection, String catalog, String table, SchemaNode base) throws SQLException {
+
+        DatabaseMetaData metaData = connection.getMetaData();
+        List<SchemaNode> columns = readColumns(connection, catalog, table);
+
+        List<SchemaMetadataCodec.ForeignKey> foreignKeys = readForeignKeys(metaData, catalog, null, table);
+        if (foreignKeys.isEmpty()) {
+            foreignKeys = readForeignKeys(metaData, null, catalog, table);
+        }
+
+        List<SchemaMetadataCodec.IndexInfo> indexes = readIndexes(metaData, catalog, null, table);
+        if (indexes.isEmpty()) {
+            indexes = readIndexes(metaData, null, catalog, table);
+        }
+
+        Map<String, String> metadata = new LinkedHashMap<>(base.metadata());
+        metadata.put(SchemaNode.META_CATALOG, Objects.requireNonNullElse(
+                firstNonBlank(base.metadata(SchemaNode.META_CATALOG), catalog), ""));
+        String fkEncoded = SchemaMetadataCodec.encodeForeignKeys(foreignKeys);
+        String indexEncoded = SchemaMetadataCodec.encodeIndexes(indexes);
+        if (!fkEncoded.isEmpty()) {
+            metadata.put(SchemaNode.META_FOREIGN_KEYS, fkEncoded);
+        }
+        if (!indexEncoded.isEmpty()) {
+            metadata.put(SchemaNode.META_INDEXES, indexEncoded);
+        }
+        metadata.put(SchemaNode.META_DDL, generateDdl(base.type(), table, columns, foreignKeys, indexes));
+
+        return new SchemaNode(base.name(), base.type(), columns, metadata);
+    }
+
+    private static List<SchemaMetadataCodec.ForeignKey> readForeignKeys(
+            DatabaseMetaData metaData, String catalog, String schema, String table) {
+        List<SchemaMetadataCodec.ForeignKey> keys = new ArrayList<>();
+        try (ResultSet resultSet = metaData.getImportedKeys(catalog, schema, table)) {
+            while (resultSet.next()) {
+                String fkColumn = resultSet.getString("FKCOLUMN_NAME");
+                String pkTable = resultSet.getString("PKTABLE_NAME");
+                String pkColumn = resultSet.getString("PKCOLUMN_NAME");
+                if (fkColumn == null || pkTable == null || pkColumn == null) {
+                    continue;
+                }
+                String name = Objects.requireNonNullElse(resultSet.getString("FK_NAME"), fkColumn + "_fk");
+                keys.add(new SchemaMetadataCodec.ForeignKey(name, fkColumn, pkTable, pkColumn));
+            }
+        } catch (SQLException ignored) {
+            return List.of();
+        }
+        return keys;
+    }
+
+    private static List<SchemaMetadataCodec.IndexInfo> readIndexes(
+            DatabaseMetaData metaData, String catalog, String schema, String table) {
+        Map<String, SchemaMetadataCodec.IndexInfo> byName = new LinkedHashMap<>();
+        try (ResultSet resultSet = metaData.getIndexInfo(catalog, schema, table, false, true)) {
+            while (resultSet.next()) {
+                String name = resultSet.getString("INDEX_NAME");
+                String column = resultSet.getString("COLUMN_NAME");
+                if (name == null || name.isBlank() || column == null || column.isBlank()) {
+                    continue;
+                }
+                boolean unique = !resultSet.getBoolean("NON_UNIQUE");
+                SchemaMetadataCodec.IndexInfo existing = byName.get(name);
+                if (existing == null) {
+                    byName.put(name, new SchemaMetadataCodec.IndexInfo(name, unique, List.of(column)));
+                } else {
+                    List<String> columns = new ArrayList<>(existing.columns());
+                    columns.add(column);
+                    byName.put(name, new SchemaMetadataCodec.IndexInfo(name, existing.unique(), columns));
+                }
+            }
+        } catch (SQLException ignored) {
+            return List.of();
+        }
+        return List.copyOf(byName.values());
+    }
+
+    /** Builds a readable CREATE statement from JDBC metadata — approximate, not a dump. */
+    static String generateDdl(
+            NodeType type,
+            String table,
+            List<SchemaNode> columns,
+            List<SchemaMetadataCodec.ForeignKey> foreignKeys,
+            List<SchemaMetadataCodec.IndexInfo> indexes) {
+
+        StringBuilder ddl = new StringBuilder();
+        if (type == NodeType.VIEW) {
+            ddl.append("CREATE VIEW ").append(table).append(" AS\n")
+                    .append("  -- definition not available via JDBC DatabaseMetaData\n")
+                    .append("  SELECT ");
+            if (columns.isEmpty()) {
+                ddl.append("*");
+            } else {
+                ddl.append(String.join(", ", columns.stream().map(SchemaNode::name).toList()));
+            }
+            ddl.append(" FROM ").append(table).append(";\n");
+            return ddl.toString();
+        }
+
+        ddl.append("CREATE TABLE ").append(table).append(" (\n");
+        List<String> lines = new ArrayList<>();
+        List<String> primaryKey = new ArrayList<>();
+        for (SchemaNode column : columns) {
+            StringBuilder line = new StringBuilder("  ").append(column.name()).append(' ')
+                    .append(Objects.requireNonNullElse(column.metadata(SchemaNode.META_DATA_TYPE), "UNKNOWN"));
+            if (!column.metadataFlag(SchemaNode.META_NULLABLE)) {
+                line.append(" NOT NULL");
+            }
+            if (column.metadataFlag(SchemaNode.META_PRIMARY_KEY)) {
+                primaryKey.add(column.name());
+            }
+            lines.add(line.toString());
+        }
+        if (!primaryKey.isEmpty()) {
+            lines.add("  PRIMARY KEY (" + String.join(", ", primaryKey) + ")");
+        }
+        for (SchemaMetadataCodec.ForeignKey fk : foreignKeys) {
+            lines.add("  CONSTRAINT " + fk.name()
+                    + " FOREIGN KEY (" + fk.fkColumn() + ")"
+                    + " REFERENCES " + fk.pkTable()
+                    + " (" + fk.pkColumn() + ")");
+        }
+        ddl.append(String.join(",\n", lines)).append("\n);\n");
+
+        for (SchemaMetadataCodec.IndexInfo index : indexes) {
+            if ("PRIMARY".equalsIgnoreCase(index.name()) || index.columns().equals(primaryKey)) {
+                continue;
+            }
+            ddl.append(index.unique() ? "CREATE UNIQUE INDEX " : "CREATE INDEX ")
+                    .append(index.name())
+                    .append(" ON ").append(table).append(" (")
+                    .append(String.join(", ", index.columns()))
+                    .append(");\n");
+        }
+        return ddl.toString();
     }
 
     private static List<PositionedColumn> readColumns(

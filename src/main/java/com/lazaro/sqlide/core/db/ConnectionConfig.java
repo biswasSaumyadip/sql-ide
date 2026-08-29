@@ -86,6 +86,11 @@ public record ConnectionConfig(
         return "%s@%s:%d%s".formatted(user.isEmpty() ? "<anonymous>" : user, host, port, schema);
     }
 
+    /** Endpoint without a database suffix — for the status bar when the DB is shown separately. */
+    public String endpointLabel() {
+        return "%s@%s:%d".formatted(user.isEmpty() ? "<anonymous>" : user, host, port);
+    }
+
     @Override
     public String toString() {
         return "ConnectionConfig[%s, driver=%s, password=****]".formatted(displayLabel(), driver.displayName());

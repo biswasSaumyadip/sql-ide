@@ -35,7 +35,16 @@ class SchemaIntrospectionServiceTest {
                     signed_up   TIMESTAMP
                 )
                 """);
+        execute("""
+                CREATE TABLE orders (
+                    id          INT PRIMARY KEY,
+                    customer_id INT NOT NULL,
+                    total       DECIMAL(12,2),
+                    CONSTRAINT fk_orders_customer FOREIGN KEY (customer_id) REFERENCES customer(id)
+                )
+                """);
         execute("CREATE VIEW premium_customer AS SELECT id, email FROM customer WHERE balance > 100");
+        execute("CREATE INDEX idx_customer_email ON customer(email)");
 
         catalog = driver.getSchemaTree().get(TIMEOUT_SECONDS, TIMEOUT_UNIT)
                 .stream()
@@ -131,6 +140,28 @@ class SchemaIntrospectionServiceTest {
         assertEquals(catalog, database.name());
         assertEquals(NodeType.DATABASE, database.type());
         assertEquals(4, find(database.children(), "CUSTOMER").children().size());
+    }
+
+    @Test
+    @DisplayName("full schema packs FK, index and DDL metadata onto table nodes")
+    void fullSchemaEnrichesTableMetadata() throws Exception {
+        List<SchemaNode> full = driver.getFullSchema().get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        SchemaNode database = find(full, catalog);
+        SchemaNode orders = find(database.children(), "ORDERS");
+
+        assertFalse(orders.children().isEmpty(), "columns should be attached");
+        String fks = orders.metadata(SchemaNode.META_FOREIGN_KEYS);
+        assertTrue(fks != null && fks.contains("CUSTOMER"), "expected FK metadata, got: " + fks);
+        assertTrue(fks.contains("CUSTOMER_ID"));
+
+        SchemaNode customer = find(database.children(), "CUSTOMER");
+        String indexes = customer.metadata(SchemaNode.META_INDEXES);
+        assertTrue(indexes != null && indexes.toUpperCase(Locale.ROOT).contains("EMAIL"),
+                "expected email index in: " + indexes);
+
+        String ddl = customer.metadata(SchemaNode.META_DDL);
+        assertTrue(ddl != null && ddl.toUpperCase(Locale.ROOT).contains("CREATE TABLE"),
+                "expected generated DDL, got: " + ddl);
     }
 
     @Test

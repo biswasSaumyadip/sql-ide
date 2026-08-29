@@ -4,6 +4,7 @@ import com.lazaro.sqlide.core.db.ConnectionConfig;
 import com.lazaro.sqlide.core.db.DataSourceDriver;
 import com.lazaro.sqlide.core.db.DriverRegistry;
 import com.lazaro.sqlide.core.db.QueryResult;
+import com.lazaro.sqlide.core.db.SchemaCache;
 import com.lazaro.sqlide.core.db.SchemaNode;
 import com.lazaro.sqlide.ui.components.EditorTabPane;
 import com.lazaro.sqlide.ui.components.QueryOutcomePane;
@@ -62,6 +63,7 @@ public final class MainController {
     private final EditorTabPane editors = new EditorTabPane();
     private final QueryOutcomePane outcome = new QueryOutcomePane();
     private final StatusBar statusBar = new StatusBar();
+    private final SchemaCache schemaCache = new SchemaCache();
 
     private final SplitPane mainSplit = new SplitPane();
     private final SplitPane rightSplit = new SplitPane();
@@ -84,6 +86,7 @@ public final class MainController {
         this.state = state;
         this.driver = registry.create(DriverRegistry.DEFAULT_DRIVER_ID);
         schemaTree.setDriver(driver);
+        editors.setSchemaCache(() -> schemaCache);
     }
 
     // ---------------------------------------------------------------- view
@@ -96,6 +99,8 @@ public final class MainController {
 
         schemaTree.setOnConnectRequested(this::openConnectionDialog);
         schemaTree.setOnActivate(this::insertNodeReference);
+        schemaTree.setOnViewObject(this::openObjectViewer);
+        schemaTree.setOnUseDatabase(this::useDatabase);
         editors.activeEditorProperty().addListener((observable, previous, current) -> bindCaret(current));
         bindCaret(editors.activeEditor());
 
@@ -111,7 +116,7 @@ public final class MainController {
         connectButton = labelledButton(Icons.connect(), "Connect", "Connect to a database (Ctrl+K)",
                 this::openConnectionDialog);
         disconnectButton = iconButton(Icons.disconnect(), "Disconnect", this::disconnect);
-        refreshButton = iconButton(Icons.refresh(), "Refresh Schema (Ctrl+R)", schemaTree::reload);
+        refreshButton = iconButton(Icons.refresh(), "Refresh Schema (Ctrl+R)", this::refreshSchema);
 
         runButton = labelledButton(Icons.run(), "Run", "Execute (Ctrl+Enter)", this::runQuery);
         runButton.getStyleClass().add("run-button");
@@ -192,7 +197,7 @@ public final class MainController {
             } else if (connect.match(event)) {
                 consumeAnd(event, this::openConnectionDialog);
             } else if (refresh.match(event)) {
-                consumeAnd(event, schemaTree::reload);
+                consumeAnd(event, this::refreshSchema);
             }
         });
     }
@@ -271,9 +276,13 @@ public final class MainController {
         task.setOnSucceeded(event -> {
             activeTask = null;
             setConnecting(false);
-            statusBar.setConnected(config.displayLabel());
+            String database = config.database().isBlank()
+                    ? active.activeCatalog().orElse(null)
+                    : config.database();
+            statusBar.setConnected(config.endpointLabel(), database);
             state.saveLastConnection(config);
             schemaTree.reload();
+            refreshSchemaCache();
             updateActionStates();
         });
         task.setOnFailed(event -> {
@@ -282,6 +291,7 @@ public final class MainController {
             String message = rootCauseMessage(task.getException());
             statusBar.setConnectionError("Connection failed: " + message);
             schemaTree.clear();
+            schemaCache.clear();
             updateActionStates();
         });
         backgroundTasks.execute(task);
@@ -293,11 +303,89 @@ public final class MainController {
 
         schemaTree.setDriver(driver);
         schemaTree.clear();
+        schemaCache.clear();
         outcome.clear();
         statusBar.setDisconnected();
         updateActionStates();
 
         backgroundTasks.execute(retired::close);
+    }
+
+    /** Reloads the tree and the client-side autocomplete/object-viewer cache. */
+    private void refreshSchema() {
+        if (!driver.isConnected()) {
+            return;
+        }
+        schemaTree.reload();
+        refreshSchemaCache();
+    }
+
+    /**
+     * Pulls the full schema once into {@link #schemaCache}. Failures leave the
+     * previous snapshot intact so typing is not disrupted by a flaky refresh.
+     */
+    private void refreshSchemaCache() {
+        DataSourceDriver active = driver;
+        if (!active.isConnected()) {
+            schemaCache.clear();
+            return;
+        }
+        active.getFullSchema().whenComplete((nodes, error) -> javafx.application.Platform.runLater(() -> {
+            if (error != null || nodes == null) {
+                return;
+            }
+            schemaCache.replace(nodes);
+            SqlEditorPane editor = editors.activeEditor();
+            if (editor != null) {
+                editor.refreshAutocompleteEngine();
+            }
+        }));
+    }
+
+    private void openObjectViewer(SchemaNode node) {
+        // Prefer the richly populated cache entry over the thin tree node.
+        SchemaNode detailed = schemaCache.findTable(node.name()).orElse(node);
+        editors.openObjectViewer(detailed);
+    }
+
+    /**
+     * Switches the session to the catalog implied by {@code node}: the node itself
+     * when it is a database/schema, otherwise its {@link SchemaNode#META_CATALOG}.
+     */
+    private void useDatabase(SchemaNode node) {
+        if (node == null || !driver.isConnected()) {
+            return;
+        }
+        String catalog = switch (node.type()) {
+            case DATABASE, SCHEMA -> node.name();
+            case TABLE, VIEW, COLUMN -> {
+                String meta = node.metadata(SchemaNode.META_CATALOG);
+                yield meta == null || meta.isBlank() ? null : meta;
+            }
+        };
+        if (catalog == null || catalog.isBlank()) {
+            return;
+        }
+
+        String previous = driver.activeCatalog().orElse(null);
+        if (catalog.equalsIgnoreCase(previous)) {
+            statusBar.setActiveDatabase(previous);
+            return;
+        }
+
+        DataSourceDriver active = driver;
+        statusBar.setBusy("Using database " + catalog + "\u2026");
+        active.setActiveCatalog(catalog).whenComplete((ignored, error) -> javafx.application.Platform.runLater(() -> {
+            if (error != null) {
+                statusBar.setConnectionError("Could not use " + catalog + ": " + rootCauseMessage(error));
+                active.currentConfig().ifPresent(config ->
+                        statusBar.setConnected(config.endpointLabel(), active.activeCatalog().orElse(null)));
+                return;
+            }
+            active.currentConfig().ifPresentOrElse(
+                    config -> statusBar.setConnected(config.endpointLabel(), catalog),
+                    () -> statusBar.setActiveDatabase(catalog));
+        }));
     }
 
     private void runQuery() {

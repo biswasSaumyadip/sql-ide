@@ -15,8 +15,8 @@ import javafx.scene.layout.Region;
 import javafx.scene.shape.Circle;
 
 /**
- * Thin strip along the bottom: connection state on the left, last query outcome
- * and caret position on the right. A small spinner appears while work is in flight.
+ * Thin strip along the bottom: connection + active database on the left, last query
+ * outcome and caret position on the right.
  */
 public final class StatusBar extends HBox {
 
@@ -31,8 +31,11 @@ public final class StatusBar extends HBox {
     private final Circle dot = new Circle(4.5);
     private final ProgressIndicator activity = new ProgressIndicator();
     private final Label connectionLabel = new Label("Not connected");
+    private final Label databaseLabel = new Label();
     private final Label resultLabel = new Label();
     private final Label caretLabel = new Label("Ln 1, Col 1");
+
+    private String endpointText = "Not connected";
 
     public StatusBar() {
         getStyleClass().add("status-bar");
@@ -47,43 +50,72 @@ public final class StatusBar extends HBox {
         activity.setManaged(false);
 
         connectionLabel.getStyleClass().add("status-text");
+        databaseLabel.getStyleClass().addAll("status-text", "status-database");
         resultLabel.getStyleClass().addAll("status-text", "status-result");
         caretLabel.getStyleClass().addAll("status-text", "status-caret");
 
         connectionLabel.setMinWidth(Region.USE_PREF_SIZE);
+        databaseLabel.setMinWidth(Region.USE_PREF_SIZE);
         caretLabel.setMinWidth(Region.USE_PREF_SIZE);
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
         getChildren().addAll(
-                dot, activity, connectionLabel,
+                dot, activity, connectionLabel, databaseLabel,
                 spacer,
                 resultLabel, new Separator(Orientation.VERTICAL), caretLabel);
 
         setDisconnected();
     }
 
-    public void setConnected(String description) {
+    /**
+     * @param endpoint {@code user@host:port} without a database suffix
+     * @param database active catalog/schema, or {@code null}/{@code ""} when none
+     */
+    public void setConnected(String endpoint, String database) {
         setActivity(false);
         applyDotClass(DOT_CONNECTED);
-        connectionLabel.setText(description);
+        endpointText = endpoint == null || endpoint.isBlank() ? "Connected" : endpoint;
+        connectionLabel.setText(endpointText);
         connectionLabel.pseudoClassStateChanged(ERROR, false);
         connectionLabel.setTooltip(null);
+        setActiveDatabase(database);
+    }
+
+    /** Updates only the active-database readout (connection stays as-is). */
+    public void setActiveDatabase(String database) {
+        if (database == null || database.isBlank()) {
+            databaseLabel.setText("· no database");
+            databaseLabel.setTooltip(new Tooltip("Double-click a database in the schema tree to use it"));
+            databaseLabel.pseudoClassStateChanged(ERROR, false);
+            databaseLabel.getStyleClass().remove("status-database-active");
+        } else {
+            databaseLabel.setText("· " + database);
+            databaseLabel.setTooltip(new Tooltip("Active database: " + database));
+            databaseLabel.getStyleClass().add("status-database-active");
+        }
+        databaseLabel.setVisible(true);
+        databaseLabel.setManaged(true);
     }
 
     public void setDisconnected() {
         setActivity(false);
         applyDotClass(DOT_DISCONNECTED);
-        connectionLabel.setText("Not connected");
+        endpointText = "Not connected";
+        connectionLabel.setText(endpointText);
         connectionLabel.pseudoClassStateChanged(ERROR, false);
         connectionLabel.setTooltip(null);
+        databaseLabel.setText("");
+        databaseLabel.setTooltip(null);
+        databaseLabel.setVisible(false);
+        databaseLabel.setManaged(false);
+        databaseLabel.getStyleClass().remove("status-database-active");
         resultLabel.setText("");
         resultLabel.setTooltip(null);
         resultLabel.pseudoClassStateChanged(ERROR, false);
     }
 
-    /** Connection or query work is in flight. */
     public void setBusy(String message) {
         setActivity(true);
         applyDotClass(DOT_BUSY);
@@ -92,13 +124,15 @@ public final class StatusBar extends HBox {
         connectionLabel.setTooltip(null);
     }
 
-    /** A failed connection attempt, shown inline instead of a modal. */
     public void setConnectionError(String message) {
         setActivity(false);
         applyDotClass(DOT_DISCONNECTED);
         connectionLabel.setText(abbreviate(message, 72));
         connectionLabel.setTooltip(new Tooltip(message));
         connectionLabel.pseudoClassStateChanged(ERROR, true);
+        databaseLabel.setText("");
+        databaseLabel.setVisible(false);
+        databaseLabel.setManaged(false);
     }
 
     public void setQueryRunning() {
@@ -114,7 +148,6 @@ public final class StatusBar extends HBox {
         pseudoClassStateChanged(BUSY, false);
     }
 
-    /** Shows the outcome of the last statement, or its error. */
     public void setResult(QueryResult result) {
         clearQueryRunning();
         String summary = result.summary();
@@ -130,7 +163,6 @@ public final class StatusBar extends HBox {
         resultLabel.pseudoClassStateChanged(ERROR, false);
     }
 
-    /** Follows the caret of whichever editor is active. */
     public void bindCaret(ObservableValue<String> caretLocation) {
         caretLabel.textProperty().unbind();
         if (caretLocation == null) {

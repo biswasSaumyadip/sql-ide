@@ -1,5 +1,7 @@
 package com.lazaro.sqlide.ui.components;
 
+import com.lazaro.sqlide.core.db.SchemaCache;
+import com.lazaro.sqlide.core.db.SchemaNode;
 import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -16,7 +18,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
  * One SQL editor per tab. Tabs close individually and can be dragged to reorder.
@@ -30,6 +34,7 @@ public final class EditorTabPane extends TabPane {
 
     private final ReadOnlyObjectWrapper<SqlEditorPane> activeEditor = new ReadOnlyObjectWrapper<>();
     private int untitledCounter;
+    private Supplier<SchemaCache> schemaCache = SchemaCache::new;
 
     public EditorTabPane() {
         getStyleClass().add("editor-tabs");
@@ -57,10 +62,36 @@ public final class EditorTabPane extends TabPane {
 
     /** Opens a new empty tab and selects it. */
     public void newTab() {
-        QueryTab tab = new QueryTab("query-" + (++untitledCounter) + ".sql");
+        QueryTab tab = new QueryTab("query-" + (++untitledCounter) + ".sql", schemaCache);
         getTabs().add(tab);
         getSelectionModel().select(tab);
         tab.editor().requestFocus();
+    }
+
+    /** Supplies the live schema snapshot to every editor for autocomplete. */
+    public void setSchemaCache(Supplier<SchemaCache> schemaCache) {
+        this.schemaCache = schemaCache == null ? SchemaCache::new : schemaCache;
+        getTabs().stream()
+                .filter(QueryTab.class::isInstance)
+                .map(QueryTab.class::cast)
+                .forEach(tab -> tab.editor().setSchemaCache(this.schemaCache));
+    }
+
+    /** Opens (or focuses) an object-viewer tab for the given table/view node. */
+    public void openObjectViewer(SchemaNode node) {
+        if (node == null) {
+            return;
+        }
+        String title = node.name();
+        for (Tab tab : getTabs()) {
+            if (tab instanceof ObjectTab objectTab && objectTab.matches(node)) {
+                getSelectionModel().select(objectTab);
+                return;
+            }
+        }
+        ObjectTab tab = new ObjectTab(node);
+        getTabs().add(tab);
+        getSelectionModel().select(tab);
     }
 
     /** Closes the selected tab, honouring the unsaved-changes prompt. */
@@ -125,8 +156,9 @@ public final class EditorTabPane extends TabPane {
         private String baseline = "";
         private Path file;
 
-        QueryTab(String title) {
+        QueryTab(String title, Supplier<SchemaCache> schemaCache) {
             this.title = title;
+            editor.setSchemaCache(schemaCache);
             setContent(editor);
 
             editor.textProperty().addListener((observable, previous, current) ->
@@ -214,6 +246,29 @@ public final class EditorTabPane extends TabPane {
             baseline = content;
             dirty.set(false);
             refreshTitle();
+        }
+    }
+
+    private static final class ObjectTab extends Tab {
+
+        private final String objectKey;
+        private final ObjectViewerPane viewer = new ObjectViewerPane();
+
+        ObjectTab(SchemaNode node) {
+            this.objectKey = keyOf(node);
+            setText(node.name());
+            setContent(viewer);
+            viewer.show(node);
+            getStyleClass().add("object-viewer-tab");
+        }
+
+        boolean matches(SchemaNode node) {
+            return objectKey.equals(keyOf(node));
+        }
+
+        private static String keyOf(SchemaNode node) {
+            String catalog = Objects.requireNonNullElse(node.metadata(SchemaNode.META_CATALOG), "");
+            return catalog + "/" + node.name();
         }
     }
 }

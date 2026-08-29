@@ -33,6 +33,18 @@ public record SchemaNode(String name, NodeType type, List<SchemaNode> children, 
     public static final String META_CATALOG = "catalog";
     /** Metadata key holding the raw JDBC table type, e.g. {@code BASE TABLE}. */
     public static final String META_TABLE_TYPE = "tableType";
+    /**
+     * Encoded foreign keys on a table node:
+     * {@code name|fkColumn|pkTable|pkColumn} entries joined by {@code ;}.
+     */
+    public static final String META_FOREIGN_KEYS = "foreignKeys";
+    /**
+     * Encoded indexes on a table node:
+     * {@code name|UNIQUE|col1,col2} entries joined by {@code ;}.
+     */
+    public static final String META_INDEXES = "indexes";
+    /** Generated {@code CREATE TABLE}/{@code CREATE VIEW} DDL for the object viewer. */
+    public static final String META_DDL = "ddl";
 
     public enum NodeType {
         DATABASE,

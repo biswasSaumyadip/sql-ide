@@ -51,6 +51,22 @@ public interface DataSourceDriver extends AutoCloseable {
     /** Loads one level below {@code parent}. Returns empty for leaves. */
     CompletableFuture<List<SchemaNode>> getChildren(SchemaNode parent);
 
+    /**
+     * Eagerly loads every catalog with tables, columns, indexes and foreign keys
+     * populated. Intended for the client-side schema cache (autocomplete / object
+     * viewer), not for painting the lazy tree.
+     */
+    CompletableFuture<List<SchemaNode>> getFullSchema();
+
+    /**
+     * Sets the catalog/schema used for subsequent statements (MySQL {@code USE},
+     * JDBC {@code Connection#setCatalog}). Pass {@code null} or blank to clear.
+     */
+    CompletableFuture<Void> setActiveCatalog(String catalog);
+
+    /** Catalog currently applied to new statements, empty when none is selected. */
+    Optional<String> activeCatalog();
+
     boolean isConnected();
 
     /** The configuration currently in use, empty when disconnected. */
