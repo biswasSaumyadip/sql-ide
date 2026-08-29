@@ -23,6 +23,7 @@ final class SqlStatementExtractor {
 
         int start = 0;
         int i = 0;
+        String lastNonEmpty = "";
         while (i < sql.length()) {
             char c = sql.charAt(i);
             char next = i + 1 < sql.length() ? sql.charAt(i + 1) : 0;
@@ -40,14 +41,26 @@ final class SqlStatementExtractor {
                 continue;
             }
             if (c == ';') {
+                String statement = trimStatement(sql.substring(start, i));
                 if (pos <= i) {
-                    return trimStatement(sql.substring(start, i));
+                    // Caret on this statement or on its terminating semicolon.
+                    return statement.isEmpty() ? lastNonEmpty : statement;
+                }
+                if (!statement.isEmpty()) {
+                    lastNonEmpty = statement;
                 }
                 start = i + 1;
             }
             i++;
         }
-        return trimStatement(sql.substring(start));
+
+        String trailing = trimStatement(sql.substring(start));
+        if (!trailing.isEmpty()) {
+            return trailing;
+        }
+        // Caret sits after a trailing semicolon / blank lines — run the previous statement,
+        // matching DataGrip when you hit Run at the end of `USE warcraft;`.
+        return lastNonEmpty;
     }
 
     private static String trimStatement(String fragment) {
@@ -78,7 +91,6 @@ final class SqlStatementExtractor {
         int i = openIndex + 1;
         while (i < sql.length()) {
             char c = sql.charAt(i);
-            // SQL escapes a quote by doubling it: 'It''s'
             if (c == quote) {
                 if (i + 1 < sql.length() && sql.charAt(i + 1) == quote) {
                     i += 2;
@@ -86,7 +98,6 @@ final class SqlStatementExtractor {
                 }
                 return i + 1;
             }
-            // MySQL backslash escape inside quotes
             if (c == '\\' && i + 1 < sql.length()) {
                 i += 2;
                 continue;

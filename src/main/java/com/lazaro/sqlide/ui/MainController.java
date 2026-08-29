@@ -427,6 +427,9 @@ public final class MainController {
             QueryResult result = task.getValue();
             outcome.present(result);
             statusBar.setResult(result);
+            if (!result.isError()) {
+                syncActiveCatalogFromSql(sql);
+            }
         });
         task.setOnFailed(event -> {
             activeTask = null;
@@ -444,6 +447,50 @@ public final class MainController {
             default -> node.name();
         };
         editors.insertIntoActiveEditor(text);
+    }
+
+    /** Keeps the footer in sync when the user runs {@code USE db} from the editor. */
+    private void syncActiveCatalogFromSql(String sql) {
+        String catalog = parseUseCatalog(sql);
+        if (catalog == null) {
+            return;
+        }
+        DataSourceDriver active = driver;
+        active.setActiveCatalog(catalog).whenComplete((ignored, error) -> javafx.application.Platform.runLater(() -> {
+            if (error != null) {
+                return;
+            }
+            active.currentConfig().ifPresent(config ->
+                    statusBar.setConnected(config.endpointLabel(), catalog));
+        }));
+    }
+
+    /** @return catalog name from a USE statement, or {@code null} if {@code sql} is not one */
+    static String parseUseCatalog(String sql) {
+        if (sql == null) {
+            return null;
+        }
+        String trimmed = sql.strip();
+        if (trimmed.endsWith(";")) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1).strip();
+        }
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("(?i)^USE\\s+([`\"\\[]?[A-Za-z0-9_]+[`\"\\]]?)$")
+                .matcher(trimmed);
+        if (!matcher.matches()) {
+            return null;
+        }
+        String name = matcher.group(1);
+        if (name.length() >= 2) {
+            char first = name.charAt(0);
+            char last = name.charAt(name.length() - 1);
+            if ((first == '`' && last == '`')
+                    || (first == '"' && last == '"')
+                    || (first == '[' && last == ']')) {
+                return name.substring(1, name.length() - 1);
+            }
+        }
+        return name;
     }
 
     private void updateActionStates() {

@@ -34,4 +34,12 @@ class SqlStatementExtractorTest {
     void emptyInput() {
         assertEquals("", SqlStatementExtractor.statementAt("   ", 0));
     }
+
+    @Test
+    @DisplayName("caret after trailing semicolon still runs that statement")
+    void caretAfterSemicolonUsesPreviousStatement() {
+        String sql = "use warcraft;";
+        assertEquals("use warcraft", SqlStatementExtractor.statementAt(sql, sql.length()));
+        assertEquals("use warcraft", SqlStatementExtractor.statementAt(sql, sql.indexOf(';')));
+    }
 }
