@@ -125,9 +125,17 @@ public final class SqlEditorPane extends BorderPane {
         this.engine = new SqlAutocompleteEngine(schemaCache.get());
     }
 
+    /**
+     * The SQL the user intends to run: the selection when there is one, otherwise
+     * the single statement under the caret. Never the whole buffer when it contains
+     * several statements — JDBC rejects that with a misleading syntax error.
+     */
     public String getEffectiveSql() {
         String selection = codeArea.getSelectedText();
-        return selection == null || selection.isBlank() ? codeArea.getText() : selection;
+        if (selection != null && !selection.isBlank()) {
+            return selection.strip();
+        }
+        return SqlStatementExtractor.statementAt(codeArea.getText(), codeArea.getCaretPosition());
     }
 
     public String getSql() {
