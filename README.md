@@ -47,8 +47,12 @@ com.lazaro.sqlide
 │   ├── QueryResult                 detached outcome of one statement
 │   ├── DatabaseService             Hikari pool, async execution
 │   ├── SchemaIntrospectionService  DatabaseMetaData reader
+│   ├── ResultSetMapper             drains a cursor into a QueryResult
 │   └── DatabaseNode/TableNode/ColumnNode
-└── ui.components                   SQL editor, dynamic result grid, main layout
+└── ui.components
+    ├── SqlEditorPane               RichTextFX editor, line numbers
+    ├── SqlSyntaxHighlighter        pure regex tokeniser (no JavaFX types)
+    └── DynamicResultTable          grid built from result metadata
 ```
 
 `core.db` has no JavaFX imports at all and is covered by its own tests, so it can
@@ -70,12 +74,13 @@ because those are lifecycle problems.
 ```
 
 The `core.db` suite runs against a throwaway in-memory H2 database, so it needs no
-running server.
+running server. The SQL tokeniser is tested through `SqlSyntaxHighlighter.tokenize`,
+which returns plain offsets and therefore needs no JavaFX toolkit either.
 
 ## Roadmap
 
 - [x] **Phase 1** — Gradle build, JavaFX + AtlantaFX bootstrap window
 - [x] **Phase 2** — Headless engine: `DatabaseService`, `SchemaIntrospectionService`
-- [ ] **Phase 3** — `SqlEditorPane` (syntax highlighting), `DynamicResultTable`
+- [x] **Phase 3** — `SqlEditorPane` (syntax highlighting), `DynamicResultTable`
 - [ ] **Phase 4** — Main layout: schema tree, split panes, toolbar
 - [ ] **Phase 5** — Concurrency bridge wiring UI actions to background services

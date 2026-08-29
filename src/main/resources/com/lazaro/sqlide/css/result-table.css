@@ -1,0 +1,35 @@
+.result-table {
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 12px;
+}
+
+.result-table .table-cell {
+    -fx-padding: 3px 8px;
+    -fx-alignment: CENTER-LEFT;
+}
+
+.result-table .column-header .label {
+    -fx-font-weight: bold;
+}
+
+.result-table .row-number-column {
+    -fx-alignment: CENTER-RIGHT;
+}
+
+.result-table .row-number-column .table-cell,
+.result-table .table-column.row-number-column {
+    -fx-alignment: CENTER-RIGHT;
+    -fx-opacity: 0.55;
+}
+
+.result-table .null-value {
+    -fx-text-fill: #7f848e;
+    -fx-font-style: italic;
+}
+
+.result-placeholder {
+    -fx-opacity: 0.7;
+    -fx-wrap-text: true;
+    -fx-text-alignment: center;
+    -fx-padding: 16px;
+}

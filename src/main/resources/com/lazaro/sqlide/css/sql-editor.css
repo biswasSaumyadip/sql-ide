@@ -1,0 +1,71 @@
+/* Palette is fixed rather than derived from AtlantaFX variables so token colours
+   stay legible and predictable regardless of the active theme. */
+
+.sql-editor {
+    -fx-background-color: #1e1f22;
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 13px;
+    -fx-padding: 6px 4px 6px 0;
+}
+
+.sql-editor .text {
+    -fx-fill: #d6d9de;
+}
+
+/* Without this the caret is drawn black on a dark background and disappears. */
+.sql-editor .caret {
+    -fx-stroke: #f0f2f5;
+    -fx-stroke-width: 1.6;
+}
+
+.sql-editor .selection {
+    -fx-fill: #2f5d8c;
+}
+
+.sql-editor .paragraph-box:has-caret {
+    -fx-background-color: #26282d;
+}
+
+/* Qualified with .sql-editor so the gutter keeps its muted colour instead of
+   inheriting the theme's default label styling. */
+.sql-editor .lineno {
+    -fx-background-color: #1e1f22;
+    -fx-text-fill: #5c626b;
+    -fx-font-weight: normal;
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", "Menlo", monospace;
+    -fx-font-size: 12px;
+    -fx-padding: 0 10px 0 8px;
+}
+
+/* Token rules must outrank the `.sql-editor .text` base colour above, so they
+   qualify the Text node with both its own class and the token class. */
+
+.sql-editor .text.sql-keyword {
+    -fx-fill: #4fa6ee;
+    -fx-font-weight: bold;
+}
+
+.sql-editor .text.sql-function {
+    -fx-fill: #57b5a6;
+}
+
+.sql-editor .text.sql-string {
+    -fx-fill: #e8935c;
+}
+
+.sql-editor .text.sql-number {
+    -fx-fill: #b5cea8;
+}
+
+.sql-editor .text.sql-comment {
+    -fx-fill: #7f848e;
+    -fx-font-style: italic;
+}
+
+.sql-editor .text.sql-operator {
+    -fx-fill: #d4a0e0;
+}
+
+.sql-editor .text.sql-punctuation {
+    -fx-fill: #9aa2ad;
+}

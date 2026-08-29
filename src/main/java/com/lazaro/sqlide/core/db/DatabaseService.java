@@ -3,15 +3,10 @@ package com.lazaro.sqlide.core.db;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 
-import java.sql.Blob;
-import java.sql.Clob;
 import java.sql.Connection;
 import java.sql.ResultSet;
-import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -41,7 +36,6 @@ public final class DatabaseService implements AutoCloseable {
 
     private static final int POOL_SIZE = 4;
     private static final long CONNECTION_TIMEOUT_MS = 10_000L;
-    private static final int CLOB_PREVIEW_CHARS = 4_096;
 
     private final ExecutorService executor = Executors.newFixedThreadPool(POOL_SIZE, workerThreadFactory());
 
@@ -133,7 +127,7 @@ public final class DatabaseService implements AutoCloseable {
 
             if (producedResultSet) {
                 try (ResultSet resultSet = statement.getResultSet()) {
-                    return drain(resultSet, startNanos);
+                    return ResultSetMapper.drain(resultSet, MAX_ROWS, startNanos);
                 }
             }
             return QueryResult.ofUpdate(statement.getUpdateCount(), elapsedMs(startNanos));
@@ -141,41 +135,6 @@ public final class DatabaseService implements AutoCloseable {
         } catch (SQLException e) {
             return QueryResult.ofError(describe(e), elapsedMs(startNanos));
         }
-    }
-
-    private static QueryResult drain(ResultSet resultSet, long startNanos) throws SQLException {
-        ResultSetMetaData metaData = resultSet.getMetaData();
-        int columnCount = metaData.getColumnCount();
-
-        List<String> columnNames = new ArrayList<>(columnCount);
-        for (int i = 1; i <= columnCount; i++) {
-            String label = metaData.getColumnLabel(i);
-            columnNames.add(label == null || label.isEmpty() ? metaData.getColumnName(i) : label);
-        }
-
-        List<List<String>> rows = new ArrayList<>();
-        while (rows.size() < MAX_ROWS && resultSet.next()) {
-            List<String> row = new ArrayList<>(columnCount);
-            for (int i = 1; i <= columnCount; i++) {
-                row.add(stringify(resultSet, i));
-            }
-            rows.add(row);
-        }
-        return QueryResult.ofRows(columnNames, rows, elapsedMs(startNanos));
-    }
-
-    /** Renders a cell as text, returning {@code null} for SQL NULL and a placeholder for binary payloads. */
-    private static String stringify(ResultSet resultSet, int columnIndex) throws SQLException {
-        Object value = resultSet.getObject(columnIndex);
-        if (value == null || resultSet.wasNull()) {
-            return null;
-        }
-        return switch (value) {
-            case byte[] bytes -> "<binary, %d bytes>".formatted(bytes.length);
-            case Blob blob -> "<blob, %d bytes>".formatted(blob.length());
-            case Clob clob -> clob.getSubString(1, (int) Math.min(clob.length(), CLOB_PREVIEW_CHARS));
-            default -> value.toString();
-        };
     }
 
     // ---------------------------------------------------------------- internals
@@ -204,7 +163,7 @@ public final class DatabaseService implements AutoCloseable {
     }
 
     private static long elapsedMs(long startNanos) {
-        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+        return ResultSetMapper.elapsedMs(startNanos);
     }
 
     private static String describe(SQLException e) {
