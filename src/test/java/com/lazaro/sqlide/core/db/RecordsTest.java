@@ -86,6 +86,12 @@ class RecordsTest {
         assertEquals("3 rows affected in 2 ms", QueryResult.ofUpdate(3, 2L).summary());
         assertTrue(QueryResult.ofError("boom", 1L).summary().contains("boom"));
         assertTrue(QueryResult.ofError(null, 1L).isError());
+        assertEquals(
+                "Query OK \u2014 5 rows affected (2 ms)",
+                QueryResult.ofUpdate(5, 2L).successMessage());
+        assertTrue(QueryResult.ofRows(List.of("id"), List.of(List.of("1")), 5L)
+                .successMessage()
+                .startsWith("Query OK"));
     }
 
     @Test

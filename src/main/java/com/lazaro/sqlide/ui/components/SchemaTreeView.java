@@ -5,13 +5,17 @@ import com.lazaro.sqlide.core.db.SchemaNode;
 import com.lazaro.sqlide.core.db.SchemaNode.NodeType;
 import com.lazaro.sqlide.ui.Icons;
 import javafx.application.Platform;
+import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.control.Button;
 import javafx.scene.control.Label;
+import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeView;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 
 import java.util.List;
@@ -21,10 +25,9 @@ import java.util.function.Consumer;
 /**
  * Schema explorer: catalogs, then tables and views, then columns.
  *
- * <p>Levels are fetched only when a node is first expanded, because introspecting
- * a whole server upfront is unusable on a real database. Fetches run on the
- * driver's worker threads and the resulting items are attached via
- * {@link Platform#runLater}.
+ * <p>When nothing is connected the tree is replaced by a prompt with a
+ * {@linkplain #setOnConnectRequested(Runnable) New Connection} action, not a blank
+ * panel. Levels are fetched only when a node is first expanded.
  */
 public final class SchemaTreeView extends VBox {
 
@@ -33,9 +36,17 @@ public final class SchemaTreeView extends VBox {
 
     private final TreeView<SchemaNode> tree = new TreeView<>();
     private final Label headerLabel = new Label("SCHEMA");
+    private final StackPane body = new StackPane();
+    private final VBox emptyState = new VBox(10);
+    private final VBox loadingState = new VBox(10);
+    private final Label emptyTitle = new Label("No database connected");
+    private final Label emptyDetail = new Label("Connect to browse catalogs, tables and columns.");
+    private final Label loadingLabel = new Label("Loading schemas\u2026");
+    private final ProgressIndicator loadingSpinner = new ProgressIndicator();
 
     private DataSourceDriver driver;
     private Consumer<SchemaNode> onActivate = node -> { };
+    private Runnable onConnectRequested = () -> { };
 
     public SchemaTreeView() {
         getStyleClass().add("schema-tree-pane");
@@ -57,17 +68,45 @@ public final class SchemaTreeView extends VBox {
             }
         });
 
-        // The tree takes every pixel the panel is not using for its header.
-        VBox.setVgrow(tree, Priority.ALWAYS);
-        getChildren().addAll(header, tree);
+        emptyTitle.getStyleClass().add("empty-state-title");
+        emptyDetail.getStyleClass().add("empty-state-detail");
+        emptyDetail.setWrapText(true);
 
-        showMessage("Not connected");
+        Button connectButton = new Button("New Connection");
+        connectButton.getStyleClass().add("empty-state-action");
+        connectButton.setOnAction(event -> onConnectRequested.run());
+
+        emptyState.getStyleClass().add("empty-state");
+        emptyState.setAlignment(Pos.CENTER);
+        emptyState.setPadding(new Insets(24, 16, 24, 16));
+        emptyState.getChildren().addAll(Icons.database(), emptyTitle, emptyDetail, connectButton);
+
+        loadingSpinner.setMaxSize(22, 22);
+        loadingLabel.getStyleClass().add("empty-state-detail");
+        loadingState.getStyleClass().addAll("empty-state", "loading-state");
+        loadingState.setAlignment(Pos.CENTER);
+        loadingState.getChildren().addAll(loadingSpinner, loadingLabel);
+        loadingState.setVisible(false);
+        loadingState.setManaged(false);
+
+        body.getChildren().addAll(tree, emptyState, loadingState);
+        StackPane.setAlignment(emptyState, Pos.CENTER);
+        StackPane.setAlignment(loadingState, Pos.CENTER);
+        VBox.setVgrow(body, Priority.ALWAYS);
+
+        getChildren().addAll(header, body);
+        showDisconnected();
     }
 
     // ---------------------------------------------------------------- public API
 
     public void setDriver(DataSourceDriver driver) {
         this.driver = driver;
+    }
+
+    /** Opens the connect dialog when the empty-state button is pressed. */
+    public void setOnConnectRequested(Runnable onConnectRequested) {
+        this.onConnectRequested = onConnectRequested == null ? () -> { } : onConnectRequested;
     }
 
     /** Called when a node is double-clicked, so the controller can paste it into the editor. */
@@ -78,23 +117,68 @@ public final class SchemaTreeView extends VBox {
     /** Reloads the top level. Safe to call from the JavaFX Application Thread. */
     public void reload() {
         if (driver == null || !driver.isConnected()) {
-            showMessage("Not connected");
+            showDisconnected();
             return;
         }
-        showMessage("Loading\u2026");
+        showLoading();
         driver.getSchemaTree().whenComplete((nodes, error) -> Platform.runLater(() -> {
             if (error != null) {
-                showMessage(rootCauseMessage(error));
+                showLoadError(rootCauseMessage(error));
             } else if (nodes.isEmpty()) {
-                showMessage("No databases visible");
+                showLoadError("No databases visible for this account.");
             } else {
                 tree.getRoot().getChildren().setAll(nodes.stream().map(this::itemFor).toList());
+                showTree();
             }
         }));
     }
 
     public void clear() {
-        showMessage("Not connected");
+        showDisconnected();
+    }
+
+    // ---------------------------------------------------------------- view states
+
+    private void showDisconnected() {
+        tree.getRoot().getChildren().clear();
+        emptyTitle.setText("No database connected");
+        emptyDetail.setText("Connect to browse catalogs, tables and columns.");
+        emptyState.setVisible(true);
+        emptyState.setManaged(true);
+        loadingState.setVisible(false);
+        loadingState.setManaged(false);
+        tree.setVisible(false);
+        tree.setManaged(false);
+    }
+
+    private void showLoading() {
+        emptyState.setVisible(false);
+        emptyState.setManaged(false);
+        loadingState.setVisible(true);
+        loadingState.setManaged(true);
+        tree.setVisible(false);
+        tree.setManaged(false);
+    }
+
+    private void showLoadError(String message) {
+        tree.getRoot().getChildren().clear();
+        emptyTitle.setText("Could not load schema");
+        emptyDetail.setText(message);
+        emptyState.setVisible(true);
+        emptyState.setManaged(true);
+        loadingState.setVisible(false);
+        loadingState.setManaged(false);
+        tree.setVisible(false);
+        tree.setManaged(false);
+    }
+
+    private void showTree() {
+        emptyState.setVisible(false);
+        emptyState.setManaged(false);
+        loadingState.setVisible(false);
+        loadingState.setManaged(false);
+        tree.setVisible(true);
+        tree.setManaged(true);
     }
 
     // ---------------------------------------------------------------- internals
@@ -104,10 +188,6 @@ public final class SchemaTreeView extends VBox {
         if (selected != null && selected.getValue() != null && !isPlaceholder(selected.getValue())) {
             onActivate.accept(selected.getValue());
         }
-    }
-
-    private void showMessage(String message) {
-        tree.getRoot().getChildren().setAll(placeholderItem(message));
     }
 
     private LazyItem itemFor(SchemaNode node) {
@@ -133,7 +213,6 @@ public final class SchemaTreeView extends VBox {
         }));
     }
 
-    /** A single non-selectable row standing in for a pending, empty or failed fetch. */
     private static List<TreeItem<SchemaNode>> placeholderItem(String text) {
         SchemaNode node = SchemaNode.of(text, NodeType.COLUMN, Map.of(META_PLACEHOLDER, "true"));
         return List.of(new TreeItem<>(node));
@@ -152,7 +231,6 @@ public final class SchemaTreeView extends VBox {
         return message == null || message.isBlank() ? cause.getClass().getSimpleName() : message;
     }
 
-    /** Tree item that asks the driver for its children the first time it is opened. */
     private static final class LazyItem extends TreeItem<SchemaNode> {
 
         private boolean loaded;
@@ -169,12 +247,10 @@ public final class SchemaTreeView extends VBox {
 
         @Override
         public boolean isLeaf() {
-            // Decided by node type, not by whether children happen to be loaded yet.
             return getValue().isLeaf();
         }
     }
 
-    /** Renders icon, name and, for columns, a dimmed type. */
     private static final class SchemaTreeCell extends TreeCell<SchemaNode> {
 
         private final Label nameLabel = new Label();

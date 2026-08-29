@@ -1,6 +1,43 @@
 .result-table {
     -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", "Menlo", monospace;
     -fx-font-size: 12px;
+    -fx-background-color: #17181b;
+}
+
+.result-table .column-header-background {
+    -fx-background-color: #1e1f22;
+}
+
+.result-table .column-header,
+.result-table .filler {
+    -fx-background-color: #1e1f22;
+    -fx-border-color: #303237;
+    -fx-border-width: 0 0 1 0;
+}
+
+.result-table .table-row-cell {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+}
+
+.result-table .table-row-cell:odd {
+    -fx-background-color: #1b1c1f;
+}
+
+.result-table .table-row-cell:hover {
+    -fx-background-color: #262a32;
+}
+
+.result-table .table-row-cell:selected {
+    -fx-background-color: #2f5d8c;
+}
+
+.result-table .table-row-cell:selected:hover {
+    -fx-background-color: derive(#2f5d8c, 8%);
+}
+
+.result-table .table-row-cell:selected .table-cell {
+    -fx-text-fill: #eceff4;
 }
 
 .result-table .table-cell {
@@ -28,8 +65,10 @@
 }
 
 .result-placeholder {
-    -fx-opacity: 0.7;
+    -fx-text-fill: #7f848e;
+    -fx-opacity: 1;
     -fx-wrap-text: true;
     -fx-text-alignment: center;
-    -fx-padding: 16px;
+    -fx-padding: 24px 16px;
+    -fx-font-size: 12.5px;
 }

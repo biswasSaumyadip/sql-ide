@@ -67,11 +67,11 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
         clear();
 
         if (result.isError()) {
-            placeholder.setText(result.errorMessage());
-            return;
+            throw new IllegalArgumentException(
+                    "Errors are rendered by QueryErrorPanel; call QueryOutcomePane.present instead.");
         }
         if (!result.isResultSet()) {
-            placeholder.setText(result.summary());
+            placeholder.setText(result.successMessage());
             return;
         }
         if (result.columnNames().isEmpty()) {
@@ -88,7 +88,7 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
         setItems(rows);
 
         if (rows.isEmpty()) {
-            placeholder.setText("No rows. " + result.summary());
+            placeholder.setText("Query OK \u2014 no rows returned (%d ms)".formatted(result.executionTimeMs()));
         }
     }
 

@@ -5,8 +5,8 @@ import com.lazaro.sqlide.core.db.DataSourceDriver;
 import com.lazaro.sqlide.core.db.DriverRegistry;
 import com.lazaro.sqlide.core.db.QueryResult;
 import com.lazaro.sqlide.core.db.SchemaNode;
-import com.lazaro.sqlide.ui.components.DynamicResultTable;
 import com.lazaro.sqlide.ui.components.EditorTabPane;
+import com.lazaro.sqlide.ui.components.QueryOutcomePane;
 import com.lazaro.sqlide.ui.components.SchemaTreeView;
 import com.lazaro.sqlide.ui.components.SqlEditorPane;
 import com.lazaro.sqlide.ui.components.StatusBar;
@@ -17,11 +17,10 @@ import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
-import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.Separator;
 import javafx.scene.control.SplitPane;
-import javafx.scene.control.TextArea;
 import javafx.scene.control.ToolBar;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.KeyCode;
@@ -29,8 +28,6 @@ import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.input.KeyCombination;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.BorderPane;
-import javafx.scene.layout.HBox;
-import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 import javafx.stage.Window;
@@ -43,7 +40,8 @@ import java.util.concurrent.Executors;
  * obtained from the {@link DriverRegistry}. No concrete driver class is named here.
  *
  * <p>Database work always runs inside a {@link Task} on a background executor;
- * results reach the scene graph only through the Task's JavaFX callbacks.
+ * results reach the scene graph only through the Task's JavaFX callbacks. Failures
+ * are surfaced inline — never through modal alerts that interrupt editing flow.
  */
 public final class MainController {
 
@@ -62,7 +60,7 @@ public final class MainController {
 
     private final SchemaTreeView schemaTree = new SchemaTreeView();
     private final EditorTabPane editors = new EditorTabPane();
-    private final DynamicResultTable results = new DynamicResultTable();
+    private final QueryOutcomePane outcome = new QueryOutcomePane();
     private final StatusBar statusBar = new StatusBar();
 
     private final SplitPane mainSplit = new SplitPane();
@@ -74,8 +72,10 @@ public final class MainController {
     private Button connectButton;
     private Button disconnectButton;
     private Button refreshButton;
+    private ProgressIndicator toolbarActivity;
 
     private DataSourceDriver driver;
+    private Task<?> activeTask;
     private boolean sidebarCollapsed;
     private double expandedMainDivider = DEFAULT_MAIN_DIVIDER;
 
@@ -94,6 +94,7 @@ public final class MainController {
         root.setCenter(buildMainSplit());
         root.setBottom(statusBar);
 
+        schemaTree.setOnConnectRequested(this::openConnectionDialog);
         schemaTree.setOnActivate(this::insertNodeReference);
         editors.activeEditorProperty().addListener((observable, previous, current) -> bindCaret(current));
         bindCaret(editors.activeEditor());
@@ -115,6 +116,12 @@ public final class MainController {
         runButton = labelledButton(Icons.run(), "Run", "Execute (Ctrl+Enter)", this::runQuery);
         runButton.getStyleClass().add("run-button");
 
+        toolbarActivity = new ProgressIndicator();
+        toolbarActivity.setMaxSize(16, 16);
+        toolbarActivity.getStyleClass().add("toolbar-activity");
+        toolbarActivity.setVisible(false);
+        toolbarActivity.setManaged(false);
+
         ToolBar toolBar = new ToolBar(
                 sidebarToggle,
                 separator(),
@@ -122,13 +129,12 @@ public final class MainController {
                 separator(),
                 connectButton, disconnectButton, refreshButton,
                 separator(),
-                runButton);
+                runButton, toolbarActivity);
         toolBar.getStyleClass().add("app-toolbar");
         return toolBar;
     }
 
     private Node buildMainSplit() {
-        // --- schema explorer, with the rail that survives collapsing -------------
         VBox rail = new VBox(railToggle());
         rail.getStyleClass().add("sidebar-rail");
         rail.setAlignment(Pos.TOP_CENTER);
@@ -139,19 +145,16 @@ public final class MainController {
         sidebar.getStyleClass().add("sidebar");
         sidebar.setLeft(rail);
         sidebar.setCenter(schemaTree);
-        // Never let the explorer be squeezed past its rail.
         sidebar.setMinWidth(RAIL_WIDTH);
 
-        // --- editor over results -------------------------------------------------
-        results.setMinHeight(80);
+        outcome.setMinHeight(80);
         rightSplit.setOrientation(Orientation.VERTICAL);
-        rightSplit.getItems().setAll(editors, results);
+        rightSplit.getItems().setAll(editors, outcome);
         rightSplit.setMinWidth(320);
-        SplitPane.setResizableWithParent(results, true);
+        SplitPane.setResizableWithParent(outcome, true);
 
         mainSplit.setOrientation(Orientation.HORIZONTAL);
         mainSplit.getItems().setAll(sidebar, rightSplit);
-        // Window resizing grows the working area, not the explorer.
         SplitPane.setResizableWithParent(sidebar, false);
         mainSplit.setDividerPositions(DEFAULT_MAIN_DIVIDER);
 
@@ -196,7 +199,6 @@ public final class MainController {
 
     // ---------------------------------------------------------------- lifecycle
 
-    /** Applies saved divider positions. Must run after the stage is shown. */
     public void restoreLayout() {
         mainSplit.setDividerPositions(state.mainDivider(DEFAULT_MAIN_DIVIDER));
         rightSplit.setDividerPositions(state.rightDivider(DEFAULT_RIGHT_DIVIDER));
@@ -208,7 +210,6 @@ public final class MainController {
         }
     }
 
-    /** @return {@code false} when the user cancelled out of an unsaved-changes prompt */
     public boolean confirmExit() {
         return editors.confirmCloseAll();
     }
@@ -237,8 +238,6 @@ public final class MainController {
             sidebarCollapsed = false;
         } else {
             expandedMainDivider = mainSplit.getDividerPositions()[0];
-            // Dropping the tree from the layout lets the sidebar shrink to the rail;
-            // otherwise the tree's own minimum width would hold the divider open.
             schemaTree.setVisible(false);
             schemaTree.setManaged(false);
             double width = Math.max(mainSplit.getWidth(), 1);
@@ -254,8 +253,11 @@ public final class MainController {
     }
 
     private void connect(ConnectionConfig config) {
+        if (activeTask != null && activeTask.isRunning()) {
+            return;
+        }
         DataSourceDriver active = driver;
-        connectButton.setDisable(true);
+        setConnecting(true);
         statusBar.setBusy("Connecting to " + config.displayLabel() + "\u2026");
 
         Task<Void> task = new Task<>() {
@@ -265,34 +267,33 @@ public final class MainController {
                 return null;
             }
         };
+        activeTask = task;
         task.setOnSucceeded(event -> {
-            connectButton.setDisable(false);
+            activeTask = null;
+            setConnecting(false);
             statusBar.setConnected(config.displayLabel());
             state.saveLastConnection(config);
             schemaTree.reload();
             updateActionStates();
         });
         task.setOnFailed(event -> {
-            connectButton.setDisable(false);
-            statusBar.setDisconnected();
+            activeTask = null;
+            setConnecting(false);
+            String message = rootCauseMessage(task.getException());
+            statusBar.setConnectionError("Connection failed: " + message);
+            schemaTree.clear();
             updateActionStates();
-            showError("Connection failed", "Could not connect to " + config.displayLabel(),
-                    rootCauseMessage(task.getException()));
         });
         backgroundTasks.execute(task);
     }
 
-    /**
-     * Retires the current driver and takes a fresh one from the registry, which
-     * keeps disconnection expressible through the interface alone.
-     */
     private void disconnect() {
         DataSourceDriver retired = driver;
         driver = registry.create(DriverRegistry.DEFAULT_DRIVER_ID);
 
         schemaTree.setDriver(driver);
         schemaTree.clear();
-        results.clear();
+        outcome.clear();
         statusBar.setDisconnected();
         updateActionStates();
 
@@ -300,20 +301,30 @@ public final class MainController {
     }
 
     private void runQuery() {
+        if (activeTask != null && activeTask.isRunning()) {
+            return;
+        }
         SqlEditorPane editor = editors.activeEditor();
         if (editor == null) {
             return;
         }
         DataSourceDriver active = driver;
         if (!active.isConnected()) {
-            showError("Not connected", "Connect to a database before running a query.", null);
+            outcome.present(QueryResult.ofError("Not connected. Use Connect or New Connection first.", 0));
+            statusBar.setResult(QueryResult.ofError("Not connected", 0));
             return;
         }
 
         String sql = editor.getEffectiveSql();
-        runButton.setDisable(true);
-        results.showMessage("Running\u2026");
-        statusBar.clearResult();
+        if (sql.isBlank()) {
+            outcome.present(QueryResult.ofError("Nothing to run. Type a statement or select one.", 0));
+            statusBar.setResult(QueryResult.ofError("Nothing to run", 0));
+            return;
+        }
+
+        setQueryRunning(true);
+        outcome.showLoading();
+        statusBar.setQueryRunning();
 
         Task<QueryResult> task = new Task<>() {
             @Override
@@ -321,18 +332,20 @@ public final class MainController {
                 return active.executeQueryAsync(sql).get();
             }
         };
+        activeTask = task;
         task.setOnSucceeded(event -> {
-            runButton.setDisable(false);
+            activeTask = null;
+            setQueryRunning(false);
             QueryResult result = task.getValue();
-            // A rejected statement is reported in the grid and the status strip, not
-            // as a modal: interrupting the user on every syntax slip is unusable.
-            results.setResult(result);
+            outcome.present(result);
             statusBar.setResult(result);
         });
         task.setOnFailed(event -> {
-            runButton.setDisable(false);
-            results.showMessage("Execution failed.");
-            showError("Execution failed", "The query could not be run.", rootCauseMessage(task.getException()));
+            activeTask = null;
+            setQueryRunning(false);
+            QueryResult result = QueryResult.ofError(rootCauseMessage(task.getException()), 0);
+            outcome.present(result);
+            statusBar.setResult(result);
         });
         backgroundTasks.execute(task);
     }
@@ -347,9 +360,25 @@ public final class MainController {
 
     private void updateActionStates() {
         boolean connected = driver.isConnected();
-        runButton.setDisable(!connected);
-        disconnectButton.setDisable(!connected);
-        refreshButton.setDisable(!connected);
+        boolean busy = activeTask != null && activeTask.isRunning();
+        runButton.setDisable(!connected || busy);
+        connectButton.setDisable(busy);
+        disconnectButton.setDisable(!connected || busy);
+        refreshButton.setDisable(!connected || busy);
+    }
+
+    private void setConnecting(boolean connecting) {
+        toolbarActivity.setVisible(connecting);
+        toolbarActivity.setManaged(connecting);
+        connectButton.setDisable(connecting);
+        updateActionStates();
+    }
+
+    private void setQueryRunning(boolean running) {
+        toolbarActivity.setVisible(running);
+        toolbarActivity.setManaged(running);
+        runButton.setDisable(running || !driver.isConnected());
+        updateActionStates();
     }
 
     private void bindCaret(SqlEditorPane editor) {
@@ -390,35 +419,9 @@ public final class MainController {
         return root.getScene() == null ? null : root.getScene().getWindow();
     }
 
-    private void showError(String title, String header, String detail) {
-        Alert alert = new Alert(Alert.AlertType.ERROR);
-        alert.setTitle(title);
-        alert.setHeaderText(header);
-        alert.initOwner(owner());
-
-        if (detail == null || detail.isBlank()) {
-            alert.setContentText("No further detail was reported.");
-        } else if (detail.length() <= 220) {
-            alert.setContentText(detail);
-        } else {
-            // Long server messages get their own scrollable area rather than
-            // stretching the dialog off-screen.
-            alert.setContentText("The server returned a long message.");
-            TextArea area = new TextArea(detail);
-            area.setEditable(false);
-            area.setWrapText(true);
-            area.setPrefRowCount(8);
-            VBox.setVgrow(area, Priority.ALWAYS);
-            HBox.setHgrow(area, Priority.ALWAYS);
-            alert.getDialogPane().setExpandableContent(area);
-            alert.getDialogPane().setExpanded(true);
-        }
-        alert.showAndWait();
-    }
-
     private static String rootCauseMessage(Throwable error) {
         if (error == null) {
-            return null;
+            return "Unknown error";
         }
         Throwable cause = error;
         while (cause.getCause() != null) {
@@ -427,5 +430,4 @@ public final class MainController {
         String message = cause.getMessage();
         return message == null || message.isBlank() ? cause.getClass().getSimpleName() : message;
     }
-
 }

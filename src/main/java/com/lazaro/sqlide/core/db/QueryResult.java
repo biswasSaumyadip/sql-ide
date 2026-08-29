@@ -65,6 +65,19 @@ public record QueryResult(
         return "%d %s affected in %d ms".formatted(rowCount, rowCount == 1 ? "row" : "rows", executionTimeMs);
     }
 
+    /** Friendly one-liner for the results pane on a successful statement. */
+    public String successMessage() {
+        if (isError()) {
+            return errorMessage();
+        }
+        if (isResultSet) {
+            return "Query OK \u2014 %d %s returned (%d ms)".formatted(
+                    rowCount, rowCount == 1 ? "row" : "rows", executionTimeMs);
+        }
+        return "Query OK \u2014 %d %s affected (%d ms)".formatted(
+                rowCount, rowCount == 1 ? "row" : "rows", executionTimeMs);
+    }
+
     private static List<List<String>> deepCopy(List<List<String>> source) {
         if (source == null || source.isEmpty()) {
             return List.of();

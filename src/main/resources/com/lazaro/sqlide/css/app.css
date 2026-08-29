@@ -1,8 +1,21 @@
 /* Application chrome. Token colours for the editor live in sql-editor.css and the
-   grid's own rules in result-table.css; both are loaded by their components. */
+   grid's own rules in result-table.css; both are loaded by their components.
+
+   Accent palette (Cupertino-dark aligned):
+     hover    #262a32
+     selected #2f5d8c
+     accent   #4fa6ee
+*/
 
 .app-root {
     -fx-background-color: #17181b;
+}
+
+/* Cupertino-dark selection accent, used consistently below. */
+* {
+    -fx-accent: #4fa6ee;
+    -fx-focus-color: #4fa6ee;
+    -fx-faint-focus-color: derive(#4fa6ee, 80%);
 }
 
 /* ---------------------------------------------------------------- toolbar */
@@ -46,6 +59,12 @@
 
 .run-button {
     -fx-font-weight: bold;
+}
+
+.toolbar-activity,
+.status-activity,
+.dialog-activity {
+    -fx-progress-color: #4fa6ee;
 }
 
 /* ---------------------------------------------------------------- icons */
@@ -138,12 +157,25 @@
 
 .schema-tree .tree-cell {
     -fx-background-color: transparent;
-    -fx-padding: 1px 4px;
+    -fx-background-radius: 4px;
+    -fx-padding: 2px 4px;
+}
+
+.schema-tree .tree-cell:hover {
+    -fx-background-color: #262a32;
 }
 
 .schema-tree .tree-cell:selected {
     -fx-background-color: #2f5d8c;
-    -fx-background-radius: 4px;
+}
+
+.schema-tree .tree-cell:selected:hover {
+    -fx-background-color: derive(#2f5d8c, 8%);
+}
+
+.schema-tree .tree-cell:selected .schema-node-name,
+.schema-tree .tree-cell:selected .schema-node-detail {
+    -fx-text-fill: #eceff4;
 }
 
 .schema-node-name {
@@ -160,6 +192,42 @@
     -fx-font-style: italic;
 }
 
+/* ---------------------------------------------------------------- empty states */
+
+.empty-state {
+    -fx-alignment: center;
+}
+
+.empty-state-title {
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #d6d9de;
+}
+
+.empty-state-detail {
+    -fx-font-size: 11.5px;
+    -fx-text-fill: #7f848e;
+    -fx-text-alignment: center;
+    -fx-wrap-text: true;
+    -fx-max-width: 220px;
+}
+
+.empty-state-action {
+    -fx-background-color: #2f5d8c;
+    -fx-text-fill: #eceff4;
+    -fx-background-radius: 5px;
+    -fx-padding: 6px 14px;
+    -fx-font-weight: bold;
+}
+
+.empty-state-action:hover {
+    -fx-background-color: derive(#2f5d8c, 12%);
+}
+
+.loading-state .progress-indicator {
+    -fx-progress-color: #4fa6ee;
+}
+
 /* ---------------------------------------------------------------- editor tabs */
 
 .editor-tabs {
@@ -174,11 +242,20 @@
 
 .editor-tabs .tab {
     -fx-background-color: transparent;
+    -fx-background-radius: 5px 5px 0 0;
     -fx-padding: 5px 10px;
 }
 
+.editor-tabs .tab:hover {
+    -fx-background-color: #262a32;
+}
+
 .editor-tabs .tab:selected {
-    -fx-background-color: #26282d;
+    -fx-background-color: #2f5d8c;
+}
+
+.editor-tabs .tab:selected:hover {
+    -fx-background-color: derive(#2f5d8c, 8%);
 }
 
 .editor-tabs .tab .tab-label {
@@ -187,6 +264,50 @@
 
 .editor-tabs .tab:selected .tab-label {
     -fx-text-fill: #eceff4;
+    -fx-font-weight: bold;
+}
+
+/* ---------------------------------------------------------------- query errors */
+
+.query-outcome-pane {
+    -fx-background-color: #17181b;
+}
+
+.query-error-panel {
+    -fx-background-color: #2a1f22;
+    -fx-border-color: #7a2e3a transparent #303237 transparent;
+    -fx-border-width: 1 0 1 0;
+}
+
+.query-error-title {
+    -fx-text-fill: #e06c75;
+    -fx-font-weight: bold;
+    -fx-font-size: 12px;
+}
+
+.query-error-text {
+    -fx-control-inner-background: #1e1f22;
+    -fx-text-fill: #f0b4ba;
+    -fx-highlight-fill: #7a2e3a;
+    -fx-highlight-text-fill: #fce8ea;
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 12px;
+    -fx-background-color: #1e1f22;
+    -fx-background-radius: 4px;
+    -fx-border-color: #7a2e3a;
+    -fx-border-radius: 4px;
+    -fx-border-width: 1;
+}
+
+.query-error-action {
+    -fx-background-color: transparent;
+    -fx-text-fill: #d6d9de;
+    -fx-background-radius: 4px;
+    -fx-padding: 3px 10px;
+}
+
+.query-error-action:hover {
+    -fx-background-color: #3a2a2d;
 }
 
 /* ---------------------------------------------------------------- split panes */
@@ -204,8 +325,6 @@
 .split-pane:vertical > .split-pane-divider {
     -fx-padding: 1px 0;
 }
-
-/* ---------------------------------------------------------------- status bar */
 
 /* ---------------------------------------------------------------- results */
 
@@ -235,7 +354,12 @@
     -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
 }
 
-.status-result:error {
+.status-bar:busy .status-result {
+    -fx-text-fill: #e0c06a;
+}
+
+.status-result:error,
+.status-text:error {
     -fx-text-fill: #e06c75;
 }
 

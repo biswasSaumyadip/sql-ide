@@ -4,6 +4,7 @@ import com.lazaro.sqlide.core.db.ConnectionConfig;
 import com.lazaro.sqlide.core.db.DataSourceDriver;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
+import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
@@ -11,9 +12,11 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.PasswordField;
+import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 
 /**
@@ -31,6 +34,7 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
     private final TextField userField = new TextField();
     private final PasswordField passwordField = new PasswordField();
     private final Label feedback = new Label();
+    private final ProgressIndicator testActivity = new ProgressIndicator();
 
     public ConnectionDialog(ConnectionConfig initial, DataSourceDriver driver) {
         setTitle("Connect to database");
@@ -58,6 +62,11 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
         feedback.getStyleClass().add("dialog-feedback");
         feedback.setWrapText(true);
 
+        testActivity.setMaxSize(16, 16);
+        testActivity.getStyleClass().add("dialog-activity");
+        testActivity.setVisible(false);
+        testActivity.setManaged(false);
+
         GridPane grid = new GridPane();
         grid.setHgap(10);
         grid.setVgap(8);
@@ -77,7 +86,11 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
         grid.addRow(row++, new Label("Database"), databaseField);
         grid.addRow(row++, new Label("User"), userField);
         grid.addRow(row++, new Label("Password"), passwordField);
-        grid.add(feedback, 1, row);
+
+        HBox feedbackRow = new HBox(8, testActivity, feedback);
+        feedbackRow.setAlignment(Pos.CENTER_LEFT);
+        HBox.setHgrow(feedback, Priority.ALWAYS);
+        grid.add(feedbackRow, 1, row);
 
         return grid;
     }
@@ -122,10 +135,12 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
                 return;
             }
             test.setDisable(true);
+            setTesting(true);
             showFeedback("Testing\u2026", false);
 
             driver.testConnection(toConfig()).whenComplete((description, error) -> Platform.runLater(() -> {
                 test.setDisable(false);
+                setTesting(false);
                 if (error != null) {
                     showFeedback(rootCauseMessage(error), true);
                 } else {
@@ -163,6 +178,11 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
     private void showFeedback(String message, boolean error) {
         feedback.setText(message);
         feedback.pseudoClassStateChanged(javafx.css.PseudoClass.getPseudoClass("error"), error);
+    }
+
+    private void setTesting(boolean testing) {
+        testActivity.setVisible(testing);
+        testActivity.setManaged(testing);
     }
 
     private static String rootCauseMessage(Throwable error) {
