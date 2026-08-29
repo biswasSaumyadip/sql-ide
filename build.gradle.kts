@@ -29,9 +29,13 @@ dependencies {
 
     runtimeOnly(libs.mysql.connector)
     runtimeOnly(libs.slf4j.simple)
+    // Embedded engine: gives the app a zero-setup scratch database and lets the
+    // headless services be integration-tested without a server.
+    runtimeOnly(libs.h2)
 
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
+    testRuntimeOnly(libs.h2)
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 
