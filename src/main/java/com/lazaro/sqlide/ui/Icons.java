@@ -192,6 +192,21 @@ public final class Icons {
         return group(body, shutter, label);
     }
 
+    /** Funnel glyph for the schema-filter toolbar action. */
+    public static Node schemaFilter() {
+        Polygon funnel = new Polygon(
+                2.0, 2.5,
+                12.0, 2.5,
+                8.2, 7.0,
+                8.2, 11.5,
+                5.8, 11.5,
+                5.8, 7.0);
+        funnel.setFill(null);
+        funnel.setStrokeWidth(STROKE);
+        funnel.getStyleClass().addAll(BASE_CLASS, "icon-schema-filter");
+        return group(funnel);
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private static <T extends Shape> T outlined(T shape, String variantClass) {

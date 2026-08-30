@@ -302,24 +302,22 @@
     -fx-padding: 5px 8px;
 }
 
-.schema-picker-button {
-    -fx-background-color: #17181b;
-    -fx-text-fill: #d6d9de;
-    -fx-background-radius: 4px;
-    -fx-border-color: #303237;
-    -fx-border-radius: 4px;
-    -fx-padding: 5px 8px;
+.schema-toolbar {
+    -fx-alignment: center-left;
+}
+
+.schema-count-badge {
+    -fx-background-color: #262a32;
+    -fx-background-radius: 3px;
+    -fx-padding: 2px 8px;
     -fx-font-size: 11px;
+    -fx-text-fill: #a4acb9;
     -fx-cursor: hand;
 }
 
-.schema-picker-button:hover {
-    -fx-background-color: #262a32;
-    -fx-border-color: #4fa6ee;
-}
-
-.schema-picker-button:disabled {
-    -fx-opacity: 0.45;
+.schema-count-badge:hover {
+    -fx-background-color: #2f5d8c;
+    -fx-text-fill: #eceff4;
 }
 
 .schema-picker-popup {

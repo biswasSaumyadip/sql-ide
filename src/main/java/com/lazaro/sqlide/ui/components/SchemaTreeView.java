@@ -17,6 +17,7 @@ import javafx.scene.control.MenuItem;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.TextField;
+import javafx.scene.control.Tooltip;
 import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeView;
@@ -24,6 +25,7 @@ import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.MouseButton;
+import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.StackPane;
@@ -94,18 +96,19 @@ public final class SchemaTreeView extends VBox {
             }
         });
 
-        schemaSelection.setOnSelectionChanged(selection -> applyFilter());
-        HBox.setHgrow(schemaSelection, Priority.NEVER);
-        schemaSelection.setMinWidth(72);
-        schemaSelection.setPrefWidth(88);
+        schemaSelection.setOnSelectionChanged(connectionId -> {
+            applyFilter();
+            tree.refresh();
+        });
         HBox.setHgrow(filterField, Priority.ALWAYS);
-        HBox filterBar = new HBox(6, schemaSelection, filterField);
+        HBox filterBar = new HBox(8, filterField);
+        filterBar.getStyleClass().add("schema-toolbar");
         filterBar.setAlignment(Pos.CENTER_LEFT);
-        filterBar.setPadding(new Insets(0, 8, 6, 8));
+        filterBar.setPadding(new Insets(5));
 
         tree.setShowRoot(false);
         tree.getStyleClass().add("schema-tree");
-        tree.setCellFactory(view -> new SchemaTreeCell());
+        tree.setCellFactory(view -> new SchemaTreeCell(schemaSelection));
         tree.setRoot(new TreeItem<>(SchemaNode.of("root", NodeType.DATABASE)));
         tree.setOnMouseClicked(event -> {
             if (event.getButton() != MouseButton.PRIMARY || event.getClickCount() != 2) {
@@ -290,9 +293,9 @@ public final class SchemaTreeView extends VBox {
             }
             if (nodes == null || nodes.isEmpty()) {
                 dataSourceItem.replaceChildren(List.of(placeholderItem("No databases visible")));
-                schemaSelection.clear();
+                schemaSelection.clearActive();
             } else {
-                rememberAvailableSchemas(nodes);
+                rememberAvailableSchemas(nodes, connectionIdOf(dataSourceItem.getValue()));
                 List<TreeItem<SchemaNode>> children = new ArrayList<>();
                 for (SchemaNode node : nodes) {
                     children.add(schemaItem(node));
@@ -333,7 +336,7 @@ public final class SchemaTreeView extends VBox {
         allDataSources.clear();
         allDataSources.addAll(roots);
         if (config.isEmpty()) {
-            schemaSelection.clear();
+            schemaSelection.clearActive();
         }
         publishDataSources();
         updateEmptyHint();
@@ -397,9 +400,9 @@ public final class SchemaTreeView extends VBox {
                 item.replaceChildren(List.of(placeholderItem(rootCauseMessage(error))));
             } else if (nodes == null || nodes.isEmpty()) {
                 item.replaceChildren(List.of(placeholderItem("empty")));
-                schemaSelection.clear();
+                schemaSelection.clearActive();
             } else {
-                rememberAvailableSchemas(nodes);
+                rememberAvailableSchemas(nodes, connectionIdOf(item.getValue()));
                 List<TreeItem<SchemaNode>> children = new ArrayList<>();
                 for (SchemaNode child : nodes) {
                     children.add(schemaItem(child));
@@ -410,7 +413,7 @@ public final class SchemaTreeView extends VBox {
         }));
     }
 
-    private void rememberAvailableSchemas(List<SchemaNode> nodes) {
+    private void rememberAvailableSchemas(List<SchemaNode> nodes, String connectionId) {
         List<String> names = new ArrayList<>();
         for (SchemaNode node : nodes) {
             if (node.type() == NodeType.DATABASE || node.type() == NodeType.SCHEMA) {
@@ -421,7 +424,15 @@ public final class SchemaTreeView extends VBox {
         if ((preferred == null || preferred.isBlank()) && driver != null) {
             preferred = driver.currentConfig().map(ConnectionConfig::database).orElse(null);
         }
-        schemaSelection.setAvailableSchemas(names, preferred);
+        schemaSelection.setAvailableSchemas(connectionId, names, preferred);
+        tree.refresh();
+    }
+
+    private static String connectionIdOf(SchemaNode node) {
+        if (node == null) {
+            return null;
+        }
+        return node.metadata(SchemaNode.META_PROFILE_ID);
     }
 
     private LazyItem schemaItem(SchemaNode node) {
@@ -507,7 +518,10 @@ public final class SchemaTreeView extends VBox {
         profileManager.loadProfiles().stream()
                 .filter(profile -> profileId.equals(profile.id()))
                 .findFirst()
-                .ifPresent(onDeleteProfile);
+                .ifPresent(profile -> {
+                    onDeleteProfile.accept(profile);
+                    schemaSelection.forgetConnection(profileId);
+                });
     }
 
     private void activateSelection() {
@@ -710,7 +724,7 @@ public final class SchemaTreeView extends VBox {
             if (node.type() != NodeType.DATABASE && node.type() != NodeType.SCHEMA) {
                 return true;
             }
-            return schemaSelection.isSchemaVisible(node.name());
+            return schemaSelection.isSchemaVisible(connectionIdOf(getValue()), node.name());
         }
     }
 
@@ -788,18 +802,37 @@ public final class SchemaTreeView extends VBox {
         return endpoint != null && endpoint.toLowerCase(Locale.ROOT).contains(needle);
     }
 
-    private static final class SchemaTreeCell extends TreeCell<SchemaNode> {
+    private final class SchemaTreeCell extends TreeCell<SchemaNode> {
 
+        private final SchemaSelectionControl selection;
         private final Label nameLabel = new Label();
         private final Label detailLabel = new Label();
         private final Label activeBadge = new Label("●");
-        private final HBox layout = new HBox(6);
+        private final Label schemaBadge = new Label();
+        private final HBox left = new HBox(6);
+        private final BorderPane layout = new BorderPane();
 
-        SchemaTreeCell() {
+        SchemaTreeCell(SchemaSelectionControl selection) {
+            this.selection = selection;
             nameLabel.getStyleClass().add("schema-node-name");
             detailLabel.getStyleClass().add("schema-node-detail");
             activeBadge.getStyleClass().add("schema-active-badge");
-            layout.setAlignment(Pos.CENTER_LEFT);
+            schemaBadge.getStyleClass().add("schema-count-badge");
+            schemaBadge.setTooltip(new Tooltip("Choose which schemas appear under this connection"));
+            schemaBadge.setOnMouseClicked(event -> {
+                if (event.getButton() != MouseButton.PRIMARY) {
+                    return;
+                }
+                SchemaNode node = getItem();
+                if (node == null || node.type() != NodeType.DATA_SOURCE) {
+                    return;
+                }
+                selection.showFor(schemaBadge, connectionIdOf(node));
+                event.consume();
+            });
+            left.setAlignment(Pos.CENTER_LEFT);
+            BorderPane.setAlignment(schemaBadge, Pos.CENTER_RIGHT);
+            layout.setLeft(left);
         }
 
         @Override
@@ -836,13 +869,23 @@ public final class SchemaTreeView extends VBox {
             activeBadge.setVisible(active);
             activeBadge.setManaged(active);
 
-            layout.getChildren().setAll(Icons.forNode(item), nameLabel);
+            left.getChildren().setAll(Icons.forNode(item), nameLabel);
             if (active) {
-                layout.getChildren().add(activeBadge);
+                left.getChildren().add(activeBadge);
             }
             if (detailLabel.isVisible()) {
-                layout.getChildren().add(detailLabel);
+                left.getChildren().add(detailLabel);
             }
+
+            String connectionId = connectionIdOf(item);
+            boolean showSchemaBadge = dataSource && selection.hasSchemas(connectionId);
+            if (showSchemaBadge) {
+                schemaBadge.setText(selection.countLabel(connectionId));
+                layout.setRight(schemaBadge);
+            } else {
+                layout.setRight(null);
+            }
+
             setText(null);
             setGraphic(layout);
         }

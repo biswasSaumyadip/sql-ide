@@ -1,18 +1,17 @@
 package com.lazaro.sqlide.ui.components;
 
-import javafx.geometry.Bounds;
 import javafx.geometry.Insets;
+import javafx.geometry.Point2D;
 import javafx.geometry.Pos;
-import javafx.scene.control.Button;
+import javafx.scene.Node;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Hyperlink;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
-import javafx.scene.control.Tooltip;
 import javafx.scene.input.KeyCode;
 import javafx.scene.layout.HBox;
-import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.Popup;
 
@@ -22,73 +21,130 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 /**
- * IntelliJ-style schema filter control: a compact {@code N of M} button that opens
- * a checklist of schemas/databases to show in the Database tree.
+ * Per-connection schema filter: owns selection state and a shared checklist popup
+ * anchored under the clicked connection badge.
  */
-public final class SchemaSelectionControl extends HBox {
+public final class SchemaSelectionControl {
 
-    private final SchemaSelectionState state = new SchemaSelectionState();
-    private final Button pickerButton = new Button("Schemas");
+    private final SchemaSelectionRegistry registry = new SchemaSelectionRegistry();
     private final Popup popup = new Popup();
     private final TextField searchField = new TextField();
     private final VBox checkList = new VBox(2);
     private final Label summaryLabel = new Label();
 
-    private Consumer<Set<String>> onSelectionChanged = selection -> { };
+    private SchemaSelectionState state = new SchemaSelectionState();
+    private String popupConnectionId;
+    private Consumer<String> onSelectionChanged = connectionId -> { };
 
     public SchemaSelectionControl() {
-        getStyleClass().add("schema-selection-control");
-        setAlignment(Pos.CENTER_LEFT);
-        setSpacing(0);
-
-        pickerButton.getStyleClass().add("schema-picker-button");
-        pickerButton.setMaxWidth(Double.MAX_VALUE);
-        pickerButton.setTooltip(new Tooltip("Choose which schemas appear in the tree"));
-        pickerButton.setOnAction(event -> togglePopup());
-        HBox.setHgrow(pickerButton, Priority.ALWAYS);
-        getChildren().add(pickerButton);
-
         popup.setAutoHide(true);
         popup.setHideOnEscape(true);
         popup.getContent().add(buildPopupContent());
-
-        updateButton();
+        popup.setOnHidden(event -> popupConnectionId = null);
     }
 
-    public void setOnSelectionChanged(Consumer<Set<String>> onSelectionChanged) {
-        this.onSelectionChanged = onSelectionChanged == null ? selection -> { } : onSelectionChanged;
+    /**
+     * Fired with the connection id whose selection changed (so the tree can refresh
+     * that connection's badge and children).
+     */
+    public void setOnSelectionChanged(Consumer<String> onSelectionChanged) {
+        this.onSelectionChanged = onSelectionChanged == null ? id -> { } : onSelectionChanged;
     }
 
-    /** Replaces the known schema list. Preserves prior checks when possible. */
-    public void setAvailableSchemas(List<String> schemas, String preferredActive) {
-        state.setAvailableSchemas(schemas, preferredActive);
-        rebuildCheckList();
-        updateButton();
-        setDisable(state.availableCount() == 0);
+    public void setAvailableSchemas(String connectionId, List<String> schemas, String preferredActive) {
+        if (connectionId == null || connectionId.isBlank()) {
+            return;
+        }
+        SchemaSelectionState target = registry.forConnection(connectionId);
+        target.setAvailableSchemas(schemas, preferredActive);
+        if (Objects.equals(popupConnectionId, connectionId)) {
+            state = target;
+            rebuildCheckList();
+            updateSummary();
+        }
+        onSelectionChanged.accept(connectionId);
     }
 
-    public void clear() {
-        state.clear();
-        rebuildCheckList();
-        updateButton();
-        setDisable(true);
+    public void hidePopup() {
         popup.hide();
+        popupConnectionId = null;
     }
 
-    public Set<String> selectedSchemas() {
-        return state.selected();
+    /** Disconnect helper — closes the popup; remembered selections stay per id. */
+    public void clearActive() {
+        hidePopup();
     }
 
-    public boolean isSchemaVisible(String name) {
-        return state.isSchemaVisible(name);
+    public void forgetConnection(String connectionId) {
+        registry.remove(connectionId);
+        if (Objects.equals(popupConnectionId, connectionId)) {
+            hidePopup();
+        }
     }
 
-    public int availableCount() {
-        return state.availableCount();
+    public boolean hasSchemas(String connectionId) {
+        return connectionId != null
+                && registry.hasConnection(connectionId)
+                && registry.forConnection(connectionId).availableCount() > 0;
     }
 
-    public int selectedCount() {
-        return state.selectedCount();
+    /** Badge text, e.g. {@code 1/5}. Empty when unknown. */
+    public String countLabel(String connectionId) {
+        if (!hasSchemas(connectionId)) {
+            return "";
+        }
+        SchemaSelectionState target = registry.forConnection(connectionId);
+        return target.selectedCount() + "/" + target.availableCount();
+    }
+
+    public boolean isSchemaVisible(String connectionId, String name) {
+        if (connectionId == null || connectionId.isBlank()) {
+            return true;
+        }
+        if (!registry.hasConnection(connectionId)) {
+            return true;
+        }
+        return registry.forConnection(connectionId).isSchemaVisible(name);
+    }
+
+    /**
+     * Opens (or toggles) the checklist anchored directly under {@code anchor}
+     * for the given connection.
+     */
+    public void showFor(Node anchor, String connectionId) {
+        if (anchor == null || connectionId == null || connectionId.isBlank()) {
+            return;
+        }
+        if (popup.isShowing() && Objects.equals(popupConnectionId, connectionId)) {
+            hidePopup();
+            return;
+        }
+        if (!hasSchemas(connectionId)) {
+            return;
+        }
+
+        popupConnectionId = connectionId;
+        state = registry.forConnection(connectionId);
+        searchField.clear();
+        rebuildCheckList();
+        updateSummary();
+
+        // Defer so layout has a real height and the click that opened us has finished.
+        javafx.application.Platform.runLater(() -> {
+            if (!Objects.equals(popupConnectionId, connectionId)) {
+                return;
+            }
+            double height = anchor.getBoundsInLocal().getHeight();
+            if (height <= 0 && anchor instanceof Region region) {
+                height = Math.max(region.getHeight(), 18);
+            }
+            Point2D point = anchor.localToScreen(0, Math.max(height, 1));
+            if (point == null || anchor.getScene() == null || anchor.getScene().getWindow() == null) {
+                return;
+            }
+            popup.show(anchor.getScene().getWindow(), point.getX(), point.getY());
+            searchField.requestFocus();
+        });
     }
 
     private VBox buildPopupContent() {
@@ -115,7 +171,7 @@ public final class SchemaSelectionControl extends HBox {
         searchField.textProperty().addListener((observable, previous, current) -> rebuildCheckList());
         searchField.setOnKeyPressed(event -> {
             if (event.getCode() == KeyCode.ESCAPE) {
-                popup.hide();
+                hidePopup();
             }
         });
 
@@ -135,24 +191,6 @@ public final class SchemaSelectionControl extends HBox {
         return root;
     }
 
-    private void togglePopup() {
-        if (popup.isShowing()) {
-            popup.hide();
-            return;
-        }
-        if (state.availableCount() == 0) {
-            return;
-        }
-        searchField.clear();
-        rebuildCheckList();
-        Bounds bounds = pickerButton.localToScreen(pickerButton.getBoundsInLocal());
-        if (bounds == null) {
-            return;
-        }
-        popup.show(pickerButton, bounds.getMinX(), bounds.getMaxY() + 2);
-        searchField.requestFocus();
-    }
-
     private void rebuildCheckList() {
         String needle = Objects.requireNonNullElse(searchField.getText(), "");
         checkList.getChildren().clear();
@@ -170,22 +208,11 @@ public final class SchemaSelectionControl extends HBox {
     }
 
     private void fireChanged() {
-        updateButton();
         updateSummary();
-        onSelectionChanged.accept(selectedSchemas());
+        onSelectionChanged.accept(popupConnectionId);
     }
 
     private void updateSummary() {
         summaryLabel.setText(state.selectedCount() + " of " + state.availableCount() + " selected");
-    }
-
-    private void updateButton() {
-        if (state.availableCount() == 0) {
-            pickerButton.setText("Schemas");
-            pickerButton.setDisable(true);
-            return;
-        }
-        pickerButton.setDisable(false);
-        pickerButton.setText(state.selectedCount() + " of " + state.availableCount());
     }
 }
