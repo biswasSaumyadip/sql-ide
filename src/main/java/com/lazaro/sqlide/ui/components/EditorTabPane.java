@@ -1,5 +1,6 @@
 package com.lazaro.sqlide.ui.components;
 
+import com.lazaro.sqlide.core.db.ConnectionConfig;
 import com.lazaro.sqlide.core.db.SchemaCache;
 import com.lazaro.sqlide.core.db.SchemaNode;
 import javafx.beans.property.ReadOnlyObjectProperty;
@@ -36,6 +37,7 @@ public final class EditorTabPane extends TabPane {
     private int untitledCounter;
     private Supplier<SchemaCache> schemaCache = SchemaCache::new;
     private Supplier<String> activeCatalog = () -> null;
+    private Supplier<ConnectionConfig.Driver> dialect = () -> ConnectionConfig.Driver.MYSQL;
 
     public EditorTabPane() {
         getStyleClass().add("editor-tabs");
@@ -68,7 +70,7 @@ public final class EditorTabPane extends TabPane {
 
     /** Opens a new query tab bound to {@code sessionId} (nullable). */
     public void newTab(String sessionId) {
-        QueryTab tab = new QueryTab("query-" + (++untitledCounter) + ".sql", schemaCache, activeCatalog);
+        QueryTab tab = new QueryTab("query-" + (++untitledCounter) + ".sql", schemaCache, activeCatalog, dialect);
         if (sessionId != null) {
             tab.editor().setBoundSessionId(sessionId);
         }
@@ -100,7 +102,7 @@ public final class EditorTabPane extends TabPane {
         } else {
             untitledCounter++;
         }
-        QueryTab tab = new QueryTab(title, schemaCache, activeCatalog);
+        QueryTab tab = new QueryTab(title, schemaCache, activeCatalog, dialect);
         if (sessionId != null) {
             tab.editor().setBoundSessionId(sessionId);
         }
@@ -140,6 +142,15 @@ public final class EditorTabPane extends TabPane {
                 .filter(QueryTab.class::isInstance)
                 .map(QueryTab.class::cast)
                 .forEach(tab -> tab.editor().setActiveCatalog(this.activeCatalog));
+    }
+
+    /** Supplies the session JDBC dialect so keywords / functions match the driver. */
+    public void setDialect(Supplier<ConnectionConfig.Driver> dialect) {
+        this.dialect = dialect == null ? () -> ConnectionConfig.Driver.MYSQL : dialect;
+        getTabs().stream()
+                .filter(QueryTab.class::isInstance)
+                .map(QueryTab.class::cast)
+                .forEach(tab -> tab.editor().setDialect(this.dialect));
     }
 
     /** Rebuilds each query editor's autocomplete engine after a schema refresh. */
@@ -232,10 +243,15 @@ public final class EditorTabPane extends TabPane {
         private String baseline = "";
         private Path file;
 
-        QueryTab(String title, Supplier<SchemaCache> schemaCache, Supplier<String> activeCatalog) {
+        QueryTab(
+                String title,
+                Supplier<SchemaCache> schemaCache,
+                Supplier<String> activeCatalog,
+                Supplier<ConnectionConfig.Driver> dialect) {
             this.title = title;
             editor.setSchemaCache(schemaCache);
             editor.setActiveCatalog(activeCatalog);
+            editor.setDialect(dialect);
             setContent(editor);
 
             editor.textProperty().addListener((observable, previous, current) ->

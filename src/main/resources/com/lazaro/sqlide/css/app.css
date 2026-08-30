@@ -195,6 +195,26 @@
     -fx-stroke: #6ec6e0;
 }
 
+.icon-function {
+    -fx-stroke: #b48ead;
+}
+
+.icon-snippet {
+    -fx-stroke: #88c0d0;
+}
+
+.icon-keyword {
+    -fx-stroke: #c8a25e;
+}
+
+.icon-join {
+    -fx-stroke: #d08770;
+}
+
+.icon-parameter {
+    -fx-stroke: #a3be8c;
+}
+
 .icon-export {
     -fx-stroke: #a4acb9;
 }

@@ -51,6 +51,26 @@ class SqlTableScopeTest {
     }
 
     @Test
+    void projectsCteSelectListColumns() {
+        SchemaCache cache = sampleCache();
+        String sql = "WITH active AS (SELECT id, email AS mail FROM users) SELECT * FROM active a WHERE a.";
+        SqlTableScope.ResolvedScope scope = SqlTableScope.resolve(sql, cache, "app");
+        assertTrue(scope.cteNames().contains("active"));
+        List<String> cols = scope.columnsOf("a");
+        assertTrue(cols.stream().anyMatch(c -> c.equalsIgnoreCase("id")), "cols=" + cols);
+        assertTrue(cols.stream().anyMatch(c -> c.equalsIgnoreCase("mail")), "cols=" + cols);
+    }
+
+    @Test
+    void projectsSubqueryAliasColumns() {
+        SchemaCache cache = sampleCache();
+        String sql = "SELECT * FROM (SELECT id FROM users) sub WHERE sub.";
+        SqlTableScope.ResolvedScope scope = SqlTableScope.resolve(sql, cache, "app");
+        List<String> cols = scope.columnsOf("sub");
+        assertTrue(cols.stream().anyMatch(c -> c.equalsIgnoreCase("id")), "cols=" + cols);
+    }
+
+    @Test
     void stripTrailingIncompleteRemovesDanglingQualifier() {
         assertTrue(SqlTableScope.stripTrailingIncomplete("SELECT * FROM users u WHERE u.")
                 .toLowerCase()
@@ -59,7 +79,8 @@ class SqlTableScopeTest {
 
     private static SchemaCache sampleCache() {
         SchemaNode id = SchemaNode.of("id", NodeType.COLUMN, Map.of(SchemaNode.META_DATA_TYPE, "INT"));
-        SchemaNode users = new SchemaNode("users", NodeType.TABLE, List.of(id), Map.of(
+        SchemaNode email = SchemaNode.of("email", NodeType.COLUMN, Map.of(SchemaNode.META_DATA_TYPE, "VARCHAR"));
+        SchemaNode users = new SchemaNode("users", NodeType.TABLE, List.of(id, email), Map.of(
                 SchemaNode.META_CATALOG, "app"));
         SchemaNode userId = SchemaNode.of("user_id", NodeType.COLUMN, Map.of(SchemaNode.META_DATA_TYPE, "INT"));
         SchemaNode orders = new SchemaNode("orders", NodeType.TABLE, List.of(userId), Map.of(

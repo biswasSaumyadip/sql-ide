@@ -130,6 +130,54 @@ public final class Icons {
         return group(bolt);
     }
 
+    /** Small {@code f( )} glyph for SQL functions / aggregates. */
+    public static Node function() {
+        // stylized f
+        Line stem = outlined(new Line(5.5, 3.0, 5.5, 11.5), "icon-function");
+        Line cross = outlined(new Line(4.0, 6.0, 8.5, 6.0), "icon-function");
+        Arc bowl = outlined(new Arc(5.5, 4.5, 2.2, 1.8, 200, 140), "icon-function");
+        bowl.setType(ArcType.OPEN);
+        // trailing ()
+        Arc left = outlined(new Arc(10.5, 7.5, 1.6, 3.2, 90, 180), "icon-function");
+        left.setType(ArcType.OPEN);
+        Arc right = outlined(new Arc(12.8, 7.5, 1.6, 3.2, 270, 180), "icon-function");
+        right.setType(ArcType.OPEN);
+        return group(stem, cross, bowl, left, right);
+    }
+
+    /** Puzzle-piece-ish mark for abbreviation snippets. */
+    public static Node snippet() {
+        Rectangle body = outlined(new Rectangle(2.5, 3.5, 9, 8), "icon-snippet");
+        body.setArcWidth(2);
+        body.setArcHeight(2);
+        Line notch = outlined(new Line(7, 3.5, 7, 11.5), "icon-snippet");
+        return group(body, notch);
+    }
+
+    /** Keyword glyph — small diamond. */
+    public static Node keyword() {
+        Polygon diamond = new Polygon(7, 2.5, 11.5, 7, 7, 11.5, 2.5, 7);
+        diamond.setFill(null);
+        diamond.setStrokeWidth(STROKE);
+        diamond.getStyleClass().addAll(BASE_CLASS, "icon-keyword");
+        return group(diamond);
+    }
+
+    /** Join / relationship chevron. */
+    public static Node join() {
+        Line a = outlined(new Line(2.5, 4.0, 7.0, 7.0), "icon-join");
+        Line b = outlined(new Line(2.5, 10.0, 7.0, 7.0), "icon-join");
+        Line c = outlined(new Line(7.0, 7.0, 12.0, 7.0), "icon-join");
+        return group(a, b, c);
+    }
+
+    /** Colon mark for named query parameters. */
+    public static Node parameter() {
+        Circle dot = outlined(new Circle(7, 4.5, 1.4), "icon-parameter");
+        Line shaft = outlined(new Line(7, 7.0, 7, 11.5), "icon-parameter");
+        return group(dot, shaft);
+    }
+
     // ---------------------------------------------------------------- toolbar
 
     /** Filled triangle for Execute. */

@@ -154,6 +154,10 @@ public final class MainController {
         editors.setActiveCatalog(() -> resolveSession(editors.activeEditor())
                 .map(s -> s.driver().activeCatalog().orElse(null))
                 .orElse(null));
+        editors.setDialect(() -> resolveSession(editors.activeEditor())
+                .map(ConnectionSession::config)
+                .map(ConnectionConfig::driver)
+                .orElse(ConnectionConfig.Driver.MYSQL));
         sessions.addListener(this::onSessionsChanged);
     }
 
@@ -668,6 +672,7 @@ public final class MainController {
         SqlEditorPane ed = editors.activeEditor();
         if (ed != null) {
             ed.setSql(config.sql());
+            ed.setRunConfigParams(config.defaultParams());
             if (sessionId != null) {
                 ed.setBoundSessionId(sessionId);
             }
@@ -701,6 +706,7 @@ public final class MainController {
         SqlEditorPane ed = editors.activeEditor();
         if (ed != null) {
             ed.setSql(sql);
+            ed.setRunConfigParams(config.defaultParams());
             ed.setBoundSessionId(s.id());
         }
         executeSql(null, false);

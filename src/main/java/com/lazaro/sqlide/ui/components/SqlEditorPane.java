@@ -1,5 +1,6 @@
 package com.lazaro.sqlide.ui.components;
 
+import com.lazaro.sqlide.core.db.ConnectionConfig;
 import com.lazaro.sqlide.core.db.SchemaCache;
 import com.lazaro.sqlide.core.doc.SqlDocResolver;
 import com.lazaro.sqlide.core.doc.SqlDocResolver.Doc;
@@ -7,9 +8,15 @@ import com.lazaro.sqlide.core.inspection.InspectionHighlights;
 import com.lazaro.sqlide.core.inspection.InspectionIssue;
 import com.lazaro.sqlide.core.inspection.Severity;
 import com.lazaro.sqlide.core.inspection.SqlInspector;
+import com.lazaro.sqlide.core.sql.SqlParameterParser;
+import com.lazaro.sqlide.ui.Icons;
+import com.lazaro.sqlide.ui.WorkspaceState;
 import com.lazaro.sqlide.ui.autocomplete.SqlAutocompleteEngine;
 import com.lazaro.sqlide.ui.autocomplete.SqlAutocompleteEngine.Kind;
+import com.lazaro.sqlide.ui.autocomplete.SqlAutocompleteEngine.SuggestResult;
 import com.lazaro.sqlide.ui.autocomplete.SqlAutocompleteEngine.Suggestion;
+import com.lazaro.sqlide.ui.autocomplete.SqlCompletionHygiene.Style;
+import com.lazaro.sqlide.ui.autocomplete.SqlSnippetCatalog;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
@@ -56,6 +63,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -92,23 +100,35 @@ public final class SqlEditorPane extends BorderPane {
     private final ExecutorService highlightExecutor;
     private final ExecutorService inspectionExecutor;
     private final ExecutorService docExecutor;
+    private final ExecutorService completionExecutor;
     private final Subscription highlightSubscription;
     private final PauseTransition inspectionDebounce = new PauseTransition(INSPECTION_DELAY);
     private final PauseTransition docHideDebounce = new PauseTransition(Duration.millis(220));
     private final Popup completionPopup = new Popup();
     private final ListView<Suggestion> completionList = new ListView<>();
+    private final Label completionDocs = new Label();
+    private final Label completionFooter = new Label();
+    private final VBox completionChrome = new VBox();
     private final Tooltip inspectionTooltip = new Tooltip();
     private final SqlDocPopup docPopup = new SqlDocPopup();
     private final AtomicLong inspectionGeneration = new AtomicLong();
     private final AtomicLong docGeneration = new AtomicLong();
+    private final AtomicLong completionGeneration = new AtomicLong();
     private Subscription autocompleteSubscription;
     private Task<List<InspectionIssue>> activeInspectionTask;
+    private Task<SuggestResult> activeCompletionTask;
 
     private Supplier<SchemaCache> schemaCache = SchemaCache::new;
     private Supplier<String> activeCatalog = () -> null;
+    private Supplier<ConnectionConfig.Driver> dialect = () -> ConnectionConfig.Driver.MYSQL;
+    private Supplier<Style> completionStyle = Style::defaults;
+    private Map<String, String> runConfigParams = Map.of();
     private SqlAutocompleteEngine engine = new SqlAutocompleteEngine(new SchemaCache());
     /** Set when we insert '.' ourselves during chain-completion, so KEY_TYPED does not duplicate it. */
     private boolean suppressNextDotTyped;
+    /** Absolute [start,end) ranges for the last applied snippet / function placeholders. */
+    private List<int[]> pendingPlaceholders = List.of();
+    private int placeholderIndex = -1;
     private Runnable onSelectInDatabase = () -> { };
     private Consumer<Doc> onShowTablePreview = doc -> { };
 
@@ -149,6 +169,18 @@ public final class SqlEditorPane extends BorderPane {
             thread.setDaemon(true);
             return thread;
         });
+        completionExecutor = Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "sqlide-completion");
+            thread.setDaemon(true);
+            return thread;
+        });
+
+        // Prefer workspace hygiene prefs when available.
+        WorkspaceState workspace = new WorkspaceState();
+        completionStyle = () -> new Style(
+                workspace.lowerKeywords(),
+                workspace.autoQuoteReserved(),
+                workspace.preserveDbCasing());
 
         IntFunction<Node> lineNumbers = LineNumberFactory.get(codeArea);
         codeArea.setParagraphGraphicFactory(index -> {
@@ -297,8 +329,52 @@ public final class SqlEditorPane extends BorderPane {
         scheduleInspectionNow();
     }
 
+    /** Supplies the JDBC dialect so keyword / function completions match the driver. */
+    public void setDialect(Supplier<ConnectionConfig.Driver> dialect) {
+        this.dialect = dialect == null ? () -> ConnectionConfig.Driver.MYSQL : dialect;
+        refreshAutocompleteEngine();
+    }
+
+    /**
+     * Default parameter names/values from the run configuration opened into this console.
+     * Merged with {@code :name} placeholders already present in the buffer.
+     */
+    public void setRunConfigParams(Map<String, String> params) {
+        this.runConfigParams = params == null ? Map.of() : Map.copyOf(params);
+        refreshAutocompleteEngine();
+    }
+
+    /** Optional override for completion hygiene (keyword case / quoting). */
+    public void setCompletionStyle(Supplier<Style> completionStyle) {
+        this.completionStyle = completionStyle == null ? Style::defaults : completionStyle;
+        refreshAutocompleteEngine();
+    }
+
     public void refreshAutocompleteEngine() {
-        this.engine = new SqlAutocompleteEngine(schemaCache.get(), activeCatalog);
+        this.engine = newEngine();
+    }
+
+    private SqlAutocompleteEngine newEngine() {
+        return new SqlAutocompleteEngine(
+                schemaCache.get(),
+                activeCatalog,
+                dialect,
+                this::knownParameters,
+                completionStyle.get());
+    }
+
+    /** Run-config defaults plus named params already typed in the buffer. */
+    private Map<String, String> knownParameters() {
+        Map<String, String> merged = new java.util.LinkedHashMap<>();
+        if (runConfigParams != null) {
+            merged.putAll(runConfigParams);
+        }
+        for (SqlParameterParser.Parameter parameter : SqlParameterParser.find(codeArea.getText())) {
+            if (parameter.kind() == SqlParameterParser.Kind.NAMED) {
+                merged.putIfAbsent(parameter.name(), "");
+            }
+        }
+        return merged;
     }
 
     /**
@@ -387,6 +463,7 @@ public final class SqlEditorPane extends BorderPane {
     public void dispose() {
         hideCompletions();
         hideQuickDocumentation();
+        cancelActiveCompletion();
         if (autocompleteSubscription != null) {
             autocompleteSubscription.unsubscribe();
         }
@@ -397,6 +474,7 @@ public final class SqlEditorPane extends BorderPane {
         highlightExecutor.shutdownNow();
         inspectionExecutor.shutdownNow();
         docExecutor.shutdownNow();
+        completionExecutor.shutdownNow();
     }
 
     private void installEditorContextMenu() {
@@ -416,8 +494,7 @@ public final class SqlEditorPane extends BorderPane {
 
     private void configureAutocompletePopup() {
         completionList.getStyleClass().addAll("sql-completion-list", "autocomplete-list-view");
-        completionList.getStylesheets().add(stylesheet());
-        completionList.setPrefWidth(420);
+        completionList.setPrefWidth(440);
         completionList.setFocusTraversable(false);
         completionList.setCellFactory(view -> new CompletionCell());
         completionList.setOnMouseClicked(event -> {
@@ -425,7 +502,20 @@ public final class SqlEditorPane extends BorderPane {
                 applySelectedCompletion();
             }
         });
-        completionPopup.getContent().add(completionList);
+        completionList.getSelectionModel().selectedItemProperty().addListener(
+                (observable, previous, current) -> updateCompletionDocs(current));
+
+        completionDocs.getStyleClass().add("sql-completion-docs");
+        completionDocs.setWrapText(true);
+        completionDocs.setMaxWidth(440);
+        completionDocs.setMinHeight(28);
+
+        completionFooter.getStyleClass().add("sql-completion-footer");
+
+        completionChrome.getStyleClass().add("sql-completion-popup");
+        completionChrome.getStylesheets().add(stylesheet());
+        completionChrome.getChildren().addAll(completionList, completionDocs, completionFooter);
+        completionPopup.getContent().add(completionChrome);
         completionPopup.setAutoHide(true);
         completionPopup.setAutoFix(false);
 
@@ -451,7 +541,14 @@ public final class SqlEditorPane extends BorderPane {
     private void handleCompletionKeys(KeyEvent event) {
         if (event.getCode() == KeyCode.SPACE && event.isControlDown()) {
             event.consume();
+            clearPlaceholderSession();
             updateCompletions(true);
+            return;
+        }
+        // Tab cycles linked snippet placeholders when the popup is closed.
+        if (event.getCode() == KeyCode.TAB && !completionPopup.isShowing() && hasPendingPlaceholders()) {
+            event.consume();
+            advancePlaceholder(event.isShiftDown() ? -1 : 1);
             return;
         }
         if (!completionPopup.isShowing()) {
@@ -477,7 +574,7 @@ public final class SqlEditorPane extends BorderPane {
             case PERIOD -> {
                 // Accept current schema item then continue with '.', like IntelliJ chain completion.
                 Suggestion selected = completionList.getSelectionModel().getSelectedItem();
-                if (selected != null && selected.kind() != Kind.KEYWORD) {
+                if (selected != null && isChainable(selected.kind())) {
                     event.consume();
                     applySelectedCompletion();
                     codeArea.insertText(codeArea.getCaretPosition(), ".");
@@ -491,20 +588,69 @@ public final class SqlEditorPane extends BorderPane {
         }
     }
 
-    private void updateCompletions(boolean invoked) {
-        engine = new SqlAutocompleteEngine(schemaCache.get(), activeCatalog);
-        String sql = codeArea.getText();
-        int caret = codeArea.getCaretPosition();
+    private static boolean isChainable(Kind kind) {
+        return kind == Kind.TABLE || kind == Kind.VIEW || kind == Kind.SCHEMA
+                || kind == Kind.COLUMN || kind == Kind.JOIN;
+    }
 
-        if (!invoked && !completionPopup.isShowing() && !engine.shouldAutoPopup(sql, caret)) {
+    private void updateCompletions(boolean invoked) {
+        final String sql = codeArea.getText();
+        final int caret = codeArea.getCaretPosition();
+
+        // Cheap gate on the FX thread — avoid scheduling work that will no-op.
+        SqlAutocompleteEngine probe = newEngine();
+        if (!invoked && !completionPopup.isShowing() && !probe.shouldAutoPopup(sql, caret)) {
             return;
         }
 
-        List<Suggestion> suggestions = engine.suggest(sql, caret, invoked);
-        String currentPrefix = completionPrefixAt(sql, caret);
+        final String previouslySelected = Optional.ofNullable(completionList.getSelectionModel().getSelectedItem())
+                .map(Suggestion::selectionKey)
+                .orElse(null);
 
-        // Drop suggestions the user has already fully typed (case-insensitive).
-        // If nothing remains — sole exact match, or every hit was exact — hide.
+        cancelActiveCompletion();
+        final long generation = completionGeneration.incrementAndGet();
+        final SchemaCache cache = schemaCache.get();
+        final String catalog = activeCatalog.get();
+        final ConnectionConfig.Driver driver = dialect.get();
+        final Map<String, String> params = knownParameters();
+        final Style style = completionStyle.get();
+
+        Task<SuggestResult> task = new Task<>() {
+            @Override
+            protected SuggestResult call() {
+                if (isCancelled() || generation != completionGeneration.get()) {
+                    return SuggestResult.empty();
+                }
+                SqlAutocompleteEngine eng = new SqlAutocompleteEngine(
+                        cache, () -> catalog, () -> driver, () -> params, style);
+                return eng.suggest(sql, caret, invoked);
+            }
+        };
+        activeCompletionTask = task;
+        task.setOnSucceeded(event -> {
+            if (generation != completionGeneration.get() || task.isCancelled()) {
+                return;
+            }
+            // Drop stale results if the user kept typing.
+            if (!sql.equals(codeArea.getText()) || caret != codeArea.getCaretPosition()) {
+                return;
+            }
+            applyCompletionResult(task.getValue(), previouslySelected);
+        });
+        task.setOnFailed(event -> {
+            // Ignore — next keystroke will retry.
+        });
+        completionExecutor.execute(task);
+    }
+
+    private void applyCompletionResult(SuggestResult result, String previouslySelected) {
+        if (result == null || result.isEmpty()) {
+            hideCompletions();
+            return;
+        }
+        List<Suggestion> suggestions = result.items();
+        String currentPrefix = completionPrefixAt(codeArea.getText(), codeArea.getCaretPosition());
+
         if (!currentPrefix.isEmpty() && !suggestions.isEmpty()) {
             List<Suggestion> remaining = new ArrayList<>(suggestions.size());
             for (Suggestion suggestion : suggestions) {
@@ -524,16 +670,12 @@ public final class SqlEditorPane extends BorderPane {
             return;
         }
 
-        String previouslySelected = Optional.ofNullable(completionList.getSelectionModel().getSelectedItem())
-                .map(Suggestion::insertText)
-                .orElse(null);
-
         completionList.setItems(FXCollections.observableArrayList(suggestions));
 
         int selectIndex = 0;
         if (previouslySelected != null) {
             for (int i = 0; i < suggestions.size(); i++) {
-                if (suggestions.get(i).insertText().equalsIgnoreCase(previouslySelected)) {
+                if (suggestions.get(i).selectionKey().equals(previouslySelected)) {
                     selectIndex = i;
                     break;
                 }
@@ -541,10 +683,75 @@ public final class SqlEditorPane extends BorderPane {
         }
         completionList.getSelectionModel().select(selectIndex);
         completionList.scrollTo(selectIndex);
+        updateCompletionDocs(completionList.getSelectionModel().getSelectedItem());
+
+        int shown = suggestions.size();
+        int total = Math.max(result.totalMatched(), shown);
+        completionFooter.setText(total > shown
+                ? "Showing %d of %d".formatted(shown, total)
+                : "Showing %d".formatted(shown));
 
         int rows = Math.min(suggestions.size(), POPUP_MAX_ROWS);
         completionList.setPrefHeight(rows * ROW_HEIGHT + 6);
         showPopupAtCaret();
+    }
+
+    private void cancelActiveCompletion() {
+        completionGeneration.incrementAndGet();
+        Task<SuggestResult> task = activeCompletionTask;
+        activeCompletionTask = null;
+        if (task != null && task.isRunning()) {
+            task.cancel(true);
+        }
+    }
+
+    private void updateCompletionDocs(Suggestion suggestion) {
+        if (suggestion == null) {
+            completionDocs.setText("");
+            completionDocs.setVisible(false);
+            completionDocs.setManaged(false);
+            return;
+        }
+        String text = suggestion.documentation();
+        if (text == null || text.isBlank()) {
+            // Fall back to Quick Doc resolution for schema objects.
+            text = resolveCompletionDoc(suggestion).orElse(suggestion.detail() == null ? "" : suggestion.detail());
+        }
+        if (text == null || text.isBlank()) {
+            completionDocs.setVisible(false);
+            completionDocs.setManaged(false);
+            completionDocs.setText("");
+            return;
+        }
+        completionDocs.setText(text);
+        completionDocs.setVisible(true);
+        completionDocs.setManaged(true);
+    }
+
+    private Optional<String> resolveCompletionDoc(Suggestion suggestion) {
+        if (suggestion.kind() != Kind.TABLE && suggestion.kind() != Kind.VIEW && suggestion.kind() != Kind.COLUMN) {
+            return Optional.empty();
+        }
+        SchemaCache cache = schemaCache.get();
+        if (cache == null || !cache.isReady()) {
+            return Optional.empty();
+        }
+        String catalog = activeCatalog.get();
+        Optional<Doc> doc = SqlDocResolver.resolve(
+                suggestion.name(),
+                Math.max(0, suggestion.name().length() - 1),
+                cache,
+                catalog,
+                "");
+        return doc.map(d -> {
+            if (d.isTable()) {
+                return (suggestion.kind() == Kind.VIEW ? "View" : "Table")
+                        + " `" + d.table() + "`"
+                        + (d.schema().isBlank() ? "" : " · " + d.schema());
+            }
+            return "Column `" + d.column() + "` of `" + d.table() + "`"
+                    + (d.code().isBlank() ? "" : "\n" + d.code().lines().findFirst().orElse(""));
+        });
     }
 
     /**
@@ -554,6 +761,12 @@ public final class SqlEditorPane extends BorderPane {
     private static boolean isFullyTypedSuggestion(Suggestion suggestion, String prefix) {
         if (suggestion == null || prefix == null || prefix.isEmpty()) {
             return false;
+        }
+        // Snippets / functions keep placeholders — never treat as "fully typed".
+        if (suggestion.kind() == Kind.SNIPPET || suggestion.kind() == Kind.FUNCTION
+                || !suggestion.placeholders().isEmpty()) {
+            return suggestion.name().equalsIgnoreCase(prefix)
+                    && suggestion.insertText().equalsIgnoreCase(prefix);
         }
         if (suggestion.insertText().equalsIgnoreCase(prefix)) {
             return true;
@@ -567,7 +780,6 @@ public final class SqlEditorPane extends BorderPane {
             hideCompletions();
             return;
         }
-        // RichTextFX caret bounds are already in screen coordinates.
         Bounds caret = caretBounds.get();
         double x = caret.getMinX();
         double y = caret.getMaxY() + 2;
@@ -576,8 +788,14 @@ public final class SqlEditorPane extends BorderPane {
                 .findFirst()
                 .orElse(Screen.getPrimary());
         Rectangle2D visible = screen.getVisualBounds();
-        double popupWidth = completionList.getPrefWidth();
-        double popupHeight = completionList.getPrefHeight();
+        double popupWidth = completionChrome.prefWidth(-1);
+        if (popupWidth <= 0) {
+            popupWidth = completionList.getPrefWidth();
+        }
+        double popupHeight = completionChrome.prefHeight(-1);
+        if (popupHeight <= 0) {
+            popupHeight = completionList.getPrefHeight() + 48;
+        }
 
         if (y + popupHeight > visible.getMaxY()) {
             y = caret.getMinY() - popupHeight - 2;
@@ -604,12 +822,82 @@ public final class SqlEditorPane extends BorderPane {
         }
         int start = Math.max(0, Math.min(selected.replaceStart(), codeArea.getLength()));
         int end = Math.max(start, Math.min(selected.replaceEnd(), codeArea.getLength()));
-        String text = selected.insertText();
-        if (selected.trailingSpace() && (end >= codeArea.getLength() || !Character.isWhitespace(codeArea.getText().charAt(end)))) {
+
+        String raw = selected.insertText();
+        boolean templated = selected.kind() == Kind.SNIPPET
+                || selected.kind() == Kind.FUNCTION
+                || !selected.placeholders().isEmpty()
+                || raw.indexOf('$') >= 0;
+
+        if (templated) {
+            SqlSnippetCatalog.AppliedTemplate applied = SqlSnippetCatalog.apply(raw);
+            String text = applied.text();
+            if (selected.trailingSpace()
+                    && (end >= codeArea.getLength() || !Character.isWhitespace(codeArea.getText().charAt(end)))) {
+                text = text + " ";
+            }
+            codeArea.replaceText(start, end, text);
+            hideCompletions();
+            beginPlaceholderSession(start, applied.ranges());
+            return;
+        }
+
+        String text = raw;
+        if (selected.trailingSpace()
+                && (end >= codeArea.getLength() || !Character.isWhitespace(codeArea.getText().charAt(end)))) {
             text = text + " ";
         }
         codeArea.replaceText(start, end, text);
+        clearPlaceholderSession();
         hideCompletions();
+    }
+
+    private void beginPlaceholderSession(int insertOffset, List<int[]> relativeRanges) {
+        if (relativeRanges == null || relativeRanges.isEmpty()) {
+            clearPlaceholderSession();
+            return;
+        }
+        List<int[]> absolute = new ArrayList<>(relativeRanges.size());
+        for (int[] range : relativeRanges) {
+            absolute.add(new int[]{insertOffset + range[0], insertOffset + range[1]});
+        }
+        pendingPlaceholders = List.copyOf(absolute);
+        placeholderIndex = 0;
+        selectPlaceholder(0);
+    }
+
+    private boolean hasPendingPlaceholders() {
+        return placeholderIndex >= 0 && placeholderIndex < pendingPlaceholders.size();
+    }
+
+    private void advancePlaceholder(int delta) {
+        if (pendingPlaceholders.isEmpty()) {
+            clearPlaceholderSession();
+            return;
+        }
+        int next = placeholderIndex + delta;
+        if (next < 0 || next >= pendingPlaceholders.size()) {
+            clearPlaceholderSession();
+            return;
+        }
+        placeholderIndex = next;
+        selectPlaceholder(placeholderIndex);
+    }
+
+    private void selectPlaceholder(int index) {
+        if (index < 0 || index >= pendingPlaceholders.size()) {
+            return;
+        }
+        int[] range = pendingPlaceholders.get(index);
+        int start = Math.max(0, Math.min(range[0], codeArea.getLength()));
+        int end = Math.max(start, Math.min(range[1], codeArea.getLength()));
+        codeArea.selectRange(start, end);
+        codeArea.requestFollowCaret();
+    }
+
+    private void clearPlaceholderSession() {
+        pendingPlaceholders = List.of();
+        placeholderIndex = -1;
     }
 
     private void moveCompletion(int delta) {
@@ -623,6 +911,7 @@ public final class SqlEditorPane extends BorderPane {
     }
 
     private void hideCompletions() {
+        cancelActiveCompletion();
         completionPopup.hide();
     }
 
@@ -644,23 +933,26 @@ public final class SqlEditorPane extends BorderPane {
         return sql.substring(start, end);
     }
 
-    /** IntelliJ-style row: kind badge · name ………… detail */
+    /** IntelliJ-style row: sticky kind icon · name ………… detail */
     private static final class CompletionCell extends ListCell<Suggestion> {
 
-        private final Label badge = new Label();
+        private final javafx.scene.layout.StackPane iconSlot = new javafx.scene.layout.StackPane();
         private final Label name = new Label();
         private final Label detail = new Label();
         private final HBox root = new HBox(8);
 
         CompletionCell() {
-            badge.getStyleClass().add("sql-completion-badge");
+            iconSlot.getStyleClass().add("sql-completion-icon");
+            iconSlot.setMinWidth(18);
+            iconSlot.setPrefWidth(18);
+            iconSlot.setMaxWidth(18);
             name.getStyleClass().add("sql-completion-name");
             detail.getStyleClass().add("sql-completion-detail");
             Region spacer = new Region();
             HBox.setHgrow(spacer, Priority.ALWAYS);
             root.setAlignment(Pos.CENTER_LEFT);
             root.setPadding(new Insets(0, 8, 0, 4));
-            root.getChildren().addAll(badge, name, spacer, detail);
+            root.getChildren().addAll(iconSlot, name, spacer, detail);
             setGraphic(null);
             setText(null);
         }
@@ -672,28 +964,25 @@ public final class SqlEditorPane extends BorderPane {
                 setGraphic(null);
                 return;
             }
-            badge.setText(kindTag(item.kind()));
-            badge.getStyleClass().removeAll(
-                    "sql-completion-badge-keyword", "sql-completion-badge-table",
-                    "sql-completion-badge-column", "sql-completion-badge-join");
-            badge.getStyleClass().add(switch (item.kind()) {
-                case KEYWORD -> "sql-completion-badge-keyword";
-                case TABLE -> "sql-completion-badge-table";
-                case COLUMN -> "sql-completion-badge-column";
-                case JOIN -> "sql-completion-badge-join";
-            });
+            iconSlot.getChildren().setAll(kindIcon(item.kind()));
             name.setText(item.name());
             detail.setText(item.detail() == null ? "" : item.detail());
             setGraphic(root);
         }
     }
 
-    private static String kindTag(Kind kind) {
+    private static Node kindIcon(Kind kind) {
         return switch (kind) {
-            case KEYWORD -> "K";
-            case TABLE -> "T";
-            case COLUMN -> "C";
-            case JOIN -> "J";
+            case KEYWORD -> Icons.keyword();
+            case TABLE -> Icons.table();
+            case VIEW -> Icons.view();
+            case COLUMN -> Icons.column();
+            case SCHEMA -> Icons.schema();
+            case INDEX -> Icons.index();
+            case FUNCTION -> Icons.function();
+            case JOIN -> Icons.join();
+            case SNIPPET -> Icons.snippet();
+            case PARAMETER -> Icons.parameter();
         };
     }
 

@@ -32,6 +32,9 @@ public final class WorkspaceState {
     private static final String AUTO_COMMIT = "execution.autoCommit";
     private static final String STOP_AUTO_REFRESH_ON_ERROR = "results.stopAutoRefreshOnError";
     private static final String MAX_ROWS = "results.maxRows";
+    private static final String LOWER_KEYWORDS = "completion.lowerKeywords";
+    private static final String AUTO_QUOTE = "completion.autoQuoteReserved";
+    private static final String PRESERVE_DB_CASING = "completion.preserveDbCasing";
 
     private static final double DEFAULT_WIDTH = 1280;
     private static final double DEFAULT_HEIGHT = 800;
@@ -152,5 +155,31 @@ public final class WorkspaceState {
 
     public void saveMaxRows(int maxRows) {
         preferences.putInt(MAX_ROWS, Math.max(1, maxRows));
+    }
+
+    // ---------------------------------------------------------------- completion hygiene
+
+    public boolean lowerKeywords() {
+        return preferences.getBoolean(LOWER_KEYWORDS, false);
+    }
+
+    public void saveLowerKeywords(boolean lowerKeywords) {
+        preferences.putBoolean(LOWER_KEYWORDS, lowerKeywords);
+    }
+
+    public boolean autoQuoteReserved() {
+        return preferences.getBoolean(AUTO_QUOTE, true);
+    }
+
+    public void saveAutoQuoteReserved(boolean autoQuote) {
+        preferences.putBoolean(AUTO_QUOTE, autoQuote);
+    }
+
+    public boolean preserveDbCasing() {
+        return preferences.getBoolean(PRESERVE_DB_CASING, true);
+    }
+
+    public void savePreserveDbCasing(boolean preserve) {
+        preferences.putBoolean(PRESERVE_DB_CASING, preserve);
     }
 }

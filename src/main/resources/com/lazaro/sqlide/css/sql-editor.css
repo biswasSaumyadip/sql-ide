@@ -220,3 +220,38 @@
 .sql-completion-list .list-cell:filled:selected .sql-completion-detail {
     -fx-text-fill: #c5d4e8;
 }
+
+.sql-completion-popup {
+    -fx-background-color: #1e1f22;
+    -fx-border-color: -color-border-default;
+    -fx-border-width: 1px;
+    -fx-border-radius: 4px;
+    -fx-background-radius: 4px;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.45), 12, 0.2, 0, 4);
+}
+
+.sql-completion-icon {
+    -fx-alignment: center;
+    -fx-min-width: 18px;
+    -fx-pref-width: 18px;
+    -fx-max-width: 18px;
+}
+
+.sql-completion-icon .icon {
+    -fx-stroke: #9aa0a6;
+}
+
+.sql-completion-docs {
+    -fx-text-fill: #a8adb5;
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 11px;
+    -fx-padding: 6px 10px 4px 10px;
+    -fx-background-color: #18191c;
+}
+
+.sql-completion-footer {
+    -fx-text-fill: #6b7280;
+    -fx-font-size: 10px;
+    -fx-padding: 2px 10px 6px 10px;
+    -fx-background-color: #18191c;
+}
