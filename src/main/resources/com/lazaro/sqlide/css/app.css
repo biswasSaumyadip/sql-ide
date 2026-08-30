@@ -208,6 +208,56 @@
     -fx-background-color: #1b1c1f;
 }
 
+.saved-connections-pane {
+    -fx-background-color: #1b1c1f;
+}
+
+.saved-connections-header {
+    -fx-font-size: 10.5px;
+    -fx-font-weight: bold;
+    -fx-opacity: 0.62;
+    -fx-padding: 10px 12px 4px 12px;
+}
+
+.saved-connections-list {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+    -fx-fixed-cell-size: 44;
+}
+
+.saved-connections-list .list-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: #d6d9de;
+    -fx-padding: 0;
+}
+
+.saved-connections-list .list-cell:hover {
+    -fx-background-color: #262a32;
+}
+
+.saved-connections-list .list-cell:selected {
+    -fx-background-color: #2f5d8c;
+}
+
+.saved-connection-name {
+    -fx-text-fill: #eceff4;
+    -fx-font-size: 12px;
+}
+
+.saved-connection-detail {
+    -fx-text-fill: #7f848e;
+    -fx-font-size: 10.5px;
+}
+
+.saved-connections-list .list-cell:selected .saved-connection-name {
+    -fx-text-fill: #eceff4;
+}
+
+.saved-connections-list .list-cell:selected .saved-connection-detail {
+    -fx-text-fill: #c5d4e4;
+}
+
 .sidebar-tabs {
     -fx-background-color: #1b1c1f;
 }

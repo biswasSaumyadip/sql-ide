@@ -1,5 +1,7 @@
 package com.lazaro.sqlide.ui;
 
+import com.lazaro.sqlide.core.config.ConnectionProfile;
+import com.lazaro.sqlide.core.config.ConnectionProfileManager;
 import com.lazaro.sqlide.core.db.ConnectionConfig;
 import com.lazaro.sqlide.core.db.DataSourceDriver;
 import com.lazaro.sqlide.core.db.DriverRegistry;
@@ -76,6 +78,7 @@ public final class MainController {
     });
 
     private final SchemaTreeView schemaTree = new SchemaTreeView();
+    private final ConnectionProfileManager profileManager = new ConnectionProfileManager();
     private final QueryHistoryStore historyStore = new QueryHistoryStore();
     private final SnippetStore snippetStore = new SnippetStore();
     private final QueryHistoryPane historyPane = new QueryHistoryPane(historyStore);
@@ -115,6 +118,7 @@ public final class MainController {
         this.state = state;
         this.driver = registry.create(DriverRegistry.DEFAULT_DRIVER_ID);
         schemaTree.setDriver(driver);
+        schemaTree.setProfileManager(profileManager);
         editors.setSchemaCache(() -> schemaCache);
         editors.setActiveCatalog(() -> driver.activeCatalog().orElse(null));
     }
@@ -128,6 +132,8 @@ public final class MainController {
         root.setBottom(statusBar);
 
         schemaTree.setOnConnectRequested(this::openConnectionDialog);
+        schemaTree.setOnConnectProfile(this::openConnectionDialog);
+        schemaTree.setOnDeleteProfile(this::deleteSavedProfile);
         schemaTree.setOnActivate(this::insertNodeReference);
         schemaTree.setOnViewObject(this::openObjectViewer);
         schemaTree.setOnUseDatabase(this::useDatabase);
@@ -328,9 +334,27 @@ public final class MainController {
     }
 
     private void openConnectionDialog() {
-        ConnectionDialog dialog = new ConnectionDialog(state.lastConnection(), driver);
+        openConnectionDialog(null);
+    }
+
+    private void openConnectionDialog(ConnectionProfile profile) {
+        ConnectionDialog dialog = new ConnectionDialog(
+                state.lastConnection(), driver, profileManager, profile);
         dialog.initOwner(owner());
-        dialog.showAndWait().ifPresent(this::connect);
+        dialog.showAndWait().ifPresent(config -> {
+            connect(config);
+            schemaTree.refreshSavedConnections();
+        });
+        // Dialog may have deleted/saved profiles even on Cancel.
+        schemaTree.refreshSavedConnections();
+    }
+
+    private void deleteSavedProfile(ConnectionProfile profile) {
+        if (profile == null) {
+            return;
+        }
+        profileManager.deleteProfile(profile.id());
+        schemaTree.refreshSavedConnections();
     }
 
     private void connect(ConnectionConfig config) {

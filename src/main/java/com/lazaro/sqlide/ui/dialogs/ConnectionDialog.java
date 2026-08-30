@@ -60,11 +60,15 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
     private String editingProfileId;
 
     public ConnectionDialog(ConnectionConfig initial, DataSourceDriver driver) {
-        this(initial, driver, new ConnectionProfileManager());
+        this(initial, driver, new ConnectionProfileManager(), null);
     }
 
-    ConnectionDialog(ConnectionConfig initial, DataSourceDriver driver, ConnectionProfileManager profileManager) {
-        this.profileManager = profileManager;
+    public ConnectionDialog(
+            ConnectionConfig initial,
+            DataSourceDriver driver,
+            ConnectionProfileManager profileManager,
+            ConnectionProfile preselect) {
+        this.profileManager = profileManager == null ? new ConnectionProfileManager() : profileManager;
         setTitle("Connect to database");
         setHeaderText("Data source settings");
         setResizable(true);
@@ -81,6 +85,9 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
         wireSavedProfiles();
         wireValidation();
         wireTestButton(driver);
+        if (preselect != null) {
+            selectProfile(preselect);
+        }
 
         setResultConverter(button -> {
             if (button != ButtonType.OK) {
@@ -92,7 +99,29 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
             }
             return config;
         });
-        Platform.runLater(hostField::requestFocus);
+        Platform.runLater(() -> {
+            if (preselect != null) {
+                passwordField.requestFocus();
+            } else {
+                hostField.requestFocus();
+            }
+        });
+    }
+
+    /** Selects a saved profile in the dropdown (password is cleared). */
+    public void selectProfile(ConnectionProfile profile) {
+        if (profile == null) {
+            return;
+        }
+        ConnectionProfile match = savedBox.getItems().stream()
+                .filter(item -> profile.id().equals(item.id()))
+                .findFirst()
+                .orElse(profile);
+        if (!savedBox.getItems().contains(match)) {
+            savedBox.getItems().add(0, match);
+        }
+        savedBox.setValue(match);
+        applyProfile(match);
     }
 
     // ---------------------------------------------------------------- form
