@@ -51,6 +51,7 @@ import org.fxmisc.richtext.model.StyleSpans;
 import org.fxmisc.richtext.model.StyleSpansBuilder;
 import org.reactfx.Subscription;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
@@ -500,14 +501,25 @@ public final class SqlEditorPane extends BorderPane {
         }
 
         List<Suggestion> suggestions = engine.suggest(sql, caret, invoked);
-        if (suggestions.isEmpty()) {
-            hideCompletions();
-            return;
+        String currentPrefix = completionPrefixAt(sql, caret);
+
+        // Drop suggestions the user has already fully typed (case-insensitive).
+        // If nothing remains — sole exact match, or every hit was exact — hide.
+        if (!currentPrefix.isEmpty() && !suggestions.isEmpty()) {
+            List<Suggestion> remaining = new ArrayList<>(suggestions.size());
+            for (Suggestion suggestion : suggestions) {
+                if (!isFullyTypedSuggestion(suggestion, currentPrefix)) {
+                    remaining.add(suggestion);
+                }
+            }
+            if (remaining.isEmpty()) {
+                hideCompletions();
+                return;
+            }
+            suggestions = remaining;
         }
 
-        String currentPrefix = completionPrefixAt(sql, caret);
-        if (suggestions.size() == 1
-                && suggestions.getFirst().insertText().equalsIgnoreCase(currentPrefix)) {
+        if (suggestions.isEmpty()) {
             hideCompletions();
             return;
         }
@@ -533,6 +545,20 @@ public final class SqlEditorPane extends BorderPane {
         int rows = Math.min(suggestions.size(), POPUP_MAX_ROWS);
         completionList.setPrefHeight(rows * ROW_HEIGHT + 6);
         showPopupAtCaret();
+    }
+
+    /**
+     * True when the caret prefix already equals this suggestion's insert text or
+     * display name — the user finished typing that token.
+     */
+    private static boolean isFullyTypedSuggestion(Suggestion suggestion, String prefix) {
+        if (suggestion == null || prefix == null || prefix.isEmpty()) {
+            return false;
+        }
+        if (suggestion.insertText().equalsIgnoreCase(prefix)) {
+            return true;
+        }
+        return suggestion.name() != null && suggestion.name().equalsIgnoreCase(prefix);
     }
 
     private void showPopupAtCaret() {
