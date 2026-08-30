@@ -171,6 +171,20 @@ public final class Icons {
         return group(a, b, c);
     }
 
+    /** Fold gutter chevron pointing down (region expanded). Clickable (not mouse-transparent). */
+    public static Node foldExpanded() {
+        Line a = outlined(new Line(3.5, 5.0, 7.0, 9.0), "icon-fold");
+        Line b = outlined(new Line(7.0, 9.0, 10.5, 5.0), "icon-fold");
+        return clickableGroup(a, b);
+    }
+
+    /** Fold gutter chevron pointing right (region collapsed). Clickable (not mouse-transparent). */
+    public static Node foldCollapsed() {
+        Line a = outlined(new Line(5.0, 3.5, 9.0, 7.0), "icon-fold");
+        Line b = outlined(new Line(9.0, 7.0, 5.0, 10.5), "icon-fold");
+        return clickableGroup(a, b);
+    }
+
     /** Colon mark for named query parameters. */
     public static Node parameter() {
         Circle dot = outlined(new Circle(7, 4.5, 1.4), "icon-parameter");
@@ -407,6 +421,13 @@ public final class Icons {
         Group icon = new Group(shapes);
         // Icons are decoration; clicks belong to the control underneath.
         icon.setMouseTransparent(true);
+        return icon;
+    }
+
+    private static Group clickableGroup(Shape... shapes) {
+        Group icon = new Group(shapes);
+        icon.setMouseTransparent(false);
+        icon.setPickOnBounds(true);
         return icon;
     }
 }

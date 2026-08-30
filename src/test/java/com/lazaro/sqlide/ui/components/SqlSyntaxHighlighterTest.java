@@ -111,6 +111,88 @@ class SqlSyntaxHighlighterTest {
         assertEquals(sql.length(), SqlSyntaxHighlighter.computeHighlighting(sql).length());
     }
 
+    @Test
+    @DisplayName("JSON object literals inside single quotes get nested token styles")
+    void injectsJsonObjectHighlighting() {
+        String sql = "SELECT '{\"name\":\"Ada\",\"id\":42,\"ok\":true}'";
+        var spans = SqlSyntaxHighlighter.computeHighlighting(sql);
+        assertEquals(sql.length(), spans.length());
+
+        assertTrue(hasStyleAt(sql, spans, "name", JsonSyntaxHighlighter.KEY));
+        assertTrue(hasStyleAt(sql, spans, "\"Ada\"", JsonSyntaxHighlighter.STRING));
+        assertTrue(hasStyleAt(sql, spans, "42", JsonSyntaxHighlighter.NUMBER));
+        assertTrue(hasStyleAt(sql, spans, "true", JsonSyntaxHighlighter.LITERAL));
+        assertTrue(hasStyleAt(sql, spans, "{", SqlSyntaxHighlighter.INJECTED_LANGUAGE));
+        assertFalse(hasStyleAt(sql, spans, "name", SqlSyntaxHighlighter.STRING));
+    }
+
+    @Test
+    @DisplayName("JSON array literals inside single quotes are injected too")
+    void injectsJsonArrayHighlighting() {
+        String sql = "INSERT INTO t VALUES ('[1, false, null]');";
+        var spans = SqlSyntaxHighlighter.computeHighlighting(sql);
+        assertEquals(sql.length(), spans.length());
+        assertTrue(hasStyleAt(sql, spans, "1", JsonSyntaxHighlighter.NUMBER));
+        assertTrue(hasStyleAt(sql, spans, "false", JsonSyntaxHighlighter.LITERAL));
+        assertTrue(hasStyleAt(sql, spans, "[", SqlSyntaxHighlighter.INJECTED_LANGUAGE));
+    }
+
+    @Test
+    @DisplayName("plain string literals stay sql-string without injection")
+    void plainStringsAreNotInjected() {
+        String sql = "SELECT 'hello' FROM t";
+        var spans = SqlSyntaxHighlighter.computeHighlighting(sql);
+        assertTrue(hasStyleAt(sql, spans, "'hello'", SqlSyntaxHighlighter.STRING));
+        assertFalse(hasStyleAt(sql, spans, "hello", SqlSyntaxHighlighter.INJECTED_LANGUAGE));
+    }
+
+    @Test
+    @DisplayName("double-quoted identifiers are never treated as JSON injection")
+    void doubleQuotedStringsAreNotInjected() {
+        String sql = "SELECT \"{\\\"a\\\":1}\" FROM t";
+        var spans = SqlSyntaxHighlighter.computeHighlighting(sql);
+        assertFalse(hasStyleAt(sql, spans, "{", SqlSyntaxHighlighter.INJECTED_LANGUAGE));
+    }
+
+    @Test
+    @DisplayName("findJsonLiteralAt resolves the string under the caret")
+    void findsJsonLiteralAtCaret() {
+        String sql = "SELECT '{\"a\":1}' FROM t";
+        int caret = sql.indexOf('{') + 1;
+        var found = SqlSyntaxHighlighter.findJsonLiteralAt(sql, caret, caret, caret);
+        assertTrue(found.isPresent());
+        assertEquals("{\"a\":1}", found.get().json());
+        assertEquals(sql.indexOf('\''), found.get().literalStart());
+    }
+
+    @Test
+    @DisplayName("findJsonLiteralAt accepts a bare JSON selection")
+    void findsJsonFromBareSelection() {
+        String sql = "SELECT x FROM t";
+        String json = "{\"x\":1}";
+        var found = SqlSyntaxHighlighter.findJsonLiteralAt(json, 0, 0, json.length());
+        assertTrue(found.isPresent());
+        assertEquals(json, found.get().json());
+    }
+
+    private static boolean hasStyleAt(
+            String sql,
+            org.fxmisc.richtext.model.StyleSpans<java.util.Collection<String>> spans,
+            String fragment,
+            String styleClass) {
+        int index = sql.indexOf(fragment);
+        assertTrue(index >= 0, "fragment not found: " + fragment);
+        int pos = 0;
+        for (org.fxmisc.richtext.model.StyleSpan<java.util.Collection<String>> span : spans) {
+            int end = pos + span.getLength();
+            if (index >= pos && index < end) {
+                return span.getStyle().contains(styleClass);
+            }
+            pos = end;
+        }
+        return false;
+    }
+
     private static List<String> textOf(String sql, String styleClass) {
         return SqlSyntaxHighlighter.tokenize(sql).stream()
                 .filter(token -> token.styleClass().equals(styleClass))

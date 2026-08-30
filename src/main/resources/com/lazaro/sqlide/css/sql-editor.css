@@ -37,6 +37,43 @@
     -fx-padding: 0 10px 0 8px;
 }
 
+.sql-gutter {
+    -fx-background-color: #1e1f22;
+    -fx-alignment: center-left;
+}
+
+.sql-fold-slot {
+    -fx-background-color: #1e1f22;
+    -fx-padding: 0 0 0 2;
+}
+
+.sql-fold-chevron {
+    -fx-padding: 0;
+    -fx-background-color: transparent;
+}
+
+.sql-editor-stack {
+    -fx-background-color: #1e1f22;
+}
+
+.inlay-layer {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+
+.inlay-hint {
+    -fx-background-color: -color-bg-subtle;
+    -fx-border-color: -color-border-default;
+    -fx-border-width: 1px;
+    -fx-border-radius: 4px;
+    -fx-background-radius: 4px;
+    -fx-text-fill: -color-fg-muted;
+    -fx-font-size: 10px;
+    -fx-padding: 0 4px;
+    -fx-cursor: default;
+    -fx-opacity: 0.92;
+}
+
 /* Token rules must outrank the `.sql-editor .text` base colour above, so they
    qualify the Text node with both its own class and the token class. */
 
@@ -51,6 +88,32 @@
 
 .sql-editor .text.sql-string {
     -fx-fill: #e8935c;
+}
+
+/* JetBrains-like faint green wash behind injected (nested) language fragments. */
+.sql-editor .text.injected-language {
+    -rtfx-background-color: rgba(76, 175, 80, 0.15);
+}
+
+.sql-editor .text.json-key {
+    -fx-fill: #9876AA;
+}
+
+.sql-editor .text.json-string {
+    -fx-fill: #6A8759;
+}
+
+.sql-editor .text.json-number {
+    -fx-fill: #6897BB;
+}
+
+.sql-editor .text.json-boolean,
+.sql-editor .text.json-literal {
+    -fx-fill: #CB772F;
+}
+
+.sql-editor .text.json-punctuation {
+    -fx-fill: #9aa2ad;
 }
 
 .sql-editor .text.sql-number {

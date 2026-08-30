@@ -211,6 +211,10 @@
     -fx-stroke: #d08770;
 }
 
+.icon-fold {
+    -fx-stroke: #8b93a1;
+}
+
 .icon-parameter {
     -fx-stroke: #a3be8c;
 }

@@ -10,7 +10,7 @@ import net.sf.jsqlparser.parser.Token;
  * <p>JSqlParser's {@code absoluteBegin}/{@code absoluteEnd} are <strong>1-based</strong>,
  * with {@code absoluteEnd} exclusive (one past the last character).
  */
-final class SourceOffsets {
+public final class SourceOffsets {
 
     private SourceOffsets() {
     }
@@ -19,7 +19,7 @@ final class SourceOffsets {
      * Prefer a tight range around {@code preferredImage} inside the node's span
      * (IntelliJ underlines the identifier, not the whole clause).
      */
-    static int[] rangeOf(Object node, String sql, String preferredImage) {
+    public static int[] rangeOf(Object node, String sql, String preferredImage) {
         int[] nodeRange = rangeFromAst(node);
         if (preferredImage != null && !preferredImage.isBlank()) {
             int[] tight = findImage(sql, preferredImage, nodeRange);

@@ -8,9 +8,12 @@ import com.lazaro.sqlide.core.inspection.InspectionHighlights;
 import com.lazaro.sqlide.core.inspection.InspectionIssue;
 import com.lazaro.sqlide.core.inspection.Severity;
 import com.lazaro.sqlide.core.inspection.SqlInspector;
+import com.lazaro.sqlide.core.sql.SqlFoldRegions;
+import com.lazaro.sqlide.core.sql.SqlInlayHints;
 import com.lazaro.sqlide.core.sql.SqlParameterParser;
 import com.lazaro.sqlide.ui.Icons;
 import com.lazaro.sqlide.ui.autocomplete.SqlAutocompleteEngine;
+import com.lazaro.sqlide.ui.dialogs.JsonViewerDialog;
 import com.lazaro.sqlide.ui.autocomplete.SqlAutocompleteEngine.Kind;
 import com.lazaro.sqlide.ui.autocomplete.SqlAutocompleteEngine.SuggestResult;
 import com.lazaro.sqlide.ui.autocomplete.SqlAutocompleteEngine.Suggestion;
@@ -26,11 +29,14 @@ import javafx.collections.FXCollections;
 import javafx.concurrent.Task;
 import javafx.geometry.Bounds;
 import javafx.geometry.Insets;
+import javafx.geometry.Point2D;
 import javafx.geometry.Pos;
 import javafx.geometry.Rectangle2D;
+import javafx.scene.Cursor;
 import javafx.scene.Node;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.ContextMenu;
+import javafx.scene.control.IndexRange;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
@@ -43,8 +49,10 @@ import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Pane;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.Popup;
 import javafx.stage.Screen;
@@ -55,6 +63,7 @@ import org.fxmisc.richtext.LineNumberFactory;
 import org.fxmisc.richtext.event.MouseOverTextEvent;
 import org.fxmisc.richtext.model.StyleSpans;
 import org.fxmisc.richtext.model.StyleSpansBuilder;
+import org.fxmisc.richtext.model.TwoDimensional;
 import org.reactfx.Subscription;
 
 import java.util.ArrayList;
@@ -66,6 +75,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
@@ -75,13 +85,15 @@ import java.util.function.Supplier;
 
 /**
  * SQL editor built on a RichTextFX {@link CodeArea}, with line numbers, regex-driven
- * syntax highlighting, schema-aware autocomplete and debounced AST inspections.
+ * syntax highlighting, code folding, inlay hints, schema-aware autocomplete and
+ * debounced AST inspections.
  */
 public final class SqlEditorPane extends BorderPane {
 
     private static final Duration HIGHLIGHT_DELAY = Duration.millis(120);
     /** Wait for a typing pause before parsing; avoids inspecting mid-keystroke. */
     private static final Duration INSPECTION_DELAY = Duration.millis(500);
+    private static final Duration INLAY_DELAY = Duration.millis(420);
     private static final Duration AUTOCOMPLETE_DELAY = Duration.millis(45);
     private static final int POPUP_MAX_ROWS = 12;
     private static final double ROW_HEIGHT = 26;
@@ -95,13 +107,16 @@ public final class SqlEditorPane extends BorderPane {
             -fx-padding: 0 10 0 8;""";
 
     private final CodeArea codeArea = new CodeArea();
+    private final Pane inlayLayer = new Pane();
     private final EditorFindBar findBar;
     private final ExecutorService highlightExecutor;
     private final ExecutorService inspectionExecutor;
+    private final ExecutorService inlayExecutor;
     private final ExecutorService docExecutor;
     private final ExecutorService completionExecutor;
     private final Subscription highlightSubscription;
     private final PauseTransition inspectionDebounce = new PauseTransition(INSPECTION_DELAY);
+    private final PauseTransition inlayDebounce = new PauseTransition(INLAY_DELAY);
     private final PauseTransition docHideDebounce = new PauseTransition(Duration.millis(220));
     private final Popup completionPopup = new Popup();
     private final ListView<Suggestion> completionList = new ListView<>();
@@ -111,10 +126,12 @@ public final class SqlEditorPane extends BorderPane {
     private final Tooltip inspectionTooltip = new Tooltip();
     private final SqlDocPopup docPopup = new SqlDocPopup();
     private final AtomicLong inspectionGeneration = new AtomicLong();
+    private final AtomicLong inlayGeneration = new AtomicLong();
     private final AtomicLong docGeneration = new AtomicLong();
     private final AtomicLong completionGeneration = new AtomicLong();
     private Subscription autocompleteSubscription;
     private Task<List<InspectionIssue>> activeInspectionTask;
+    private Task<List<SqlInlayHints.Hint>> activeInlayTask;
     private Task<SuggestResult> activeCompletionTask;
 
     private Supplier<SchemaCache> schemaCache = SchemaCache::new;
@@ -139,6 +156,16 @@ public final class SqlEditorPane extends BorderPane {
     private volatile StyleSpans<Collection<String>> lastHighlighting =
             StyleSpans.singleton(Collections.emptyList(), 0);
     private volatile List<InspectionIssue> lastIssues = List.of();
+    private volatile List<SqlInlayHints.Hint> lastInlays = List.of();
+    private volatile Map<Integer, SqlFoldRegions.Region> foldsByStart = Map.of();
+    /** Open-bracket character offsets for folds that are currently collapsed. */
+    private final Set<Integer> collapsedOpenOffsets = ConcurrentHashMap.newKeySet();
+    private IntFunction<Node> lineNumbers;
+    private List<InlayPadSupport.Pad> activeInlayPads = List.of();
+    private boolean mutatingDocument;
+    private boolean ignoreFoldDocumentEvents;
+    private final PauseTransition foldEventSuppress = new PauseTransition(Duration.millis(180));
+    private double monospaceCharWidth = 7.8;
 
     /** One entry in the per-console session picker. */
     public record SessionChoice(String id, String label) {
@@ -163,6 +190,11 @@ public final class SqlEditorPane extends BorderPane {
             thread.setDaemon(true);
             return thread;
         });
+        inlayExecutor = Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "sqlide-inlays");
+            thread.setDaemon(true);
+            return thread;
+        });
         docExecutor = Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable, "sqlide-doc");
             thread.setDaemon(true);
@@ -177,14 +209,15 @@ public final class SqlEditorPane extends BorderPane {
         // Prefer workspace hygiene prefs when available — MainController overrides via setCompletionStyle.
         completionStyle = Style::defaults;
 
-        IntFunction<Node> lineNumbers = LineNumberFactory.get(codeArea);
-        codeArea.setParagraphGraphicFactory(index -> {
-            Node node = lineNumbers.apply(index);
-            node.setStyle(GUTTER_STYLE);
-            return node;
-        });
+        lineNumbers = LineNumberFactory.get(
+                codeArea,
+                digits -> "%1$" + digits + "s",
+                null,
+                null);
+        codeArea.setParagraphGraphicFactory(this::buildParagraphGraphic);
         codeArea.getStyleClass().add("sql-editor");
         codeArea.setWrapText(false);
+        Platform.runLater(this::measureMonospaceWidth);
 
         highlightSubscription = codeArea.multiPlainChanges()
                 .successionEnds(java.time.Duration.ofMillis((long) HIGHLIGHT_DELAY.toMillis()))
@@ -195,6 +228,8 @@ public final class SqlEditorPane extends BorderPane {
                 .subscribe(this::applyHighlighting);
 
         wireInspectionDebounce();
+        wireInlayHints();
+        wireFolding();
 
         configureAutocompletePopup();
         wireAutocomplete();
@@ -226,7 +261,13 @@ public final class SqlEditorPane extends BorderPane {
 
         VBox top = new VBox(sessionBar, findBar);
         setTop(top);
-        setCenter(new VirtualizedScrollPane<>(codeArea));
+
+        inlayLayer.setMouseTransparent(true);
+        inlayLayer.getStyleClass().add("inlay-layer");
+        VirtualizedScrollPane<CodeArea> scroll = new VirtualizedScrollPane<>(codeArea);
+        StackPane editorStack = new StackPane(scroll, inlayLayer);
+        editorStack.getStyleClass().add("sql-editor-stack");
+        setCenter(editorStack);
         installEditorContextMenu();
 
         if (initialSql != null && !initialSql.isEmpty()) {
@@ -364,7 +405,7 @@ public final class SqlEditorPane extends BorderPane {
         if (runConfigParams != null) {
             merged.putAll(runConfigParams);
         }
-        for (SqlParameterParser.Parameter parameter : SqlParameterParser.find(codeArea.getText())) {
+        for (SqlParameterParser.Parameter parameter : SqlParameterParser.find(logicalSql())) {
             if (parameter.kind() == SqlParameterParser.Kind.NAMED) {
                 merged.putIfAbsent(parameter.name(), "");
             }
@@ -380,9 +421,9 @@ public final class SqlEditorPane extends BorderPane {
     public String getEffectiveSql() {
         String selection = codeArea.getSelectedText();
         if (selection != null && !selection.isBlank()) {
-            return selection.strip();
+            return InlayPadSupport.strip(selection, padsOverlappingSelection()).strip();
         }
-        return SqlStatementExtractor.statementAt(codeArea.getText(), codeArea.getCaretPosition());
+        return SqlStatementExtractor.statementAt(logicalSql(), logicalCaret());
     }
 
     /**
@@ -392,37 +433,89 @@ public final class SqlEditorPane extends BorderPane {
     public java.util.List<String> getEffectiveStatements() {
         String selection = codeArea.getSelectedText();
         if (selection != null && !selection.isBlank()) {
-            java.util.List<String> parts = SqlStatementExtractor.statements(selection);
-            return parts.isEmpty() ? java.util.List.of(selection.strip()) : parts;
+            String cleaned = InlayPadSupport.strip(selection, padsOverlappingSelection());
+            java.util.List<String> parts = SqlStatementExtractor.statements(cleaned);
+            return parts.isEmpty() ? java.util.List.of(cleaned.strip()) : parts;
         }
-        String one = SqlStatementExtractor.statementAt(codeArea.getText(), codeArea.getCaretPosition());
+        String one = SqlStatementExtractor.statementAt(logicalSql(), logicalCaret());
         return one.isBlank() ? java.util.List.of() : java.util.List.of(one);
     }
 
     public String getSql() {
-        return codeArea.getText();
+        return logicalSql();
+    }
+
+    /** Document text with inlay pad spaces removed (safe for execution / parsing). */
+    private String logicalSql() {
+        return InlayPadSupport.strip(codeArea.getText(), activeInlayPads);
+    }
+
+    private int logicalCaret() {
+        return InlayPadSupport.toLogicalOffset(codeArea.getCaretPosition(), activeInlayPads);
+    }
+
+    private List<InlayPadSupport.Pad> padsOverlappingSelection() {
+        IndexRange selection = codeArea.getSelection();
+        if (selection.getLength() == 0 || activeInlayPads.isEmpty()) {
+            return List.of();
+        }
+        int start = selection.getStart();
+        int end = selection.getEnd();
+        List<InlayPadSupport.Pad> overlapping = new ArrayList<>();
+        for (InlayPadSupport.Pad pad : activeInlayPads) {
+            int padEnd = pad.offset() + pad.spaces();
+            if (pad.offset() >= start && padEnd <= end) {
+                overlapping.add(new InlayPadSupport.Pad(pad.offset() - start, pad.spaces(), pad.label()));
+            }
+        }
+        return overlapping;
     }
 
     public void setSql(String sql) {
-        codeArea.replaceText(Objects.requireNonNullElse(sql, ""));
-        codeArea.moveTo(0);
-        codeArea.requestFollowCaret();
+        mutatingDocument = true;
+        try {
+            activeInlayPads = List.of();
+            lastInlays = List.of();
+            inlayLayer.getChildren().clear();
+            collapsedOpenOffsets.clear();
+            codeArea.replaceText(Objects.requireNonNullElse(sql, ""));
+            codeArea.moveTo(0);
+            codeArea.requestFollowCaret();
+        } finally {
+            mutatingDocument = false;
+        }
+        recomputeFoldMap();
+        refreshParagraphGraphics();
     }
 
     /** Replaces editor content and selects the first occurrence of {@code placeholder}. */
     public void setSqlSelecting(String sql, String placeholder) {
-        String text = Objects.requireNonNullElse(sql, "");
-        codeArea.replaceText(text);
-        if (placeholder != null && !placeholder.isEmpty()) {
-            int start = text.indexOf(placeholder);
-            if (start >= 0) {
-                codeArea.selectRange(start, start + placeholder.length());
-                codeArea.requestFollowCaret();
-                return;
+        mutatingDocument = true;
+        try {
+            activeInlayPads = List.of();
+            lastInlays = List.of();
+            inlayLayer.getChildren().clear();
+            collapsedOpenOffsets.clear();
+            String text = Objects.requireNonNullElse(sql, "");
+            codeArea.replaceText(text);
+            if (placeholder != null && !placeholder.isEmpty()) {
+                int start = text.indexOf(placeholder);
+                if (start >= 0) {
+                    codeArea.selectRange(start, start + placeholder.length());
+                    codeArea.requestFollowCaret();
+                    mutatingDocument = false;
+                    recomputeFoldMap();
+                    refreshParagraphGraphics();
+                    return;
+                }
             }
+            codeArea.moveTo(0);
+            codeArea.requestFollowCaret();
+        } finally {
+            mutatingDocument = false;
         }
-        codeArea.moveTo(0);
-        codeArea.requestFollowCaret();
+        recomputeFoldMap();
+        refreshParagraphGraphics();
     }
 
     public void insertAtCaret(String text) {
@@ -432,7 +525,7 @@ public final class SqlEditorPane extends BorderPane {
     }
 
     public void clear() {
-        codeArea.clear();
+        setSql("");
     }
 
     public CodeArea getCodeArea() {
@@ -464,10 +557,13 @@ public final class SqlEditorPane extends BorderPane {
         }
         highlightSubscription.unsubscribe();
         inspectionDebounce.stop();
+        inlayDebounce.stop();
         docHideDebounce.stop();
         cancelActiveInspection();
+        cancelActiveInlay();
         highlightExecutor.shutdownNow();
         inspectionExecutor.shutdownNow();
+        inlayExecutor.shutdownNow();
         docExecutor.shutdownNow();
         completionExecutor.shutdownNow();
     }
@@ -476,13 +572,36 @@ public final class SqlEditorPane extends BorderPane {
         MenuItem selectInDatabase = new MenuItem("Select in Database");
         selectInDatabase.setAccelerator(new KeyCodeCombination(KeyCode.F1, KeyCombination.ALT_DOWN));
         selectInDatabase.setOnAction(event -> onSelectInDatabase.run());
+        MenuItem viewAsJson = new MenuItem("View as JSON\u2026");
+        viewAsJson.setOnAction(event -> openJsonViewerAtCaret());
         MenuItem find = new MenuItem("Find\u2026");
         find.setAccelerator(new KeyCodeCombination(KeyCode.F, KeyCombination.SHORTCUT_DOWN));
         find.setOnAction(event -> showFind(false));
         MenuItem replace = new MenuItem("Replace\u2026");
         replace.setAccelerator(new KeyCodeCombination(KeyCode.H, KeyCombination.SHORTCUT_DOWN));
         replace.setOnAction(event -> showFind(true));
-        codeArea.setContextMenu(new ContextMenu(selectInDatabase, find, replace));
+
+        ContextMenu menu = new ContextMenu(selectInDatabase, viewAsJson, find, replace);
+        menu.setOnShowing(event -> viewAsJson.setDisable(findJsonAtCaret().isEmpty()));
+        codeArea.setContextMenu(menu);
+    }
+
+    private Optional<SqlSyntaxHighlighter.JsonStringLiteral> findJsonAtCaret() {
+        IndexRange selection = codeArea.getSelection();
+        int selStart = InlayPadSupport.toLogicalOffset(selection.getStart(), activeInlayPads);
+        int selEnd = InlayPadSupport.toLogicalOffset(selection.getEnd(), activeInlayPads);
+        return SqlSyntaxHighlighter.findJsonLiteralAt(
+                logicalSql(),
+                logicalCaret(),
+                selStart,
+                selEnd);
+    }
+
+    private void openJsonViewerAtCaret() {
+        findJsonAtCaret().ifPresent(literal -> {
+            javafx.stage.Window owner = getScene() == null ? null : getScene().getWindow();
+            new JsonViewerDialog(owner, literal.json()).showAndWait();
+        });
     }
 
     // ---------------------------------------------------------------- autocomplete
@@ -589,8 +708,8 @@ public final class SqlEditorPane extends BorderPane {
     }
 
     private void updateCompletions(boolean invoked) {
-        final String sql = codeArea.getText();
-        final int caret = codeArea.getCaretPosition();
+        final String sql = logicalSql();
+        final int caret = logicalCaret();
 
         // Cheap gate on the FX thread — avoid scheduling work that will no-op.
         SqlAutocompleteEngine probe = newEngine();
@@ -627,7 +746,7 @@ public final class SqlEditorPane extends BorderPane {
                 return;
             }
             // Drop stale results if the user kept typing.
-            if (!sql.equals(codeArea.getText()) || caret != codeArea.getCaretPosition()) {
+            if (!sql.equals(logicalSql()) || caret != logicalCaret()) {
                 return;
             }
             applyCompletionResult(task.getValue(), previouslySelected);
@@ -644,7 +763,7 @@ public final class SqlEditorPane extends BorderPane {
             return;
         }
         List<Suggestion> suggestions = result.items();
-        String currentPrefix = completionPrefixAt(codeArea.getText(), codeArea.getCaretPosition());
+        String currentPrefix = completionPrefixAt(logicalSql(), logicalCaret());
 
         if (!currentPrefix.isEmpty() && !suggestions.isEmpty()) {
             List<Suggestion> remaining = new ArrayList<>(suggestions.size());
@@ -815,8 +934,10 @@ public final class SqlEditorPane extends BorderPane {
             hideCompletions();
             return;
         }
-        int start = Math.max(0, Math.min(selected.replaceStart(), codeArea.getLength()));
-        int end = Math.max(start, Math.min(selected.replaceEnd(), codeArea.getLength()));
+        int start = InlayPadSupport.toDocumentOffset(selected.replaceStart(), activeInlayPads);
+        int end = InlayPadSupport.toDocumentOffset(selected.replaceEnd(), activeInlayPads);
+        start = Math.max(0, Math.min(start, codeArea.getLength()));
+        end = Math.max(start, Math.min(end, codeArea.getLength()));
 
         String raw = selected.insertText();
         boolean templated = selected.kind() == Kind.SNIPPET
@@ -981,11 +1102,356 @@ public final class SqlEditorPane extends BorderPane {
         };
     }
 
+    // ---------------------------------------------------------------- folding / inlays
+
+    private void measureMonospaceWidth() {
+        var text = new javafx.scene.text.Text("M");
+        text.setFont(javafx.scene.text.Font.font("JetBrains Mono", 13));
+        monospaceCharWidth = Math.max(6.0, text.getLayoutBounds().getWidth());
+    }
+
+    private Node buildParagraphGraphic(int index) {
+        HBox gutter = new HBox(0);
+        gutter.setAlignment(Pos.CENTER_LEFT);
+        gutter.getStyleClass().add("sql-gutter");
+
+        StackPane foldSlot = new StackPane();
+        foldSlot.getStyleClass().add("sql-fold-slot");
+        foldSlot.setMinWidth(14);
+        foldSlot.setPrefWidth(14);
+        foldSlot.setMaxWidth(14);
+        foldSlot.setPickOnBounds(true);
+
+        SqlFoldRegions.Region region = foldsByStart.get(index);
+        if (region != null) {
+            boolean collapsed = isRegionCollapsed(region, index);
+            Label chevron = new Label();
+            chevron.setGraphic(collapsed ? Icons.foldCollapsed() : Icons.foldExpanded());
+            chevron.getStyleClass().add("sql-fold-chevron");
+            chevron.setCursor(Cursor.HAND);
+            chevron.setPickOnBounds(true);
+            final int openOffset = region.openOffset();
+            Runnable toggle = () -> toggleFoldByOpenOffset(openOffset);
+            chevron.setOnMouseClicked(event -> {
+                toggle.run();
+                event.consume();
+            });
+            foldSlot.setOnMouseClicked(event -> {
+                toggle.run();
+                event.consume();
+            });
+            foldSlot.getChildren().setAll(chevron);
+        }
+
+        Node lineNo = lineNumbers.apply(index);
+        lineNo.setStyle(GUTTER_STYLE);
+        gutter.getChildren().addAll(foldSlot, lineNo);
+        return gutter;
+    }
+
+    private boolean isRegionCollapsed(SqlFoldRegions.Region region, int startParagraph) {
+        if (collapsedOpenOffsets.contains(region.openOffset())) {
+            return true;
+        }
+        int next = startParagraph + 1;
+        return next < codeArea.getParagraphs().size() && codeArea.isFolded(next);
+    }
+
+    private void toggleFoldByOpenOffset(int openOffset) {
+        SqlFoldRegions.Region region = findRegionByOpenOffset(openOffset);
+        if (region == null || !region.spansMultipleLines()) {
+            return;
+        }
+        int length = codeArea.getLength();
+        if (length <= 0) {
+            return;
+        }
+        int open = Math.max(0, Math.min(region.openOffset(), length - 1));
+        int close = Math.max(0, Math.min(region.closeOffset(), length - 1));
+        int startPar = codeArea.offsetToPosition(open, TwoDimensional.Bias.Forward).getMajor();
+        int endPar = codeArea.offsetToPosition(close, TwoDimensional.Bias.Forward).getMajor();
+        if (endPar <= startPar) {
+            return;
+        }
+
+        boolean currentlyCollapsed = (startPar + 1 < codeArea.getParagraphs().size()
+                && codeArea.isFolded(startPar + 1))
+                || collapsedOpenOffsets.contains(openOffset);
+
+        ignoreFoldDocumentEvents = true;
+        try {
+            if (currentlyCollapsed) {
+                codeArea.unfoldParagraphs(startPar);
+                collapsedOpenOffsets.remove(openOffset);
+            } else {
+                codeArea.foldParagraphs(startPar, endPar);
+                collapsedOpenOffsets.add(openOffset);
+            }
+        } finally {
+            armFoldEventSuppress();
+        }
+        codeArea.recreateParagraphGraphic(startPar);
+        Platform.runLater(this::paintInlayOverlay);
+    }
+
+    private SqlFoldRegions.Region findRegionByOpenOffset(int openOffset) {
+        for (SqlFoldRegions.Region region : foldsByStart.values()) {
+            if (region.openOffset() == openOffset) {
+                return region;
+            }
+        }
+        for (SqlFoldRegions.Region region : SqlFoldRegions.find(codeArea.getText())) {
+            if (region.openOffset() == openOffset) {
+                return region;
+            }
+        }
+        return null;
+    }
+
+    private void wireFolding() {
+        recomputeFoldMap();
+        codeArea.multiPlainChanges().successionEnds(java.time.Duration.ofMillis(80)).subscribe(changes -> {
+            if (ignoreFoldDocumentEvents || mutatingDocument) {
+                return;
+            }
+            Platform.runLater(this::refreshFoldsAfterEdit);
+        });
+    }
+
+    private void refreshFoldsAfterEdit() {
+        if (ignoreFoldDocumentEvents || mutatingDocument) {
+            return;
+        }
+        // Real edits invalidate paragraph indices — drop all folds and rebuild anchors.
+        ignoreFoldDocumentEvents = true;
+        try {
+            unfoldAllCollapsed();
+            collapsedOpenOffsets.clear();
+            recomputeFoldMap();
+            refreshParagraphGraphics();
+        } finally {
+            armFoldEventSuppress();
+        }
+    }
+
+    private void unfoldAllCollapsed() {
+        try {
+            for (int i = 0; i < codeArea.getParagraphs().size(); i++) {
+                if (i + 1 < codeArea.getParagraphs().size()
+                        && codeArea.isFolded(i + 1)
+                        && !codeArea.isFolded(i)) {
+                    codeArea.unfoldParagraphs(i);
+                }
+            }
+        } catch (RuntimeException ignored) {
+            // paragraph graph may be mid-update
+        }
+    }
+
+    private void armFoldEventSuppress() {
+        ignoreFoldDocumentEvents = true;
+        foldEventSuppress.stop();
+        foldEventSuppress.setOnFinished(event -> ignoreFoldDocumentEvents = false);
+        foldEventSuppress.playFromStart();
+    }
+
+    private void recomputeFoldMap() {
+        foldsByStart = SqlFoldRegions.byStartLine(codeArea.getText());
+    }
+
+    private void refreshParagraphGraphics() {
+        codeArea.setParagraphGraphicFactory(null);
+        codeArea.setParagraphGraphicFactory(this::buildParagraphGraphic);
+    }
+
+    private void wireInlayHints() {
+        inlayDebounce.setOnFinished(event -> runInlayExtraction());
+        codeArea.plainTextChanges().subscribe(change -> {
+            if (mutatingDocument || ignoreFoldDocumentEvents) {
+                return;
+            }
+            // User typed: drop pad spaces immediately so they never become "real" SQL.
+            if (!activeInlayPads.isEmpty()) {
+                Platform.runLater(this::stripInlayPadsNow);
+            }
+            cancelActiveInlay();
+            inlayDebounce.stop();
+            inlayDebounce.playFromStart();
+        });
+        codeArea.estimatedScrollYProperty().addListener((obs, o, n) -> paintInlayOverlay());
+        codeArea.estimatedScrollXProperty().addListener((obs, o, n) -> paintInlayOverlay());
+        inlayLayer.widthProperty().addListener((obs, o, n) -> paintInlayOverlay());
+        inlayLayer.heightProperty().addListener((obs, o, n) -> paintInlayOverlay());
+        Platform.runLater(this::runInlayExtraction);
+    }
+
+    private void stripInlayPadsNow() {
+        if (mutatingDocument || activeInlayPads.isEmpty()) {
+            return;
+        }
+        mutatingDocument = true;
+        try {
+            int logicalCaret = logicalCaret();
+            String logical = logicalSql();
+            activeInlayPads = List.of();
+            inlayLayer.getChildren().clear();
+            if (!logical.equals(codeArea.getText())) {
+                codeArea.replaceText(logical);
+                codeArea.moveTo(Math.max(0, Math.min(logicalCaret, logical.length())));
+            }
+            lastInlays = List.of();
+        } finally {
+            mutatingDocument = false;
+        }
+    }
+
+    private void runInlayExtraction() {
+        Task<List<SqlInlayHints.Hint>> previous = activeInlayTask;
+        activeInlayTask = null;
+        if (previous != null && previous.isRunning()) {
+            previous.cancel(true);
+        }
+        final long generation = inlayGeneration.incrementAndGet();
+        final String snapshot = logicalSql();
+        Task<List<SqlInlayHints.Hint>> task = new Task<>() {
+            @Override
+            protected List<SqlInlayHints.Hint> call() {
+                if (isCancelled() || generation != inlayGeneration.get()) {
+                    return List.of();
+                }
+                return SqlInlayHints.extract(snapshot);
+            }
+        };
+        activeInlayTask = task;
+        task.setOnSucceeded(event -> {
+            if (generation != inlayGeneration.get() || task.isCancelled()) {
+                return;
+            }
+            if (!snapshot.equals(logicalSql())) {
+                return;
+            }
+            lastInlays = List.copyOf(task.getValue());
+            applyInlayPaddingAndPaint(lastInlays);
+        });
+        inlayExecutor.execute(task);
+    }
+
+    private void cancelActiveInlay() {
+        inlayGeneration.incrementAndGet();
+        Task<List<SqlInlayHints.Hint>> task = activeInlayTask;
+        activeInlayTask = null;
+        if (task != null && task.isRunning()) {
+            task.cancel(true);
+        }
+    }
+
+    private void applyInlayPaddingAndPaint(List<SqlInlayHints.Hint> hints) {
+        Runnable apply = () -> {
+            // Pads shift character offsets — drop folds first so anchors stay valid.
+            unfoldAllCollapsed();
+            collapsedOpenOffsets.clear();
+
+            String logical = logicalSql();
+            int logicalCaretPos = logicalCaret();
+            List<InlayPadSupport.HintSpec> specs = new ArrayList<>(hints.size());
+            for (SqlInlayHints.Hint hint : hints) {
+                specs.add(new InlayPadSupport.HintSpec(
+                        hint.offset(),
+                        hint.label(),
+                        spacesForHintLabel(hint.label())));
+            }
+            InlayPadSupport.Result result = InlayPadSupport.pad(logical, specs);
+
+            mutatingDocument = true;
+            ignoreFoldDocumentEvents = true;
+            try {
+                activeInlayPads = result.pads();
+                if (!result.text().equals(codeArea.getText())) {
+                    codeArea.replaceText(result.text());
+                    int docCaret = InlayPadSupport.toDocumentOffset(logicalCaretPos, activeInlayPads);
+                    codeArea.moveTo(Math.max(0, Math.min(docCaret, result.text().length())));
+                }
+            } finally {
+                mutatingDocument = false;
+                armFoldEventSuppress();
+            }
+            lastHighlighting = SqlSyntaxHighlighter.computeHighlighting(codeArea.getText());
+            paintCombinedStyles();
+            recomputeFoldMap();
+            refreshParagraphGraphics();
+            paintInlayOverlay();
+        };
+        if (Platform.isFxApplicationThread()) {
+            apply.run();
+        } else {
+            Platform.runLater(apply);
+        }
+    }
+
+    private int spacesForHintLabel(String label) {
+        Label probe = new Label(label == null ? "" : label);
+        probe.getStyleClass().add("inlay-hint");
+        // Ensure CSS metrics apply when the layer is already in a scene.
+        if (inlayLayer.getScene() != null) {
+            inlayLayer.getChildren().add(probe);
+            inlayLayer.applyCss();
+            inlayLayer.layout();
+            double width = probe.prefWidth(-1);
+            inlayLayer.getChildren().remove(probe);
+            return Math.max(1, (int) Math.ceil(width / monospaceCharWidth) + 1);
+        }
+        int chars = label == null ? 1 : label.length();
+        return Math.max(1, chars + 2);
+    }
+
+    private void paintInlayOverlay() {
+        Runnable paint = () -> {
+            inlayLayer.getChildren().clear();
+            if (activeInlayPads.isEmpty() || codeArea.getLength() == 0) {
+                return;
+            }
+            for (InlayPadSupport.Pad pad : activeInlayPads) {
+                int start = pad.offset();
+                int end = Math.min(start + pad.spaces(), codeArea.getLength());
+                if (start < 0 || start >= codeArea.getLength() || end <= start) {
+                    continue;
+                }
+                int paragraph = codeArea.offsetToPosition(start, TwoDimensional.Bias.Forward).getMajor();
+                if (codeArea.isFolded(paragraph)) {
+                    continue;
+                }
+                Optional<Bounds> screenBounds = codeArea.getCharacterBoundsOnScreen(start, end);
+                if (screenBounds.isEmpty()) {
+                    continue;
+                }
+                Bounds bounds = screenBounds.get();
+                Point2D local = inlayLayer.screenToLocal(bounds.getMinX(), bounds.getMinY());
+                if (local == null) {
+                    continue;
+                }
+                Label pill = new Label(pad.label());
+                pill.getStyleClass().add("inlay-hint");
+                pill.setMouseTransparent(true);
+                // Sit inside the reserved space so SQL text stays to the right.
+                pill.relocate(local.getX(), local.getY() + 1);
+                inlayLayer.getChildren().add(pill);
+            }
+        };
+        if (Platform.isFxApplicationThread()) {
+            paint.run();
+        } else {
+            Platform.runLater(paint);
+        }
+    }
+
     // ---------------------------------------------------------------- highlighting / inspections
 
     private void wireInspectionDebounce() {
         inspectionDebounce.setOnFinished(event -> runInspection());
         codeArea.textProperty().addListener((observable, previous, current) -> {
+            if (mutatingDocument) {
+                return;
+            }
             // IntelliJ clears squiggles while typing, then re-runs after a pause.
             cancelActiveInspection();
             inspectionDebounce.stop();
@@ -1034,7 +1500,7 @@ public final class SqlEditorPane extends BorderPane {
             previous.cancel(true);
         }
         final long generation = inspectionGeneration.incrementAndGet();
-        final String snapshot = codeArea.getText();
+        final String snapshot = logicalSql();
         final SchemaCache cache = schemaCache.get();
         final String catalog = activeCatalog.get();
 
@@ -1052,12 +1518,26 @@ public final class SqlEditorPane extends BorderPane {
             if (generation != inspectionGeneration.get() || task.isCancelled()) {
                 return;
             }
-            if (!snapshot.equals(codeArea.getText())) {
+            if (!snapshot.equals(logicalSql())) {
                 return;
             }
-            applyInspections(task.getValue());
+            applyInspections(mapInspectionOffsetsToDocument(task.getValue()));
         });
         inspectionExecutor.execute(task);
+    }
+
+    /** Inspection offsets are logical; map them onto the padded document for underlines. */
+    private List<InspectionIssue> mapInspectionOffsetsToDocument(List<InspectionIssue> issues) {
+        if (issues == null || issues.isEmpty() || activeInlayPads.isEmpty()) {
+            return issues;
+        }
+        List<InspectionIssue> mapped = new ArrayList<>(issues.size());
+        for (InspectionIssue issue : issues) {
+            int start = InlayPadSupport.toDocumentOffset(issue.startOffset(), activeInlayPads);
+            int end = InlayPadSupport.toDocumentOffset(issue.endOffset(), activeInlayPads);
+            mapped.add(new InspectionIssue(start, Math.max(start + 1, end), issue.message(), issue.severity()));
+        }
+        return List.copyOf(mapped);
     }
 
     private void cancelActiveInspection() {
@@ -1167,14 +1647,15 @@ public final class SqlEditorPane extends BorderPane {
 
     private void scheduleQuickDocumentation(int charIndex, double screenX, double screenY) {
         final long generation = docGeneration.incrementAndGet();
-        final String sql = codeArea.getText();
+        final String sql = logicalSql();
+        final int logicalIndex = InlayPadSupport.toLogicalOffset(charIndex, activeInlayPads);
         final SchemaCache cache = schemaCache.get();
         final String catalog = activeCatalog.get();
         final String dataSource = currentDataSourceLabel();
         docExecutor.execute(() -> {
             Optional<Doc> resolved;
             try {
-                resolved = SqlDocResolver.resolve(sql, charIndex, cache, catalog, dataSource);
+                resolved = SqlDocResolver.resolve(sql, logicalIndex, cache, catalog, dataSource);
             } catch (RuntimeException ex) {
                 resolved = Optional.empty();
             }
