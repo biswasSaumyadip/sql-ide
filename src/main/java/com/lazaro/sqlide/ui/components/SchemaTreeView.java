@@ -62,6 +62,8 @@ public final class SchemaTreeView extends VBox {
     private Consumer<SchemaNode> onActivate = node -> { };
     private Consumer<SchemaNode> onViewObject = node -> { };
     private Consumer<SchemaNode> onOpenData = node -> { };
+    private Consumer<SchemaNode> onImportData = node -> { };
+    private Consumer<SchemaNode> onTransferData = node -> { };
     private Consumer<SchemaNode> onUseDatabase = node -> { };
     private Runnable onConnectRequested = () -> { };
     private Consumer<ConnectionProfile> onConnectProfile = profile -> { };
@@ -141,6 +143,16 @@ public final class SchemaTreeView extends VBox {
                         item -> {
                             if (item != null && item.getValue() != null) {
                                 onOpenData.accept(item.getValue());
+                            }
+                        },
+                        item -> {
+                            if (item != null && item.getValue() != null) {
+                                onImportData.accept(item.getValue());
+                            }
+                        },
+                        item -> {
+                            if (item != null && item.getValue() != null) {
+                                onTransferData.accept(item.getValue());
                             }
                         },
                         this::refreshTreeItem,
@@ -285,6 +297,14 @@ public final class SchemaTreeView extends VBox {
 
     public void setOnOpenData(Consumer<SchemaNode> onOpenData) {
         this.onOpenData = onOpenData == null ? node -> { } : onOpenData;
+    }
+
+    public void setOnImportData(Consumer<SchemaNode> onImportData) {
+        this.onImportData = onImportData == null ? node -> { } : onImportData;
+    }
+
+    public void setOnTransferData(Consumer<SchemaNode> onTransferData) {
+        this.onTransferData = onTransferData == null ? node -> { } : onTransferData;
     }
 
     public void setOnUseDatabase(Consumer<SchemaNode> onUseDatabase) {

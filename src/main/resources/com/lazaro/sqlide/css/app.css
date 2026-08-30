@@ -1134,6 +1134,95 @@
     -fx-padding: 2 0 2 0;
 }
 
+.import-data-dialog {
+    -fx-padding: 0;
+}
+
+.import-wizard-root {
+    -fx-background-color: #1e1f22;
+}
+
+.import-wizard-nav {
+    -fx-background-color: #17181b;
+    -fx-border-color: transparent #303237 transparent transparent;
+    -fx-border-width: 0 1 0 0;
+}
+
+.import-wizard-nav-item {
+    -fx-text-fill: #7f848e;
+    -fx-padding: 8 10 8 10;
+    -fx-background-radius: 6;
+    -fx-cursor: hand;
+}
+
+.import-wizard-nav-item:hover {
+    -fx-background-color: #262a32;
+    -fx-text-fill: #c8ccd2;
+}
+
+.import-wizard-nav-active {
+    -fx-background-color: #2f5d8c;
+    -fx-text-fill: #eceff4;
+    -fx-font-weight: bold;
+}
+
+.import-wizard-nav-done {
+    -fx-text-fill: #9aa0a6;
+}
+
+.import-wizard-title {
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #eceff4;
+}
+
+.import-wizard-label {
+    -fx-text-fill: #a4acb9;
+}
+
+.import-wizard-hint {
+    -fx-text-fill: #7f848e;
+    -fx-font-size: 11.5px;
+    -fx-wrap-text: true;
+}
+
+.import-wizard-step {
+    -fx-padding: 4 0 0 0;
+}
+
+.import-mapping-source {
+    -fx-text-fill: #d6d9de;
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 12px;
+}
+
+.import-wizard-button {
+    -fx-padding: 4 12 4 12;
+}
+
+.transfer-data-dialog {
+    -fx-padding: 0;
+}
+
+.transfer-wizard-root {
+    -fx-background-color: #1e1f22;
+}
+
+.transfer-readonly {
+    -fx-text-fill: #d6d9de;
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 12px;
+}
+
+.transfer-progress-dialog {
+    -fx-padding: 0;
+}
+
+.transfer-progress-status {
+    -fx-text-fill: #eceff4;
+    -fx-font-size: 13px;
+}
+
 .dialog-feedback {
     -fx-font-size: 11.5px;
     -fx-text-fill: #8fbf7f;

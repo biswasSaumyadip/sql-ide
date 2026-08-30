@@ -29,6 +29,8 @@ final class SchemaTreeContextMenus {
             Consumer<SqlTemplateGenerator.Template> openTemplate,
             Consumer<TreeItem<SchemaNode>> viewObject,
             Consumer<TreeItem<SchemaNode>> openData,
+            Consumer<TreeItem<SchemaNode>> importData,
+            Consumer<TreeItem<SchemaNode>> transferData,
             Consumer<TreeItem<SchemaNode>> refreshItem,
             Runnable refreshAll,
             Consumer<TreeItem<SchemaNode>> editConnection,
@@ -156,6 +158,8 @@ final class SchemaTreeContextMenus {
         return List.of(
                 neu,
                 action("Edit Data", null, () -> actions.openData.accept(item)),
+                action("Import Data\u2026", null, () -> actions.importData.accept(item)),
+                action("Export / Transfer to Table\u2026", null, () -> actions.transferData.accept(item)),
                 action("Modify Table\u2026", new KeyCodeCombination(KeyCode.F6, KeyCombination.CONTROL_DOWN),
                         () -> open(SqlTemplateGenerator.modifyTable(
                                 SqlTemplateGenerator.schemaOf(item),

@@ -21,13 +21,19 @@ import com.lazaro.sqlide.ui.components.SchemaTreeView;
 import com.lazaro.sqlide.ui.components.SnippetsPane;
 import com.lazaro.sqlide.ui.components.SqlEditorPane;
 import com.lazaro.sqlide.ui.components.StatusBar;
+import com.lazaro.sqlide.core.transfer.TransferRequest;
+import com.lazaro.sqlide.core.transfer.TransferResult;
 import com.lazaro.sqlide.ui.dialogs.ConnectionDialog;
+import com.lazaro.sqlide.ui.dialogs.ImportDataDialog;
+import com.lazaro.sqlide.ui.dialogs.TableDataTransferDialog;
+import com.lazaro.sqlide.ui.dialogs.TransferProgressDialog;
 import javafx.concurrent.Task;
 import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
+import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ChoiceDialog;
 import javafx.scene.control.ProgressIndicator;
@@ -143,6 +149,8 @@ public final class MainController {
         schemaTree.setOnActivate(this::insertNodeReference);
         schemaTree.setOnViewObject(this::openObjectViewer);
         schemaTree.setOnOpenData(this::openTableData);
+        schemaTree.setOnImportData(this::openImportData);
+        schemaTree.setOnTransferData(this::openTransferData);
         schemaTree.setOnUseDatabase(this::useDatabase);
         schemaTree.setOnInsertSql(sql -> editors.insertIntoActiveEditor(sql));
         schemaTree.setOnOpenTemplate(editors::openGeneratedSql);
@@ -531,6 +539,124 @@ public final class MainController {
                 primaryKeys,
                 statements -> driver.executeScriptAsync(statements),
                 backgroundTasks);
+    }
+
+    private void openImportData(SchemaNode node) {
+        if (node == null || !driver.isConnected()) {
+            return;
+        }
+        useDatabase(node);
+        SchemaNode detailed = schemaCache.findTable(
+                node.name(),
+                node.metadata(SchemaNode.META_CATALOG)).orElse(node);
+        List<String> columns = ImportDataDialog.columnsOf(detailed);
+        if (columns.isEmpty()) {
+            // Fall back to cache entry which usually has column children loaded.
+            columns = ImportDataDialog.columnsOf(
+                    schemaCache.findTable(detailed.name(), detailed.metadata(SchemaNode.META_CATALOG))
+                            .orElse(detailed));
+        }
+        Window owner = root.getScene() == null ? null : root.getScene().getWindow();
+        ImportDataDialog dialog = new ImportDataDialog(owner, detailed, columns);
+        dialog.showAndWait();
+        dialog.importPlan().ifPresent(plan -> {
+            outcome.output().appendSeparator();
+            outcome.output().appendInfo("Import plan for " + plan.targetTableQualified());
+            outcome.output().appendSql("FILE " + plan.sourceFile());
+            outcome.output().appendOk(plan.columnMapping().size() + " column(s) mapped"
+                    + " · batch " + plan.batchSize()
+                    + (plan.truncateBeforeImport() ? " · truncate" : "")
+                    + " · " + plan.errorHandling());
+            outcome.output().appendInfo("Execution of the import plan will run in a follow-up step.");
+            statusBar.setScriptSummary("Import plan ready for " + plan.targetTableQualified(), false);
+        });
+    }
+
+    private void openTransferData(SchemaNode node) {
+        if (node == null || !driver.isConnected()) {
+            return;
+        }
+        ConnectionConfig sourceConfig = driver.currentConfig().orElse(null);
+        if (sourceConfig == null) {
+            return;
+        }
+        useDatabase(node);
+        SchemaNode detailed = schemaCache.findTable(
+                node.name(),
+                node.metadata(SchemaNode.META_CATALOG)).orElse(node);
+        List<String> columns = ImportDataDialog.columnsOf(detailed);
+        if (columns.isEmpty()) {
+            columns = ImportDataDialog.columnsOf(
+                    schemaCache.findTable(detailed.name(), detailed.metadata(SchemaNode.META_CATALOG))
+                            .orElse(detailed));
+        }
+        String catalog = detailed.metadata(SchemaNode.META_CATALOG);
+        if (catalog == null || catalog.isBlank()) {
+            catalog = driver.activeCatalog().orElse(null);
+        }
+        if (catalog != null && !catalog.isBlank()
+                && (detailed.metadata(SchemaNode.META_CATALOG) == null
+                || detailed.metadata(SchemaNode.META_CATALOG).isBlank())) {
+            java.util.Map<String, String> meta = new java.util.LinkedHashMap<>(detailed.metadata());
+            meta.put(SchemaNode.META_CATALOG, catalog);
+            detailed = new SchemaNode(detailed.name(), detailed.type(), detailed.children(), meta);
+        }
+        final SchemaNode tableNode = detailed;
+        final List<String> columnNames = columns;
+        final String countCatalog = catalog;
+        Window owner = root.getScene() == null ? null : root.getScene().getWindow();
+        Task<Long> countTask = TableDataTransferDialog.countRowsTask(sourceConfig, countCatalog, tableNode.name());
+        countTask.setOnSucceeded(event -> {
+            long rowCount = countTask.getValue() == null ? 0L : countTask.getValue();
+            TableDataTransferDialog dialog = new TableDataTransferDialog(
+                    owner, sourceConfig, tableNode, columnNames, rowCount, profileManager);
+            dialog.showAndWait().ifPresent(request -> runTransfer(request, owner));
+        });
+        countTask.setOnFailed(event -> {
+            TableDataTransferDialog dialog = new TableDataTransferDialog(
+                    owner, sourceConfig, tableNode, columnNames, 0, profileManager);
+            dialog.showAndWait().ifPresent(request -> runTransfer(request, owner));
+        });
+        backgroundTasks.execute(countTask);
+    }
+
+    private void runTransfer(TransferRequest request, Window owner) {
+        TransferProgressDialog progress = new TransferProgressDialog(owner, request, line -> {
+        });
+        backgroundTasks.execute(progress.task());
+        progress.showAndWait();
+        TransferResult result = progress.getResult();
+        if (result == null) {
+            return;
+        }
+        outcome.output().appendSeparator();
+        outcome.output().appendInfo("Table transfer " + request.sourceTable() + " \u2192 " + request.targetTable());
+        outcome.output().appendInfo("Strategy: " + result.strategy());
+        if (result.cancelled()) {
+            outcome.output().appendError(result.message());
+        } else if (!result.errorLog().isEmpty() && result.rowsTransferred() == 0) {
+            outcome.output().appendError(result.message());
+            result.errorLog().forEach(line -> outcome.output().appendError(line));
+        } else {
+            outcome.output().appendOk(result.message() + " \u00B7 " + result.elapsedMs() + " ms");
+            result.errorLog().forEach(line -> outcome.output().appendInfo(line));
+        }
+        statusBar.setScriptSummary(result.message(), result.cancelled() || result.rowsTransferred() == 0);
+
+        Alert alert = new Alert(result.cancelled() ? Alert.AlertType.WARNING : Alert.AlertType.INFORMATION);
+        alert.setTitle("Transfer complete");
+        alert.setHeaderText(result.cancelled() ? "Transfer cancelled" : "Transfer finished");
+        alert.setContentText("%s\nRows: %,d transferred, %,d skipped\nTime: %d ms\nStrategy: %s"
+                .formatted(
+                        result.message(),
+                        result.rowsTransferred(),
+                        result.rowsSkipped(),
+                        result.elapsedMs(),
+                        result.strategy()));
+        if (owner != null) {
+            alert.initOwner(owner);
+        }
+        alert.showAndWait();
     }
 
     private static List<String> primaryKeyColumns(SchemaNode table) {
