@@ -205,6 +205,27 @@ class SchemaIntrospectionServiceTest {
         assertEquals("UNKNOWN", SchemaIntrospectionService.formatType(null, 0, 0));
     }
 
+    @Test
+    @DisplayName("routine bodies wrap as CREATE PROCEDURE when the catalog omits the header")
+    void wrapRoutineDefinition() {
+        String body = """
+                BEGIN
+                  DECLARE i INT DEFAULT 1;
+                  WHILE i <= 1050 DO
+                    SET i = i + 1;
+                  END WHILE;
+                END
+                """.strip();
+        String ddl = SchemaIntrospectionService.wrapRoutineDefinition("PROCEDURE", "InsertDummyData", body);
+        assertTrue(ddl.startsWith("CREATE PROCEDURE InsertDummyData()"));
+        assertTrue(ddl.contains("WHILE i <= 1050 DO"));
+        assertEquals(
+                "CREATE PROCEDURE already()",
+                SchemaIntrospectionService.wrapRoutineDefinition(
+                        "PROCEDURE", "ignored", "CREATE PROCEDURE already()"));
+        assertEquals("CREATE FUNCTION fn()", SchemaIntrospectionService.wrapRoutineDefinition("FUNCTION", "fn", ""));
+    }
+
     private static SchemaNode find(List<SchemaNode> nodes, String name) {
         return nodes.stream()
                 .filter(node -> node.name().equals(name))

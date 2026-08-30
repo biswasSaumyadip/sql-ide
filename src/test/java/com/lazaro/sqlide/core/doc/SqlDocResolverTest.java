@@ -44,6 +44,60 @@ class SqlDocResolverTest {
     }
 
     @Test
+    void resolvesProcedureFunctionTriggerAndDelimiterKeywords() {
+        String sql = "CREATE PROCEDURE greet() BEGIN SELECT 1; END";
+        var procedure = SqlDocResolver.resolve(sql, sql.indexOf("PROCEDURE"), null, null, null);
+        assertTrue(procedure.isPresent());
+        assertEquals(SqlDocResolver.Kind.KEYWORD, procedure.get().kind());
+        assertTrue(procedure.get().code().toLowerCase().contains("stored procedure"));
+
+        var function = SqlDocResolver.resolve("CREATE FUNCTION fn()", 7, null, null, null);
+        assertTrue(function.isPresent());
+        assertTrue(function.get().code().toLowerCase().contains("stored function"));
+
+        var trigger = SqlDocResolver.resolve("CREATE TRIGGER t", 7, null, null, null);
+        assertTrue(trigger.isPresent());
+        assertTrue(trigger.get().code().toLowerCase().contains("trigger"));
+
+        String delimiter = "DELIMITER $$";
+        var delim = SqlDocResolver.resolve(delimiter, 0, null, null, null);
+        assertTrue(delim.isPresent());
+        assertTrue(delim.get().code().contains("not sent to the server"));
+    }
+
+    @Test
+    void resolvesStoredProcedureName() {
+        SchemaNode greet = SchemaNode.of("greet_user", SchemaNode.NodeType.PROCEDURE, Map.of(
+                SchemaNode.META_CATALOG, "app",
+                SchemaNode.META_ROUTINE_KIND, SchemaNode.ROUTINE_PROCEDURE,
+                SchemaNode.META_DDL, """
+                        CREATE PROCEDURE InsertDummyData()
+                        BEGIN
+                          DECLARE i INT DEFAULT 1;
+                          WHILE i <= 1050 DO
+                            INSERT INTO pagination_test (name, email, status)
+                            VALUES (
+                                  CONCAT('User ', i),
+                                  CONCAT('user', i, '@example.com'),
+                                  IF(i % 2 = 0, 'Active', 'Pending')
+                                 );
+                            SET i = i + 1;
+                           END WHILE;
+                        END
+                        """.strip()));
+        SchemaCache cache = new SchemaCache();
+        cache.replace(List.of(new SchemaNode("app", SchemaNode.NodeType.DATABASE, List.of(greet), Map.of())));
+
+        String sql = "CALL greet_user()";
+        var doc = SqlDocResolver.resolve(sql, sql.indexOf("greet_user"), cache, "app", "Local");
+        assertTrue(doc.isPresent());
+        assertEquals(SqlDocResolver.Kind.PROCEDURE, doc.get().kind());
+        assertTrue(doc.get().code().contains("CREATE PROCEDURE InsertDummyData()"));
+        assertTrue(doc.get().code().contains("WHILE i <= 1050 DO"));
+        assertTrue(doc.get().code().contains("END WHILE"));
+    }
+
+    @Test
     void extractsQualifiedIdentifier() {
         var ident = SqlDocResolver.identifierAt("SELECT u.name FROM users u", 10);
         assertEquals("u", ident.qualifier());

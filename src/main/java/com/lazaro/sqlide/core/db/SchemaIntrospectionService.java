@@ -86,7 +86,7 @@ public final class SchemaIntrospectionService {
                     catalogFolders(connection, parent.name()));
             case FOLDER -> supplyAsync(connection -> folderChildren(connection, parent));
             case TABLE, VIEW -> supplyAsync(connection -> tableFolders(connection, parent));
-            case COLUMN, KEY, INDEX, DATA_SOURCE -> CompletableFuture.completedFuture(List.of());
+            case COLUMN, KEY, INDEX, PROCEDURE, DATA_SOURCE -> CompletableFuture.completedFuture(List.of());
         };
     }
 
@@ -94,13 +94,22 @@ public final class SchemaIntrospectionService {
         List<SchemaNode> all = readTables(connection, catalog);
         List<SchemaNode> tables = all.stream().filter(node -> node.type() == NodeType.TABLE).toList();
         List<SchemaNode> views = all.stream().filter(node -> node.type() == NodeType.VIEW).toList();
+        List<SchemaNode> procedures = readRoutines(connection, catalog).stream()
+                .filter(node -> SchemaNode.ROUTINE_PROCEDURE.equalsIgnoreCase(
+                        node.metadata(SchemaNode.META_ROUTINE_KIND)))
+                .toList();
         Map<String, String> catalogMeta = Map.of(SchemaNode.META_CATALOG, catalog);
-        List<SchemaNode> folders = new ArrayList<>(2);
+        List<SchemaNode> folders = new ArrayList<>(3);
         folders.add(SchemaNode.folder(SchemaNode.FOLDER_TABLES, SchemaNode.FOLDER_TABLES, tables.size(), catalogMeta)
                 .withChildren(tables));
         if (!views.isEmpty()) {
             folders.add(SchemaNode.folder(SchemaNode.FOLDER_VIEWS, SchemaNode.FOLDER_VIEWS, views.size(), catalogMeta)
                     .withChildren(views));
+        }
+        if (!procedures.isEmpty()) {
+            folders.add(SchemaNode.folder(
+                            SchemaNode.FOLDER_PROCEDURES, SchemaNode.FOLDER_PROCEDURES, procedures.size(), catalogMeta)
+                    .withChildren(procedures));
         }
         return List.copyOf(folders);
     }
@@ -115,6 +124,10 @@ public final class SchemaIntrospectionService {
                     .toList();
             case SchemaNode.FOLDER_VIEWS -> readTables(connection, catalog).stream()
                     .filter(node -> node.type() == NodeType.VIEW)
+                    .toList();
+            case SchemaNode.FOLDER_PROCEDURES -> readRoutines(connection, catalog).stream()
+                    .filter(node -> SchemaNode.ROUTINE_PROCEDURE.equalsIgnoreCase(
+                            node.metadata(SchemaNode.META_ROUTINE_KIND)))
                     .toList();
             case SchemaNode.FOLDER_COLUMNS -> readColumns(connection, catalog, table);
             case SchemaNode.FOLDER_KEYS -> readKeyNodes(connection, catalog, table);
@@ -210,7 +223,10 @@ public final class SchemaIntrospectionService {
                 for (SchemaNode table : tables) {
                     detailed.add(readTableDetails(connection, database.name(), table.name(), table));
                 }
-                loaded.add(database.withChildren(detailed));
+                List<SchemaNode> children = new ArrayList<>(detailed.size() + 8);
+                children.addAll(detailed);
+                children.addAll(readRoutines(connection, database.name()));
+                loaded.add(database.withChildren(children));
             }
             return List.copyOf(loaded);
         });
@@ -227,6 +243,7 @@ public final class SchemaIntrospectionService {
             for (SchemaNode table : readTables(connection, catalog)) {
                 tables.add(readTableDetails(connection, catalog, table.name(), table));
             }
+            tables.addAll(readRoutines(connection, catalog));
             return new SchemaNode(catalog, NodeType.DATABASE, tables, Map.of());
         });
     }
@@ -267,6 +284,183 @@ public final class SchemaIntrospectionService {
         }
         tables.sort(Comparator.comparing(SchemaNode::name, BY_NAME));
         return List.copyOf(tables);
+    }
+
+    /**
+     * Stored procedures and functions for {@code catalog}. Drivers that do not
+     * implement {@code getProcedures}/{@code getFunctions} return an empty list.
+     */
+    private static List<SchemaNode> readRoutines(Connection connection, String catalog) throws SQLException {
+        DatabaseMetaData metaData = connection.getMetaData();
+        List<SchemaNode> routines = readRoutines(metaData, catalog, null);
+        if (routines.isEmpty()) {
+            routines = readRoutines(metaData, null, catalog);
+        }
+        List<SchemaNode> withDdl = new ArrayList<>(routines.size());
+        for (SchemaNode node : routines) {
+            withDdl.add(withRoutineDdl(connection, catalog, node));
+        }
+        withDdl.sort(Comparator.comparing(SchemaNode::name, BY_NAME));
+        return List.copyOf(withDdl);
+    }
+
+    private static List<SchemaNode> readRoutines(DatabaseMetaData metaData, String catalog, String schema)
+            throws SQLException {
+        Map<String, SchemaNode> byName = new LinkedHashMap<>();
+        for (SchemaNode node : readJdbcProcedures(metaData, catalog, schema)) {
+            byName.putIfAbsent(node.name().toLowerCase(Locale.ROOT), node);
+        }
+        return new ArrayList<>(byName.values());
+    }
+
+    private static List<SchemaNode> readJdbcProcedures(DatabaseMetaData metaData, String catalog, String schema) {
+        List<SchemaNode> out = new ArrayList<>();
+        try (ResultSet resultSet = metaData.getProcedures(catalog, schema, "%")) {
+            while (resultSet.next()) {
+                String name = resultSet.getString("PROCEDURE_NAME");
+                if (name == null || name.isBlank()) {
+                    continue;
+                }
+                String routineSchema = columnOrNull(resultSet, "PROCEDURE_SCHEM");
+                if (isSystemObject(routineSchema, null)) {
+                    continue;
+                }
+                String owner = firstNonBlank(columnOrNull(resultSet, "PROCEDURE_CAT"), routineSchema);
+                String resolvedOwner = owner != null ? owner : firstNonBlank(catalog, schema);
+                Map<String, String> metadata = new LinkedHashMap<>();
+                metadata.put(SchemaNode.META_CATALOG, Objects.requireNonNullElse(resolvedOwner, ""));
+                metadata.put(SchemaNode.META_ROUTINE_KIND, SchemaNode.ROUTINE_PROCEDURE);
+                out.add(SchemaNode.of(name, NodeType.PROCEDURE, metadata));
+            }
+        } catch (SQLException ignored) {
+            return List.of();
+        }
+        return out;
+    }
+
+    private static SchemaNode withRoutineDdl(Connection connection, String catalog, SchemaNode node) {
+        String owner = firstNonBlank(node.metadata(SchemaNode.META_CATALOG), catalog);
+        String ddl = readRoutineDdl(connection, owner, node.name());
+        if (ddl == null || ddl.isBlank()) {
+            return node;
+        }
+        Map<String, String> metadata = new LinkedHashMap<>(node.metadata());
+        metadata.put(SchemaNode.META_DDL, ddl);
+        return new SchemaNode(node.name(), node.type(), node.children(), metadata);
+    }
+
+    /**
+     * MySQL/MariaDB {@code SHOW CREATE PROCEDURE}, then {@code INFORMATION_SCHEMA.ROUTINES}.
+     * Failures return {@code null} so a missing grant does not drop the procedure from the tree.
+     */
+    static String readRoutineDdl(Connection connection, String catalog, String name) {
+        if (name == null || name.isBlank()) {
+            return null;
+        }
+        String qualified = qualifyIdent(catalog, name);
+        String show = showCreateRoutine(connection, "PROCEDURE", qualified);
+        if (show == null) {
+            show = showCreateRoutine(connection, "FUNCTION", qualified);
+        }
+        if (show != null && !show.isBlank()) {
+            return show.strip();
+        }
+        return readInformationSchemaRoutine(connection, catalog, name);
+    }
+
+    private static String showCreateRoutine(Connection connection, String kind, String qualified) {
+        String sql = "SHOW CREATE " + kind + " " + qualified;
+        try (var statement = connection.createStatement();
+             ResultSet resultSet = statement.executeQuery(sql)) {
+            if (!resultSet.next()) {
+                return null;
+            }
+            String[] columns = "FUNCTION".equalsIgnoreCase(kind)
+                    ? new String[]{"Create Function", "CREATE FUNCTION"}
+                    : new String[]{"Create Procedure", "CREATE PROCEDURE"};
+            for (String column : columns) {
+                String value = columnOrNull(resultSet, column);
+                if (value != null && !value.isBlank()) {
+                    return value;
+                }
+            }
+            int count = resultSet.getMetaData().getColumnCount();
+            if (count >= 3) {
+                return resultSet.getString(3);
+            }
+            return count >= 1 ? resultSet.getString(1) : null;
+        } catch (SQLException ignored) {
+            return null;
+        }
+    }
+
+    private static String readInformationSchemaRoutine(Connection connection, String catalog, String name) {
+        String sql = """
+                SELECT ROUTINE_TYPE, ROUTINE_DEFINITION, ROUTINE_SCHEMA, ROUTINE_CATALOG
+                FROM INFORMATION_SCHEMA.ROUTINES
+                WHERE UPPER(ROUTINE_NAME) = ?
+                """;
+        try (var statement = connection.prepareStatement(sql)) {
+            statement.setString(1, name.toUpperCase(Locale.ROOT));
+            try (ResultSet resultSet = statement.executeQuery()) {
+                String fallback = null;
+                while (resultSet.next()) {
+                    String schema = firstNonBlank(
+                            resultSet.getString("ROUTINE_SCHEMA"), resultSet.getString("ROUTINE_CATALOG"));
+                    String type = resultSet.getString("ROUTINE_TYPE");
+                    String body = resultSet.getString("ROUTINE_DEFINITION");
+                    String wrapped = wrapRoutineDefinition(type, name, body);
+                    if (catalog != null && !catalog.isBlank() && schema != null
+                            && schema.equalsIgnoreCase(catalog)) {
+                        return wrapped;
+                    }
+                    if (fallback == null) {
+                        fallback = wrapped;
+                    }
+                }
+                return fallback;
+            }
+        } catch (SQLException ignored) {
+            return null;
+        }
+    }
+
+    /** Builds {@code CREATE PROCEDURE name() …} when the catalog only returned the body. */
+    static String wrapRoutineDefinition(String routineType, String name, String definition) {
+        String body = definition == null ? "" : definition.strip();
+        if (body.toUpperCase(Locale.ROOT).startsWith("CREATE ")) {
+            return body;
+        }
+        String kind = routineType == null || routineType.isBlank() ? "PROCEDURE" : routineType.strip();
+        if (kind.equalsIgnoreCase("FUNCTION")) {
+            kind = "FUNCTION";
+        } else {
+            kind = "PROCEDURE";
+        }
+        if (body.isEmpty()) {
+            return "CREATE " + kind + " " + name + "()";
+        }
+        return "CREATE " + kind + " " + name + "()\n" + body;
+    }
+
+    private static String qualifyIdent(String catalog, String name) {
+        String quotedName = quoteIdent(name);
+        if (catalog == null || catalog.isBlank()) {
+            return quotedName;
+        }
+        return quoteIdent(catalog) + "." + quotedName;
+    }
+
+    private static String quoteIdent(String identifier) {
+        return "`" + identifier.replace("`", "``") + "`";
+    }
+
+    private static String columnOrNull(ResultSet resultSet, String column) {
+        try {
+            return resultSet.getString(column);
+        } catch (SQLException ignored) {
+            return null;
+        }
     }
 
     private static List<SchemaNode> readTables(DatabaseMetaData metaData, String catalog, String schema)

@@ -38,4 +38,21 @@ class SchemaCacheTest {
         assertEquals("users", cache.resolveTable(null, "users", "app").orElseThrow().name());
         assertEquals("faction", cache.resolveTable(null, "faction", "warcraft").orElseThrow().name());
     }
+
+    @Test
+    void proceduresAreListedSeparatelyFromTables() {
+        SchemaNode greet = SchemaNode.of("greet_user", NodeType.PROCEDURE, Map.of(
+                SchemaNode.META_CATALOG, "app",
+                SchemaNode.META_ROUTINE_KIND, SchemaNode.ROUTINE_PROCEDURE));
+        SchemaNode fn = SchemaNode.of("add_gold", NodeType.PROCEDURE, Map.of(
+                SchemaNode.META_CATALOG, "app",
+                SchemaNode.META_ROUTINE_KIND, SchemaNode.ROUTINE_FUNCTION));
+        cache.replace(List.of(new SchemaNode("app", NodeType.DATABASE, List.of(
+                SchemaNode.of("users", NodeType.TABLE, Map.of(SchemaNode.META_CATALOG, "app")),
+                greet,
+                fn), Map.of())));
+
+        assertEquals(List.of("greet_user"), cache.procedures("app").stream().map(SchemaNode::name).toList());
+        assertTrue(cache.tables("app").stream().noneMatch(n -> n.type() == NodeType.PROCEDURE));
+    }
 }

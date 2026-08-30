@@ -176,4 +176,24 @@ class SqlStatementExtractorTest {
         assertTrue(parts.getFirst().contains("SELECT 1"));
         assertEquals("SELECT 2", parts.get(1));
     }
+
+    @Test
+    @DisplayName("executableRanges skip DELIMITER commands")
+    void executableRangesSkipDelimiter() {
+        String sql = """
+                DELIMITER $$
+                CREATE PROCEDURE foo()
+                BEGIN
+                    SELECT 1;
+                END$$
+                DELIMITER ;
+                SELECT 2;
+                """;
+        java.util.List<SqlStatementExtractor.Span> ranges = SqlStatementExtractor.executableRanges(sql);
+        assertEquals(2, ranges.size());
+        assertTrue(sql.substring(ranges.get(0).start(), ranges.get(0).end()).contains("CREATE PROCEDURE"));
+        assertEquals("SELECT 2;", sql.substring(ranges.get(1).start(), ranges.get(1).end()));
+        assertTrue(ranges.stream().noneMatch(span ->
+                sql.substring(span.start(), span.end()).strip().toUpperCase().startsWith("DELIMITER")));
+    }
 }

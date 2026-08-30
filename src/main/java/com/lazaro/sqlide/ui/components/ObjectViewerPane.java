@@ -73,7 +73,12 @@ public final class ObjectViewerPane extends VBox {
         Objects.requireNonNull(node, "node");
         titleLabel.setText(node.name());
         String catalog = node.metadata(SchemaNode.META_CATALOG);
-        String kind = node.type() == NodeType.VIEW ? "VIEW" : "TABLE";
+        String kind = switch (node.type()) {
+            case VIEW -> "VIEW";
+            case PROCEDURE -> SchemaNode.ROUTINE_FUNCTION.equalsIgnoreCase(
+                    node.metadata(SchemaNode.META_ROUTINE_KIND)) ? "FUNCTION" : "PROCEDURE";
+            default -> "TABLE";
+        };
         subtitleLabel.setText(catalog == null || catalog.isBlank() ? kind : kind + " · " + catalog);
 
         String ddl = node.metadata(SchemaNode.META_DDL);

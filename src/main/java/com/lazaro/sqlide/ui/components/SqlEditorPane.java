@@ -1208,6 +1208,7 @@ public final class SqlEditorPane extends BorderPane {
             case SCHEMA -> Icons.schema();
             case INDEX -> Icons.index();
             case FUNCTION -> Icons.function();
+            case PROCEDURE -> Icons.function();
             case JOIN -> Icons.join();
             case SNIPPET -> Icons.snippet();
             case PARAMETER -> Icons.parameter();
@@ -1875,7 +1876,7 @@ public final class SqlEditorPane extends BorderPane {
                 if (isCancelled() || generation != inspectionGeneration.get()) {
                     return List.of();
                 }
-                return SqlInspector.inspect(snapshot, cache, catalog);
+                return inspectExecutableStatements(snapshot, cache, catalog);
             }
         };
         activeInspectionTask = task;
@@ -1894,6 +1895,27 @@ public final class SqlEditorPane extends BorderPane {
             applyInspections(mapInspectionOffsetsToDocument(task.getValue()));
         });
         inspectionExecutor.execute(task);
+    }
+
+    /**
+     * Inspects each executable statement on its own so {@code DELIMITER} and
+     * procedure bodies do not poison the whole buffer as one syntax error.
+     */
+    static List<InspectionIssue> inspectExecutableStatements(
+            String sql, SchemaCache cache, String catalog) {
+        if (sql == null || sql.isBlank()) {
+            return List.of();
+        }
+        List<InspectionIssue> issues = new ArrayList<>();
+        for (SqlStatementExtractor.Span span : SqlStatementExtractor.executableRanges(sql)) {
+            String statement = sql.substring(span.start(), span.end());
+            for (InspectionIssue issue : SqlInspector.inspect(statement, cache, catalog)) {
+                int start = issue.startOffset() + span.start();
+                int end = issue.endOffset() + span.start();
+                issues.add(new InspectionIssue(start, Math.max(start + 1, end), issue.message(), issue.severity()));
+            }
+        }
+        return List.copyOf(issues);
     }
 
     /** Inspection offsets are logical; map them onto the padded document for underlines. */

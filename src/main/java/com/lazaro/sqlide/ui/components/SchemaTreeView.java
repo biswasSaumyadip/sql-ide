@@ -1136,6 +1136,7 @@ public final class SchemaTreeView extends VBox {
             if (empty || item == null) {
                 setText(null);
                 setGraphic(null);
+                setTooltip(null);
                 return;
             }
 
@@ -1143,6 +1144,7 @@ public final class SchemaTreeView extends VBox {
                 getStyleClass().add("schema-placeholder");
                 setText(item.name());
                 setGraphic(null);
+                setTooltip(null);
                 return;
             }
 
@@ -1186,6 +1188,47 @@ public final class SchemaTreeView extends VBox {
 
             setText(null);
             setGraphic(layout);
+            applyNodeTooltip(item);
+        }
+
+        private void applyNodeTooltip(SchemaNode node) {
+            String text = tooltipOf(node);
+            if (text == null || text.isBlank()) {
+                setTooltip(null);
+                return;
+            }
+            Tooltip tip = getTooltip();
+            if (tip == null) {
+                tip = new Tooltip();
+                tip.setWrapText(true);
+                setTooltip(tip);
+            }
+            tip.setMaxWidth(text.contains("\n") ? 560 : 360);
+            tip.setText(text);
+        }
+
+        private static String tooltipOf(SchemaNode node) {
+            if (node == null) {
+                return null;
+            }
+            return switch (node.type()) {
+                case PROCEDURE -> {
+                    String ddl = node.metadata(SchemaNode.META_DDL);
+                    if (ddl != null && !ddl.isBlank()) {
+                        yield ddl;
+                    }
+                    boolean function = SchemaNode.ROUTINE_FUNCTION.equalsIgnoreCase(
+                            node.metadata(SchemaNode.META_ROUTINE_KIND));
+                    String kind = function ? "Stored function" : "Stored procedure";
+                    String catalog = node.metadata(SchemaNode.META_CATALOG);
+                    yield catalog == null || catalog.isBlank() ? kind : kind + " in " + catalog;
+                }
+                case FOLDER -> switch (Objects.requireNonNullElse(node.folderKind(), "")) {
+                    case SchemaNode.FOLDER_PROCEDURES -> "Stored procedures in this database";
+                    default -> null;
+                };
+                default -> null;
+            };
         }
 
         private static String detailOf(SchemaNode node) {
@@ -1210,6 +1253,10 @@ public final class SchemaTreeView extends VBox {
                     yield cols;
                 }
                 case VIEW -> "view";
+                case PROCEDURE -> {
+                    String kind = node.metadata(SchemaNode.META_ROUTINE_KIND);
+                    yield SchemaNode.ROUTINE_FUNCTION.equalsIgnoreCase(kind) ? "function" : "procedure";
+                }
                 default -> "";
             };
         }

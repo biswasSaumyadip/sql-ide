@@ -91,6 +91,27 @@ public final class SqlStatementExtractor {
         return List.copyOf(out);
     }
 
+    /**
+     * Ranges of executable SQL (whitespace-hugged), excluding {@code DELIMITER}
+     * client commands. Offsets are in the original buffer.
+     */
+    public static List<Span> executableRanges(String sql) {
+        if (sql == null || sql.isBlank()) {
+            return List.of();
+        }
+        List<Span> out = new ArrayList<>();
+        for (Piece piece : parse(sql)) {
+            if (piece.meta()) {
+                continue;
+            }
+            Span span = hug(sql, piece);
+            if (!span.isEmpty()) {
+                out.add(span);
+            }
+        }
+        return List.copyOf(out);
+    }
+
     static Piece pieceAt(String sql, int caret) {
         if (sql == null || sql.isBlank()) {
             return null;

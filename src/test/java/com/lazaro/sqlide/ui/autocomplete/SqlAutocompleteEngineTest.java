@@ -68,14 +68,24 @@ class SqlAutocompleteEngineTest {
                 "schema_auto_increment_columns", NodeType.TABLE, List.of(systemCol), Map.of(
                 SchemaNode.META_CATALOG, "app"));
 
+        SchemaNode greet = SchemaNode.of("greet_user", NodeType.PROCEDURE, Map.of(
+                SchemaNode.META_CATALOG, "app",
+                SchemaNode.META_ROUTINE_KIND, SchemaNode.ROUTINE_PROCEDURE));
+        SchemaNode addGold = SchemaNode.of("add_gold", NodeType.PROCEDURE, Map.of(
+                SchemaNode.META_CATALOG, "app",
+                SchemaNode.META_ROUTINE_KIND, SchemaNode.ROUTINE_FUNCTION));
+
         SchemaNode otherId = SchemaNode.of("sku", NodeType.COLUMN, Map.of(
                 SchemaNode.META_DATA_TYPE, "VARCHAR"));
         SchemaNode products = new SchemaNode("products", NodeType.TABLE, List.of(otherId), Map.of(
                 SchemaNode.META_CATALOG, "shop"));
+        SchemaNode shopProc = SchemaNode.of("shop_total", NodeType.PROCEDURE, Map.of(
+                SchemaNode.META_CATALOG, "shop",
+                SchemaNode.META_ROUTINE_KIND, SchemaNode.ROUTINE_PROCEDURE));
 
         SchemaNode app = new SchemaNode("app", NodeType.DATABASE,
-                List.of(users, orders, salesOrders, userView, systemTable), Map.of());
-        SchemaNode shop = new SchemaNode("shop", NodeType.DATABASE, List.of(products), Map.of());
+                List.of(users, orders, salesOrders, userView, systemTable, greet, addGold), Map.of());
+        SchemaNode shop = new SchemaNode("shop", NodeType.DATABASE, List.of(products, shopProc), Map.of());
         cache = new SchemaCache();
         cache.replace(List.of(app, shop));
         engine = new SqlAutocompleteEngine(cache, activeCatalog::get, dialect::get);
@@ -102,6 +112,49 @@ class SqlAutocompleteEngineTest {
                 || suggestions.getFirst().kind() == Kind.JOIN
                 || suggestions.getFirst().kind() == Kind.VIEW
                 || suggestions.getFirst().kind() == Kind.SCHEMA);
+        assertTrue(suggestions.stream().noneMatch(s -> s.kind() == Kind.PROCEDURE),
+                "FROM must not list stored procedures");
+    }
+
+    @Test
+    @DisplayName("typing after CALL suggests procedures from the active catalog")
+    void suggestsProceduresAfterCall() {
+        String sql = "CALL ";
+        assertTrue(engine.shouldAutoPopup(sql, sql.length()));
+        List<Suggestion> suggestions = suggest(sql);
+        assertTrue(suggestions.stream().anyMatch(s ->
+                s.kind() == Kind.PROCEDURE && s.name().equals("greet_user")), suggestions.toString());
+        assertTrue(suggestions.stream().anyMatch(s -> s.insertText().equals("greet_user()")));
+        assertTrue(suggestions.stream().noneMatch(s -> s.name().equals("users")),
+                "CALL must not dump tables");
+        assertTrue(suggestions.stream().noneMatch(s -> s.name().equals("add_gold")),
+                "stored functions must not appear after CALL");
+        assertTrue(suggestions.stream().noneMatch(s -> s.name().equals("shop_total")),
+                "procedures from other catalogs stay hidden");
+    }
+
+    @Test
+    @DisplayName("CALL suggestions follow the active database")
+    void suggestsProceduresFromActiveCatalog() {
+        activeCatalog.set("shop");
+        List<Suggestion> suggestions = suggest("CALL ");
+        assertTrue(suggestions.stream().anyMatch(s -> s.name().equals("shop_total")));
+        assertTrue(suggestions.stream().noneMatch(s -> s.name().equals("greet_user")));
+    }
+
+    @Test
+    @DisplayName("PROCEDURE / FUNCTION / TRIGGER / DELIMITER completions include docs")
+    void routineKeywordsHaveDocumentation() {
+        List<Suggestion> suggestions = suggest("PROCE", true);
+        assertTrue(suggestions.stream().anyMatch(s ->
+                s.name().equals("PROCEDURE") && s.documentation().toLowerCase().contains("stored procedure")),
+                suggestions.toString());
+        assertTrue(suggest("FUNCT", true).stream().anyMatch(s ->
+                s.name().equals("FUNCTION") && s.documentation().toLowerCase().contains("stored function")));
+        assertTrue(suggest("TRIGG", true).stream().anyMatch(s ->
+                s.name().equals("TRIGGER") && s.documentation().toLowerCase().contains("trigger")));
+        assertTrue(suggest("DELIM", true).stream().anyMatch(s ->
+                s.name().equals("DELIMITER") && s.documentation().toLowerCase().contains("not sent")));
     }
 
     @Test

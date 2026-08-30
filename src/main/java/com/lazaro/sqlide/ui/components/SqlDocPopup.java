@@ -108,16 +108,34 @@ public final class SqlDocPopup extends Popup {
     private void populate(Doc doc) {
         metaGrid.getChildren().clear();
         int row = 0;
-        row = addMetaRow(row, "Data Source", blankToDash(doc.dataSource()));
-        row = addMetaRow(row, "Schema", blankToDash(doc.schema()));
-        row = addMetaRow(row, "Table", blankToDash(doc.table()));
-        if (doc.kind() == SqlDocResolver.Kind.COLUMN && doc.column() != null) {
-            addMetaRow(row, "Column", doc.column());
+        if (doc.isKeyword()) {
+            row = addMetaRow(row, "Keyword", blankToDash(doc.table()));
+            previewLink.setVisible(false);
+            previewLink.setManaged(false);
+        } else if (doc.isProcedure()) {
+            row = addMetaRow(row, "Data Source", blankToDash(doc.dataSource()));
+            row = addMetaRow(row, "Schema", blankToDash(doc.schema()));
+            addMetaRow(row, "Procedure", blankToDash(doc.table()));
+            previewLink.setVisible(false);
+            previewLink.setManaged(false);
+        } else {
+            row = addMetaRow(row, "Data Source", blankToDash(doc.dataSource()));
+            row = addMetaRow(row, "Schema", blankToDash(doc.schema()));
+            row = addMetaRow(row, "Table", blankToDash(doc.table()));
+            if (doc.kind() == SqlDocResolver.Kind.COLUMN && doc.column() != null) {
+                addMetaRow(row, "Column", doc.column());
+            }
+            previewLink.setVisible(doc.isTable());
+            previewLink.setManaged(doc.isTable());
         }
 
         codeFlow.getChildren().setAll(new Text(doc.code()));
-        previewLink.setVisible(doc.isTable());
-        previewLink.setManaged(doc.isTable());
+        int lines = doc.code() == null ? 0 : (int) doc.code().lines().count();
+        boolean tall = doc.isProcedure() || lines > 8;
+        codeScroll.setPrefHeight(tall ? 280 : 180);
+        codeScroll.setMaxHeight(tall ? 440 : 260);
+        root.setPrefWidth(tall ? 520 : 420);
+        root.setMaxWidth(tall ? 640 : 520);
     }
 
     private int addMetaRow(int row, String key, String value) {

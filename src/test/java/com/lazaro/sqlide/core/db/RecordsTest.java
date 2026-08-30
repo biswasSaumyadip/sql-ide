@@ -137,6 +137,8 @@ class RecordsTest {
         assertTrue(SchemaNode.of("id", NodeType.COLUMN).isLeaf());
         assertTrue(SchemaNode.of("PRIMARY", NodeType.KEY).isLeaf());
         assertTrue(SchemaNode.index("idx", true, List.of("id"), Map.of()).isLeaf());
+        assertTrue(SchemaNode.of("greet", NodeType.PROCEDURE).isLeaf());
+        assertFalse(NodeType.PROCEDURE.isContainer());
         assertFalse(SchemaNode.folder("columns", SchemaNode.FOLDER_COLUMNS, 0, Map.of()).isLeaf());
         assertFalse(NodeType.COLUMN.isContainer());
         assertTrue(NodeType.FOLDER.isContainer());

@@ -2,6 +2,7 @@ package com.lazaro.sqlide.core.inspection;
 
 import com.lazaro.sqlide.core.db.SchemaCache;
 import com.lazaro.sqlide.core.db.SchemaNode;
+import com.lazaro.sqlide.core.sql.SchemaChangingSql;
 import net.sf.jsqlparser.JSQLParserException;
 import net.sf.jsqlparser.expression.BinaryExpression;
 import net.sf.jsqlparser.expression.DoubleValue;
@@ -74,7 +75,9 @@ public final class SqlInspector {
                 inspectStatement(statement, sql, schema, activeCatalog, issues);
             }
         } catch (JSQLParserException ex) {
-            issues.add(syntaxIssue(ex, sql));
+            if (!SchemaChangingSql.isClientOrRoutineSql(sql)) {
+                issues.add(syntaxIssue(ex, sql));
+            }
         }
         return List.copyOf(issues);
     }

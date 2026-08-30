@@ -54,9 +54,13 @@ public record SchemaNode(String name, NodeType type, List<SchemaNode> children, 
     public static final String META_SESSION = "session";
     /**
      * Logical folder kind under a database or table:
-     * {@code tables}, {@code views}, {@code columns}, {@code keys}, {@code indexes}.
+     * {@code tables}, {@code views}, {@code procedures}, {@code columns}, {@code keys}, {@code indexes}.
      */
     public static final String META_FOLDER_KIND = "folderKind";
+    /** {@code procedure} or {@code function} on a {@link NodeType#PROCEDURE} node. */
+    public static final String META_ROUTINE_KIND = "routineKind";
+    public static final String ROUTINE_PROCEDURE = "procedure";
+    public static final String ROUTINE_FUNCTION = "function";
     /** Child count shown muted next to a folder label. */
     public static final String META_CHILD_COUNT = "childCount";
     /** Comma-separated column list for a key or index, e.g. {@code id,name}. */
@@ -70,6 +74,7 @@ public record SchemaNode(String name, NodeType type, List<SchemaNode> children, 
 
     public static final String FOLDER_TABLES = "tables";
     public static final String FOLDER_VIEWS = "views";
+    public static final String FOLDER_PROCEDURES = "procedures";
     public static final String FOLDER_COLUMNS = "columns";
     public static final String FOLDER_KEYS = "keys";
     public static final String FOLDER_INDEXES = "indexes";
@@ -83,6 +88,8 @@ public record SchemaNode(String name, NodeType type, List<SchemaNode> children, 
         FOLDER,
         TABLE,
         VIEW,
+        /** Stored procedure or function (see {@link #META_ROUTINE_KIND}). */
+        PROCEDURE,
         COLUMN,
         /** Primary or foreign key under a table's keys folder. */
         KEY,
@@ -91,7 +98,7 @@ public record SchemaNode(String name, NodeType type, List<SchemaNode> children, 
 
         /** Whether nodes of this kind can ever contain children. */
         public boolean isContainer() {
-            return this != COLUMN && this != KEY && this != INDEX;
+            return this != COLUMN && this != KEY && this != INDEX && this != PROCEDURE;
         }
     }
 

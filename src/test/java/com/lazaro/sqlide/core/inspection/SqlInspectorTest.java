@@ -41,6 +41,23 @@ class SqlInspectorTest {
     }
 
     @Test
+    @DisplayName("DELIMITER and CREATE PROCEDURE are not syntax errors")
+    void ignoresDelimiterAndRoutineDdl() {
+        assertTrue(SqlInspector.inspect("DELIMITER $$", cache, "app").isEmpty());
+        assertTrue(SqlInspector.inspect("""
+                CREATE PROCEDURE greet()
+                BEGIN
+                    SELECT 1;
+                END
+                """, cache, "app").isEmpty());
+        assertTrue(SqlInspector.inspect(
+                "CREATE FUNCTION fn() RETURNS INT RETURN 1", cache, "app").isEmpty());
+        assertTrue(SqlInspector.inspect(
+                "CREATE TRIGGER t BEFORE INSERT ON users FOR EACH ROW SET NEW.id = 1",
+                cache, "app").isEmpty());
+    }
+
+    @Test
     @DisplayName("UPDATE/DELETE without WHERE is a WARNING")
     void flagsUnsafeDml() {
         String updateSql = "UPDATE users SET email = 'x'";

@@ -96,4 +96,18 @@ class SchemaObjectNamesTest {
         assertTrue(SchemaObjectNames.createColumnTemplate(table).contains("ALTER TABLE users"));
         assertTrue(SchemaObjectNames.modifyTableTemplate(table).contains("Altering table:"));
     }
+
+    @Test
+    void generateCallAndDropForProcedure() {
+        TreeItem<SchemaNode> ds = new TreeItem<>(SchemaNode.of("Local", NodeType.DATA_SOURCE));
+        TreeItem<SchemaNode> catalog = new TreeItem<>(SchemaNode.of("app", NodeType.DATABASE));
+        TreeItem<SchemaNode> proc = new TreeItem<>(SchemaNode.of("greet_user", NodeType.PROCEDURE,
+                Map.of(SchemaNode.META_CATALOG, "app", SchemaNode.META_ROUTINE_KIND, SchemaNode.ROUTINE_PROCEDURE)));
+        ds.getChildren().add(catalog);
+        catalog.getChildren().add(proc);
+
+        assertEquals("CALL app.greet_user();", SchemaObjectNames.generateCall(proc));
+        assertEquals("CALL app.greet_user();", SchemaObjectNames.generateSelect(proc));
+        assertEquals("DROP PROCEDURE IF EXISTS app.greet_user;", SchemaObjectNames.dropStatement(proc));
+    }
 }

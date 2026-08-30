@@ -79,6 +79,43 @@ public final class SchemaCache {
         return List.copyOf(tables);
     }
 
+    /**
+     * Stored procedures (not functions), optionally restricted to {@code catalog}.
+     * When {@code catalog} is null/blank, returns every loaded catalog.
+     */
+    public List<SchemaNode> procedures(String catalog) {
+        List<SchemaNode> procedures = new ArrayList<>();
+        String filter = catalog == null || catalog.isBlank() ? null : catalog;
+        for (SchemaNode db : catalogs) {
+            if (filter != null && !db.name().equalsIgnoreCase(filter)) {
+                continue;
+            }
+            collectProcedures(db, filter, procedures);
+        }
+        return List.copyOf(procedures);
+    }
+
+    private static void collectProcedures(SchemaNode parent, String catalogFilter, List<SchemaNode> out) {
+        for (SchemaNode child : parent.children()) {
+            if (child.type() == NodeType.PROCEDURE && isStoredProcedure(child)) {
+                if (catalogFilter != null) {
+                    String meta = child.metadata(SchemaNode.META_CATALOG);
+                    if (meta != null && !meta.isBlank() && !meta.equalsIgnoreCase(catalogFilter)) {
+                        continue;
+                    }
+                }
+                out.add(child);
+            } else if (child.type() == NodeType.FOLDER) {
+                collectProcedures(child, catalogFilter, out);
+            }
+        }
+    }
+
+    private static boolean isStoredProcedure(SchemaNode node) {
+        String kind = node.metadata(SchemaNode.META_ROUTINE_KIND);
+        return kind == null || kind.isBlank() || SchemaNode.ROUTINE_PROCEDURE.equalsIgnoreCase(kind);
+    }
+
     public Optional<SchemaNode> findTable(String name) {
         return findTable(name, null);
     }

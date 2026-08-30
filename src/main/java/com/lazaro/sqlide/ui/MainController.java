@@ -32,6 +32,7 @@ import com.lazaro.sqlide.core.transfer.TransferRequest;
 import com.lazaro.sqlide.core.transfer.TransferResult;
 import com.lazaro.sqlide.core.sql.PageSql;
 import com.lazaro.sqlide.core.sql.ResultPager;
+import com.lazaro.sqlide.core.sql.SchemaChangingSql;
 import com.lazaro.sqlide.core.sql.SimpleSelectAnalyzer;
 import com.lazaro.sqlide.core.sql.SqlParameterParser;
 import com.lazaro.sqlide.ui.dialogs.CompareDataDialog;
@@ -1142,7 +1143,7 @@ public final class MainController {
         DataSourceDriver active = session.driver();
         String catalog = switch (node.type()) {
             case DATABASE, SCHEMA -> node.name();
-            case TABLE, VIEW, COLUMN, FOLDER, KEY, INDEX -> {
+            case TABLE, VIEW, COLUMN, FOLDER, KEY, INDEX, PROCEDURE -> {
                 String meta = node.metadata(SchemaNode.META_CATALOG);
                 yield meta == null || meta.isBlank() ? null : meta;
             }
@@ -1217,6 +1218,9 @@ public final class MainController {
             recordHistory(historySql, script);
             historyPane.refresh();
             syncTransactionStatus(sessionOpt.get());
+            if (script.errorCount() == 0) {
+                afterSuccessfulScript(sessionOpt.get(), toRun);
+            }
             updateActionStates();
         });
         task.setOnFailed(event -> {
@@ -1345,9 +1349,7 @@ public final class MainController {
             historyPane.refresh();
             syncTransactionStatus(session);
             if (analyze == null && script.errorCount() == 0) {
-                for (String statement : sourceStatements) {
-                    syncActiveCatalogFromSql(session, statement);
-                }
+                afterSuccessfulScript(session, sourceStatements);
             }
         });
         task.setOnFailed(event -> {
@@ -1477,6 +1479,9 @@ public final class MainController {
             recordHistory(sql, script);
             historyPane.refresh();
             syncTransactionStatus(session);
+            if (script.errorCount() == 0) {
+                afterSuccessfulScript(session, statements);
+            }
         });
         task.setOnFailed(event -> {
             activeTask = null;
@@ -1769,11 +1774,28 @@ public final class MainController {
 
     private void insertNodeReference(SchemaNode node) {
         String text = switch (node.type()) {
-            case TABLE, VIEW -> node.qualifiedName();
+            case TABLE, VIEW, PROCEDURE -> node.qualifiedName();
             case DATA_SOURCE -> node.name();
             default -> node.name();
         };
         editors.insertIntoActiveEditor(text);
+    }
+
+    /**
+     * After a successful script: honor {@code USE} and reload the schema cache so
+     * newly created tables / views / procedures appear in autocomplete immediately.
+     */
+    private void afterSuccessfulScript(ConnectionSession session, List<String> statements) {
+        if (session == null || statements == null) {
+            return;
+        }
+        for (String statement : statements) {
+            syncActiveCatalogFromSql(session, statement);
+        }
+        if (SchemaChangingSql.anyChangesSchema(statements)) {
+            schemaTree.reload();
+            refreshSchemaCache(session);
+        }
     }
 
     /** Keeps the footer in sync when the user runs {@code USE db} from the editor. */

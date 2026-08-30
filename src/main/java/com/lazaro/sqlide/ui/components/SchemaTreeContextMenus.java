@@ -74,6 +74,7 @@ final class SchemaTreeContextMenus {
             case FOLDER -> folderMenu(item);
             case TABLE -> tableMenu(item);
             case VIEW -> viewMenu(item);
+            case PROCEDURE -> procedureMenu(item);
             case COLUMN -> columnMenu(item);
             case KEY, INDEX -> keyOrIndexMenu(item);
         };
@@ -212,6 +213,15 @@ final class SchemaTreeContextMenus {
                 diagrams,
                 new SeparatorMenuItem(),
                 danger("Drop View\u2026", () -> insert(SchemaObjectNames.dropStatement(item))));
+    }
+
+    private List<MenuItem> procedureMenu(TreeItem<SchemaNode> item) {
+        return List.of(
+                action("Copy Name", null, () -> copy(item.getValue().name())),
+                action("Copy Qualified Name", null, () -> copy(SchemaObjectNames.qualifiedName(item))),
+                action("Generate CALL", null, () -> insert(SchemaObjectNames.generateCall(item))),
+                new SeparatorMenuItem(),
+                danger("Drop Procedure\u2026", () -> insert(SchemaObjectNames.dropStatement(item))));
     }
 
     private List<MenuItem> columnMenu(TreeItem<SchemaNode> item) {

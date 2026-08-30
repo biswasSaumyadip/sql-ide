@@ -1,6 +1,7 @@
 package com.lazaro.sqlide.ui.autocomplete;
 
 import com.lazaro.sqlide.core.db.ConnectionConfig;
+import com.lazaro.sqlide.core.doc.SqlKeywordDocs;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -65,6 +66,7 @@ final class SqlCompletionDialect {
             "GROUP", "ORDER", "BY", "HAVING", "LIMIT", "OFFSET", "DISTINCT",
             "INTO", "VALUES", "SET", "AS", "UNION", "ALL", "WITH",
             "CREATE", "ALTER", "DROP", "TRUNCATE", "TABLE", "VIEW", "INDEX", "SCHEMA",
+            "PROCEDURE", "FUNCTION", "TRIGGER", "CALL", "DELIMITER",
             "AND", "OR", "NOT", "IN", "EXISTS", "BETWEEN", "LIKE", "IS", "NULL",
             "CASE", "WHEN", "THEN", "ELSE", "END", "ASC", "DESC",
             "BEGIN", "START", "TRANSACTION", "COMMIT", "ROLLBACK",
@@ -161,11 +163,18 @@ final class SqlCompletionDialect {
         return SPACE_AFTER.contains(keyword.toUpperCase(Locale.ROOT));
     }
 
+    static String keywordDocumentation(String keyword, String dialectLabel) {
+        return SqlKeywordDocs.describe(keyword)
+                .orElse((keyword == null ? "" : keyword) + " — "
+                        + (dialectLabel == null ? "SQL" : dialectLabel) + " keyword.");
+    }
+
     private static final java.util.Set<String> SPACE_AFTER = java.util.Set.of(
             "SELECT", "INSERT", "UPDATE", "DELETE", "FROM", "WHERE", "JOIN", "INNER", "LEFT",
             "RIGHT", "FULL", "OUTER", "CROSS", "ON", "GROUP", "ORDER", "BY", "HAVING",
             "LIMIT", "OFFSET", "INTO", "VALUES", "SET", "AS", "UNION", "WITH", "CREATE",
             "ALTER", "DROP", "TRUNCATE", "TABLE", "SCHEMA", "AND", "OR", "NOT", "IN", "EXISTS",
             "BETWEEN", "LIKE", "ILIKE", "IS", "CASE", "WHEN", "THEN", "ELSE",
-            "BEGIN", "START", "TRANSACTION", "USE", "SHOW", "RETURNING", "PARTITION", "OVER");
+            "BEGIN", "START", "TRANSACTION", "USE", "SHOW", "RETURNING", "PARTITION", "OVER",
+            "CALL", "PROCEDURE", "FUNCTION", "TRIGGER");
 }

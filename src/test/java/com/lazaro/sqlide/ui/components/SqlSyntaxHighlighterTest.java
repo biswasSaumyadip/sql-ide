@@ -32,6 +32,15 @@ class SqlSyntaxHighlighterTest {
     }
 
     @Test
+    @DisplayName("CALL is highlighted as a command, not left as an identifier")
+    void recognisesCallKeyword() {
+        assertTrue(textOf("CALL greet_user()", SqlSyntaxHighlighter.KEYWORD).contains("CALL"));
+        assertTrue(textOf("call greet_user()", SqlSyntaxHighlighter.KEYWORD).contains("call"));
+        assertEquals(List.of("'CALL me'"), textOf("SELECT 'CALL me'", SqlSyntaxHighlighter.STRING));
+        assertFalse(textOf("SELECT 'CALL me'", SqlSyntaxHighlighter.KEYWORD).contains("CALL"));
+    }
+
+    @Test
     @DisplayName("a keyword inside a string literal is not highlighted as code")
     void keywordsInsideStringsAreNotKeywords() {
         String sql = "SELECT 'select from where' AS label";

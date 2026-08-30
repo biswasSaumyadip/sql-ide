@@ -19,7 +19,9 @@ public final class SqlDocResolver {
 
     public enum Kind {
         TABLE,
-        COLUMN
+        COLUMN,
+        PROCEDURE,
+        KEYWORD
     }
 
     public record Doc(
@@ -44,6 +46,14 @@ public final class SqlDocResolver {
         public boolean isTable() {
             return kind == Kind.TABLE;
         }
+
+        public boolean isKeyword() {
+            return kind == Kind.KEYWORD;
+        }
+
+        public boolean isProcedure() {
+            return kind == Kind.PROCEDURE;
+        }
     }
 
     private SqlDocResolver() {
@@ -55,7 +65,7 @@ public final class SqlDocResolver {
             SchemaCache cache,
             String activeCatalog,
             String dataSourceLabel) {
-        if (sql == null || sql.isEmpty() || cache == null || !cache.isReady()) {
+        if (sql == null || sql.isEmpty()) {
             return Optional.empty();
         }
         int index = clampIndex(sql, charIndex);
@@ -64,6 +74,14 @@ public final class SqlDocResolver {
             return Optional.empty();
         }
 
+        Optional<Doc> keyword = keywordDoc(ident);
+        if (keyword.isPresent()) {
+            return keyword;
+        }
+
+        if (cache == null || !cache.isReady()) {
+            return Optional.empty();
+        }
         Map<String, String> aliases = SqlTableScope.resolveAliases(sql.substring(0, index + 1), cache, activeCatalog);
         String catalog = activeCatalog;
 
@@ -75,6 +93,11 @@ public final class SqlDocResolver {
             Optional<SchemaNode> asTable = cache.resolveTable(left, right, catalog);
             if (asTable.isPresent()) {
                 return Optional.of(tableDoc(asTable.get(), dataSourceLabel, cache));
+            }
+
+            Optional<Doc> asProcedure = procedureDoc(right, left, dataSourceLabel, cache);
+            if (asProcedure.isPresent()) {
+                return asProcedure;
             }
 
             // alias.column or table.column
@@ -93,6 +116,11 @@ public final class SqlDocResolver {
         Optional<SchemaNode> table = cache.findTable(ident.name(), catalog);
         if (table.isPresent()) {
             return Optional.of(tableDoc(table.get(), dataSourceLabel, cache));
+        }
+
+        Optional<Doc> procedure = procedureDoc(ident.name(), catalog, dataSourceLabel, cache);
+        if (procedure.isPresent()) {
+            return procedure;
         }
 
         // Column in scoped tables / aliases.
@@ -127,6 +155,46 @@ public final class SqlDocResolver {
             return Optional.of(columnDoc(uniqueOwner, uniqueCol, dataSourceLabel, cache));
         }
         return Optional.empty();
+    }
+
+    private static Optional<Doc> keywordDoc(Identifier ident) {
+        if (ident.qualifier() != null) {
+            return Optional.empty();
+        }
+        Optional<String> text = SqlKeywordDocs.describe(ident.name());
+        if (text.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(new Doc(
+                Kind.KEYWORD, "", "", ident.name().toUpperCase(Locale.ROOT), null, text.get(), null, null));
+    }
+
+    private static Optional<Doc> procedureDoc(
+            String name, String catalog, String dataSource, SchemaCache cache) {
+        if (name == null || name.isBlank()) {
+            return Optional.empty();
+        }
+        String needle = stripQuotes(name);
+        SchemaNode match = null;
+        for (SchemaNode procedure : cache.procedures(catalog)) {
+            if (procedure.name().equalsIgnoreCase(needle)) {
+                match = procedure;
+                break;
+            }
+        }
+        if (match == null) {
+            return Optional.empty();
+        }
+        String schema = Objects.requireNonNullElse(match.metadata(SchemaNode.META_CATALOG), "");
+        if (schema.isBlank()) {
+            schema = Objects.requireNonNullElse(catalog, "");
+        }
+        String ddl = match.metadata(SchemaNode.META_DDL);
+        if (ddl == null || ddl.isBlank()) {
+            ddl = "CREATE PROCEDURE " + match.name() + "()\nBEGIN\n    -- body not loaded; refresh schema (Ctrl+R)\nEND";
+        }
+        return Optional.of(new Doc(
+                Kind.PROCEDURE, dataSource, schema, match.name(), null, ddl, match, null));
     }
 
     private static Doc tableDoc(SchemaNode table, String dataSource, SchemaCache cache) {

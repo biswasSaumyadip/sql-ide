@@ -36,6 +36,7 @@ public final class Icons {
             case FOLDER -> folder();
             case TABLE -> table();
             case VIEW -> view();
+            case PROCEDURE -> function();
             case COLUMN -> node.metadataFlag(SchemaNode.META_PRIMARY_KEY) ? primaryKeyColumn() : column();
             case KEY -> key();
             case INDEX -> index();

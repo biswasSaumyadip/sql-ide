@@ -50,6 +50,7 @@ public final class SchemaObjectNames {
         SchemaNode node = item.getValue();
         return switch (node.type()) {
             case TABLE, VIEW -> "SELECT * FROM " + qualifiedName(item) + ";";
+            case PROCEDURE -> generateCall(item);
             case COLUMN -> {
                 TreeItem<SchemaNode> parent = enclosingTable(item);
                 if (parent == null || parent.getValue() == null) {
@@ -105,6 +106,7 @@ public final class SchemaObjectNames {
             case TABLE -> "CREATE TABLE " + name + " (\n    -- columns\n);";
             case VIEW -> "CREATE VIEW " + name + " AS\nSELECT * FROM ...;";
             case DATABASE, SCHEMA -> "CREATE DATABASE " + node.name() + ";";
+            case PROCEDURE -> "CREATE PROCEDURE " + name + "()\nBEGIN\n    -- body\nEND;";
             default -> null;
         };
     }
@@ -118,6 +120,11 @@ public final class SchemaObjectNames {
             case TABLE -> "DROP TABLE IF EXISTS " + qualifiedName(item) + ";";
             case VIEW -> "DROP VIEW IF EXISTS " + qualifiedName(item) + ";";
             case DATABASE, SCHEMA -> "DROP DATABASE IF EXISTS " + node.name() + ";";
+            case PROCEDURE -> {
+                String kind = node.metadata(SchemaNode.META_ROUTINE_KIND);
+                String object = SchemaNode.ROUTINE_FUNCTION.equalsIgnoreCase(kind) ? "FUNCTION" : "PROCEDURE";
+                yield "DROP " + object + " IF EXISTS " + qualifiedName(item) + ";";
+            }
             default -> null;
         };
     }
@@ -130,6 +137,13 @@ public final class SchemaObjectNames {
             return null;
         }
         return "TRUNCATE TABLE " + qualifiedName(item) + ";";
+    }
+
+    public static String generateCall(TreeItem<SchemaNode> item) {
+        if (item == null || item.getValue() == null || item.getValue().type() != NodeType.PROCEDURE) {
+            return null;
+        }
+        return "CALL " + qualifiedName(item) + "();";
     }
 
     public static String createTableTemplate(TreeItem<SchemaNode> schemaItem) {

@@ -38,6 +38,7 @@ public final class SqlAutocompleteEngine {
         SCHEMA,
         INDEX,
         FUNCTION,
+        PROCEDURE,
         JOIN,
         SNIPPET,
         PARAMETER
@@ -130,6 +131,7 @@ public final class SqlAutocompleteEngine {
             "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "OUTER", "CROSS");
     private static final Set<String> INDEX_CONTEXTS = Set.of("INDEX", "KEY");
     private static final Set<String> SCHEMA_CONTEXTS = Set.of("USE", "SCHEMA", "DATABASE");
+    private static final Set<String> CALL_CONTEXTS = Set.of("CALL");
 
     /** Catalogs / schemas whose objects should sink to the bottom of table suggestions. */
     private static final Set<String> SYSTEM_CATALOGS = Set.of(
@@ -267,6 +269,10 @@ public final class SqlAutocompleteEngine {
             return rank(out);
         }
 
+        if (CALL_CONTEXTS.contains(previousUpper)) {
+            return rank(procedureSuggestions(prefix, replaceStart, caret));
+        }
+
         if (SCHEMA_CONTEXTS.contains(previousUpper)) {
             List<Suggestion> out = new ArrayList<>(schemaSuggestions(prefix, replaceStart, caret));
             out.addAll(tableSuggestions(prefix, replaceStart, caret, scope));
@@ -358,7 +364,8 @@ public final class SqlAutocompleteEngine {
                 || COLUMN_CONTEXTS.contains(previousUpper)
                 || JOIN_KEYWORDS.contains(previousUpper)
                 || INDEX_CONTEXTS.contains(previousUpper)
-                || SCHEMA_CONTEXTS.contains(previousUpper)) {
+                || SCHEMA_CONTEXTS.contains(previousUpper)
+                || CALL_CONTEXTS.contains(previousUpper)) {
             return true;
         }
         return prefix.length() >= 2;
@@ -426,7 +433,7 @@ public final class SqlAutocompleteEngine {
             out.add(suggestion(
                     insert, keyword, dialect + " keyword", Kind.KEYWORD, start, end, score + 10,
                     SqlCompletionDialect.isSpaceAfterKeyword(keyword),
-                    keyword + " — " + dialect + " keyword.", List.of()));
+                    SqlCompletionDialect.keywordDocumentation(keyword, dialect), List.of()));
         }
         if (only == null) {
             for (String phrase : SqlCompletionDialect.keywordPhrases(driver)) {
@@ -555,6 +562,30 @@ public final class SqlAutocompleteEngine {
                     table.name(), table.name(), kind, driver, style);
             out.add(suggestion(
                     insert, table.name(), detail, kind, start, end, score + boost, false,
+                    doc, List.of()));
+        }
+        return out;
+    }
+
+    private List<Suggestion> procedureSuggestions(String prefix, int start, int end) {
+        if (!cache.isReady()) {
+            return List.of();
+        }
+        List<Suggestion> out = new ArrayList<>();
+        ConnectionConfig.Driver driver = currentDialect();
+        for (SchemaNode procedure : cache.procedures(activeCatalog())) {
+            int score = matchScore(procedure.name(), prefix);
+            if (score < 0) {
+                continue;
+            }
+            String quoted = SqlCompletionHygiene.finalizeInsert(
+                    procedure.name(), procedure.name(), Kind.PROCEDURE, driver, style);
+            String insert = quoted + "()";
+            String catalog = procedure.metadata(SchemaNode.META_CATALOG);
+            String doc = "Procedure `" + procedure.name() + "`"
+                    + (catalog == null || catalog.isBlank() ? "" : " in " + catalog) + ".";
+            out.add(suggestion(
+                    insert, procedure.name(), "procedure", Kind.PROCEDURE, start, end, score + 90, false,
                     doc, List.of()));
         }
         return out;
