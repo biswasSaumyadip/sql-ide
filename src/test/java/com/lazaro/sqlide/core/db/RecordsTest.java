@@ -92,6 +92,13 @@ class RecordsTest {
         assertTrue(QueryResult.ofRows(List.of("id"), List.of(List.of("1")), 5L)
                 .successMessage()
                 .startsWith("Query OK"));
+
+        QueryResult truncated = QueryResult.ofRows(
+                List.of("id"), List.of(List.of("1"), List.of("2")), 8L, true);
+        assertTrue(truncated.truncated());
+        assertEquals("2+ rows in 8 ms (truncated)", truncated.summary());
+        assertTrue(truncated.truncationBanner().contains("Showing first 2 rows"));
+        assertTrue(truncated.successMessage().contains("first 2 rows"));
     }
 
     @Test

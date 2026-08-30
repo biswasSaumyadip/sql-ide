@@ -13,6 +13,7 @@ import com.lazaro.sqlide.core.explain.ExplainSql;
 import com.lazaro.sqlide.core.export.ResultExporter;
 import com.lazaro.sqlide.core.history.QueryHistoryStore;
 import com.lazaro.sqlide.core.snippets.SnippetStore;
+import com.lazaro.sqlide.ui.components.DynamicResultTable;
 import com.lazaro.sqlide.ui.components.EditorTabPane;
 import com.lazaro.sqlide.ui.components.QueryHistoryPane;
 import com.lazaro.sqlide.ui.components.QueryOutcomePane;
@@ -112,6 +113,9 @@ public final class MainController {
     private volatile boolean cancelling;
     private boolean sidebarCollapsed;
     private double expandedMainDivider = DEFAULT_MAIN_DIVIDER;
+    /** Last successfully-submitted script for results-toolbar refresh / auto-rerun. */
+    private List<String> lastRerunStatements = List.of();
+    private String lastRerunHistorySql = "";
 
     public MainController(DriverRegistry registry, WorkspaceState state) {
         this.registry = registry;
@@ -149,7 +153,10 @@ public final class MainController {
             SqlEditorPane editor = editors.activeEditor();
             return editor == null ? "" : editor.getEffectiveSql();
         });
-        outcome.setOnExportRequest(this::exportActiveResult);
+        outcome.setOnExportToFile(this::exportResultToFile);
+        outcome.setOnRefresh(this::rerunLastQuery);
+        outcome.setOnActionsChanged(this::updateActionStates);
+        outcome.setRefreshEnabled(false);
         editors.activeEditorProperty().addListener((observable, previous, current) -> bindCaret(current));
         bindCaret(editors.activeEditor());
 
@@ -263,6 +270,10 @@ public final class MainController {
         KeyCombination save = new KeyCodeCombination(KeyCode.S, KeyCombination.SHORTCUT_DOWN);
         KeyCombination connect = new KeyCodeCombination(KeyCode.K, KeyCombination.SHORTCUT_DOWN);
         KeyCombination refresh = new KeyCodeCombination(KeyCode.R, KeyCombination.SHORTCUT_DOWN);
+        KeyCombination copyTsv = new KeyCodeCombination(
+                KeyCode.C, KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN);
+        KeyCombination exportFile = new KeyCodeCombination(
+                KeyCode.X, KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN);
 
         scene.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
             if (run.match(event) || runAlt.match(event)) {
@@ -273,6 +284,10 @@ public final class MainController {
                 consumeAnd(event, () -> runExplain(true));
             } else if (explain.match(event)) {
                 consumeAnd(event, () -> runExplain(false));
+            } else if (copyTsv.match(event)) {
+                consumeAnd(event, () -> copyActiveResult(ResultExporter.Format.TSV));
+            } else if (exportFile.match(event)) {
+                consumeAnd(event, () -> exportActiveResult(false));
             } else if (toggleSidebar.match(event)) {
                 consumeAnd(event, this::toggleSidebar);
             } else if (newTab.match(event)) {
@@ -411,7 +426,11 @@ public final class MainController {
         schemaTree.setDriver(driver);
         schemaTree.clear();
         schemaCache.clear();
+        outcome.toolbar().stopAutoRefresh();
+        lastRerunStatements = List.of();
+        lastRerunHistorySql = "";
         outcome.clear();
+        outcome.setRefreshEnabled(false);
         statusBar.setDisconnected();
         autoCommitToggle.setSelected(state.autoCommit());
         updateActionStates();
@@ -498,6 +517,65 @@ public final class MainController {
         executeSql(null, false);
     }
 
+    /** Re-runs the last non-explain script from the results toolbar / auto-refresh. */
+    private void rerunLastQuery() {
+        if (lastRerunStatements.isEmpty()) {
+            return;
+        }
+        if (activeTask != null && activeTask.isRunning()) {
+            return;
+        }
+        DataSourceDriver active = driver;
+        if (!active.isConnected()) {
+            outcome.present(QueryResult.ofError("Not connected. Use Connect or New Connection first.", 0));
+            return;
+        }
+        cancelling = false;
+        setQueryRunning(true);
+        outcome.showLoading();
+        statusBar.setQueryRunning();
+        final List<String> toRun = lastRerunStatements;
+        final String historySql = lastRerunHistorySql;
+        Task<ScriptResult> task = new Task<>() {
+            @Override
+            protected ScriptResult call() throws Exception {
+                return active.executeScriptAsync(toRun).get();
+            }
+        };
+        activeTask = task;
+        task.setOnSucceeded(event -> {
+            activeTask = null;
+            cancelling = false;
+            setQueryRunning(false);
+            ScriptResult script = task.getValue();
+            outcome.presentScript(script, false);
+            statusBar.setScriptSummary(script.summary(), script.errorCount() > 0);
+            recordHistory(historySql, script);
+            historyPane.refresh();
+            syncTransactionStatus();
+            updateActionStates();
+        });
+        task.setOnFailed(event -> {
+            activeTask = null;
+            cancelling = false;
+            setQueryRunning(false);
+            QueryResult result = QueryResult.ofError(rootCauseMessage(task.getException()), 0);
+            outcome.present(result);
+            statusBar.setResult(result);
+            updateActionStates();
+        });
+        task.setOnCancelled(event -> {
+            activeTask = null;
+            cancelling = false;
+            setQueryRunning(false);
+            QueryResult result = QueryResult.ofError("Query cancelled", 0);
+            outcome.present(result);
+            statusBar.setResult(result);
+            updateActionStates();
+        });
+        backgroundTasks.execute(task);
+    }
+
     private void runExplain(boolean analyze) {
         executeSql(analyze, true);
     }
@@ -537,6 +615,9 @@ public final class MainController {
         if (analyze == null) {
             toRun = statements;
             historySql = String.join(";\n", statements);
+            lastRerunStatements = List.copyOf(statements);
+            lastRerunHistorySql = historySql;
+            outcome.setRefreshEnabled(true);
         } else {
             // Explain always targets the caret/selection as one statement.
             String one = editor.getEffectiveSql();
@@ -667,18 +748,43 @@ public final class MainController {
         historyStore.record(sql, script.summary(), script.errorCount() == 0, script.totalTimeMs());
     }
 
-    private void exportActiveResult() {
-        QueryResult result = outcome.activeResult();
+    private void copyActiveResult(ResultExporter.Format format) {
+        DynamicResultTable table = outcome.results();
+        boolean ok = switch (format) {
+            case CSV -> table.copyAsCsv();
+            case TSV -> table.copyAsTsv();
+            default -> false;
+        };
+        if (ok) {
+            QueryResult slice = table.exportableResult(true);
+            int rows = slice == null ? 0 : slice.rowCount();
+            String kind = format == ResultExporter.Format.CSV ? "CSV" : "TSV";
+            statusBar.setScriptSummary(
+                    "Copied " + rows + (rows == 1 ? " row" : " rows") + " as " + kind, false);
+        }
+    }
+
+    private void exportActiveResult(boolean selectionOnly) {
+        QueryResult slice = outcome.results().exportableResult(selectionOnly);
+        if (slice == null) {
+            return;
+        }
+        exportResultToFile(slice);
+    }
+
+    private void exportResultToFile(QueryResult result) {
         if (result == null || result.isError() || !result.isResultSet()) {
             return;
         }
         ChoiceDialog<ResultExporter.Format> formatDialog = new ChoiceDialog<>(
                 ResultExporter.Format.CSV,
                 ResultExporter.Format.CSV,
+                ResultExporter.Format.TSV,
                 ResultExporter.Format.JSON,
                 ResultExporter.Format.SQL_INSERT);
         formatDialog.setTitle("Export results");
-        formatDialog.setHeaderText("Choose an export format");
+        formatDialog.setHeaderText("Choose an export format (" + result.rowCount()
+                + (result.rowCount() == 1 ? " row" : " rows") + ")");
         formatDialog.setContentText("Format:");
         formatDialog.initOwner(owner());
         var format = formatDialog.showAndWait();
@@ -698,6 +804,7 @@ public final class MainController {
 
         String extension = switch (format.get()) {
             case CSV -> "*.csv";
+            case TSV -> "*.tsv";
             case JSON -> "*.json";
             case SQL_INSERT -> "*.sql";
         };
@@ -920,6 +1027,8 @@ public final class MainController {
         beginButton.setDisable(!txn || busy || manual);
         commitButton.setDisable(!manual || busy);
         rollbackButton.setDisable(!manual || busy);
+
+        outcome.setRefreshEnabled(!lastRerunStatements.isEmpty() && connected && !busy);
     }
 
     private void setConnecting(boolean connecting) {

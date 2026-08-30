@@ -33,5 +33,14 @@ class ResultExporterTest {
                 "INSERT INTO people (id, name) VALUES ('1', 'Ada');\n"
                         + "INSERT INTO people (id, name) VALUES ('2', NULL);\n",
                 inserts);
+
+        String tsv = ResultExporter.toTsv(result);
+        assertTrue(tsv.startsWith("id\tname"));
+        assertTrue(tsv.contains("1\tAda"));
+        assertTrue(tsv.contains("2\t"));
+
+        QueryResult selection = ResultExporter.subset(result, List.of(List.of("1", "Ada")));
+        assertEquals(1, selection.rowCount());
+        assertEquals("id,name\n1,Ada\n", ResultExporter.toCsv(selection));
     }
 }

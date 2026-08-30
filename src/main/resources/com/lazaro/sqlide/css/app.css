@@ -191,6 +191,120 @@
     -fx-stroke: #6ec6e0;
 }
 
+.icon-export {
+    -fx-stroke: #a4acb9;
+}
+
+.icon-pin {
+    -fx-stroke: #c8a25e;
+}
+
+/* ---------------------------------------------------------------- result toolbar */
+
+.result-toolbar {
+    -fx-background-color: #1e1f22;
+    -fx-border-color: transparent transparent #303237 transparent;
+    -fx-border-width: 0 0 1 0;
+    -fx-alignment: center-left;
+}
+
+.result-toolbar-title {
+    -fx-text-fill: #a4acb9;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-padding: 0 6px 0 0;
+}
+
+.result-toolbar-summary {
+    -fx-text-fill: #7f848e;
+    -fx-font-size: 11px;
+    -fx-padding: 0 2px 0 8px;
+}
+
+.result-toolbar-separator {
+    -fx-padding: 0 4px;
+}
+
+.result-toolbar-separator .line {
+    -fx-border-color: transparent #454951 transparent transparent;
+    -fx-border-width: 0 1 0 0;
+}
+
+/* Flat IDE controls: transparent until hover / press / selected. */
+.result-toolbar .button,
+.result-toolbar .toggle-button,
+.result-toolbar .menu-button {
+    -fx-background-color: transparent;
+    -fx-background-radius: 4px;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-padding: 3px 6px;
+    -fx-cursor: hand;
+}
+
+.result-toolbar .button:hover,
+.result-toolbar .toggle-button:hover,
+.result-toolbar .menu-button:hover {
+    -fx-background-color: #2b2d31;
+}
+
+.result-toolbar .button:pressed,
+.result-toolbar .toggle-button:pressed,
+.result-toolbar .menu-button:pressed {
+    -fx-background-color: #32353c;
+}
+
+.result-toolbar .toggle-button:selected {
+    -fx-background-color: #2f5d8c;
+}
+
+.result-toolbar .toggle-button:selected:hover {
+    -fx-background-color: derive(#2f5d8c, 8%);
+}
+
+.result-toolbar .button:disabled,
+.result-toolbar .toggle-button:disabled,
+.result-toolbar .menu-button:disabled {
+    -fx-opacity: 0.38;
+}
+
+.result-toolbar-icon-button {
+    -fx-min-width: 26px;
+    -fx-min-height: 26px;
+    -fx-pref-width: 26px;
+    -fx-pref-height: 26px;
+    -fx-padding: 4px;
+}
+
+.result-toolbar .menu-button > .label {
+    -fx-text-fill: #d6d9de;
+    -fx-font-size: 11px;
+}
+
+.result-toolbar .menu-button > .arrow-button {
+    -fx-padding: 0 2px 0 4px;
+}
+
+.result-toolbar .menu-button > .arrow-button > .arrow {
+    -fx-background-color: #8b93a1;
+    -fx-shape: "M 0 0 L 4 4 L 8 0 Z";
+    -fx-scale-shape: true;
+    -fx-pref-width: 7px;
+    -fx-pref-height: 4px;
+}
+
+.icon-clear {
+    -fx-stroke: #a4acb9;
+}
+
+.result-tab-pinned {
+    -fx-opacity: 1.0;
+}
+
+.result-tab-pinned .tab-label {
+    -fx-text-fill: #e0c06a;
+}
+
 /* ---------------------------------------------------------------- sidebar */
 
 .sidebar {
@@ -677,6 +791,14 @@
 
 .query-error-action:hover {
     -fx-background-color: #3a2a2d;
+}
+
+.result-truncation-banner {
+    -fx-background-color: #2a2618;
+    -fx-border-color: transparent transparent #5c4e2a transparent;
+    -fx-border-width: 0 0 1 0;
+    -fx-text-fill: #e0c06a;
+    -fx-font-size: 12px;
 }
 
 /* ---------------------------------------------------------------- split panes */

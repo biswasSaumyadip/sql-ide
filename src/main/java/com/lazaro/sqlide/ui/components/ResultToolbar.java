@@ -1,0 +1,269 @@
+package com.lazaro.sqlide.ui.components;
+
+import atlantafx.base.theme.Styles;
+import com.lazaro.sqlide.core.db.QueryResult;
+import com.lazaro.sqlide.ui.Icons;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
+import javafx.geometry.Insets;
+import javafx.geometry.Orientation;
+import javafx.geometry.Pos;
+import javafx.scene.control.Button;
+import javafx.scene.control.Label;
+import javafx.scene.control.MenuButton;
+import javafx.scene.control.MenuItem;
+import javafx.scene.control.Separator;
+import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.control.ToggleButton;
+import javafx.scene.control.Tooltip;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
+import javafx.util.Duration;
+
+import java.util.Objects;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+
+/**
+ * Sleek DataGrip-style action bar above the result tabs.
+ */
+public final class ResultToolbar extends HBox {
+
+    public enum AutoRefreshInterval {
+        OFF("Off", 0),
+        SEC_5("5s", 5),
+        SEC_10("10s", 10),
+        MIN_1("60s", 60);
+
+        private final String label;
+        private final int seconds;
+
+        AutoRefreshInterval(String label, int seconds) {
+            this.label = label;
+            this.seconds = seconds;
+        }
+
+        public int seconds() {
+            return seconds;
+        }
+
+        public String menuLabel() {
+            return label;
+        }
+    }
+
+    private final MenuButton exportButton = new MenuButton("Export", Icons.export());
+    private final ToggleButton pinButton = new ToggleButton();
+    private final Button refreshButton = new Button();
+    private final Button clearButton = new Button();
+    private final MenuButton autoRefreshButton = new MenuButton();
+    private final Label summaryLabel = new Label();
+
+    private final Timeline autoRefreshTimeline = new Timeline();
+    private AutoRefreshInterval autoRefreshInterval = AutoRefreshInterval.OFF;
+
+    private Runnable onRefresh = () -> { };
+    private Runnable onClear = () -> { };
+    private Runnable onTogglePin = () -> { };
+    private Consumer<QueryResult> onExportToFile = result -> { };
+    private Supplier<DynamicResultTable> tableSupplier = () -> null;
+
+    public ResultToolbar() {
+        getStyleClass().add("result-toolbar");
+        setAlignment(Pos.CENTER_LEFT);
+        setSpacing(4);
+        setPadding(new Insets(4, 8, 4, 8));
+
+        Label title = new Label("Results");
+        title.getStyleClass().add("result-toolbar-title");
+
+        buildExportMenu();
+        exportButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-button");
+        exportButton.setTooltip(new Tooltip("Export results (Ctrl+Shift+C / Ctrl+Shift+X)"));
+
+        pinButton.setGraphic(Icons.pin());
+        pinButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-icon-button");
+        pinButton.setTooltip(new Tooltip("Pin current result tab"));
+        pinButton.setOnAction(event -> onTogglePin.run());
+
+        refreshButton.setGraphic(Icons.refresh());
+        refreshButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-icon-button");
+        refreshButton.setTooltip(new Tooltip("Re-run last query now"));
+        refreshButton.setOnAction(event -> onRefresh.run());
+
+        clearButton.setGraphic(Icons.clear());
+        clearButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-icon-button");
+        clearButton.setTooltip(new Tooltip("Clear unpinned result tabs"));
+        clearButton.setOnAction(event -> onClear.run());
+
+        buildAutoRefreshMenu();
+        autoRefreshButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-button");
+        autoRefreshButton.setTooltip(new Tooltip("Automatically re-run the last query on an interval"));
+        updateAutoRefreshLabel();
+
+        summaryLabel.getStyleClass().add("result-toolbar-summary");
+        summaryLabel.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(summaryLabel, Priority.ALWAYS);
+
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        getChildren().addAll(
+                title,
+                subtleSeparator(),
+                exportButton,
+                pinButton,
+                refreshButton,
+                clearButton,
+                subtleSeparator(),
+                autoRefreshButton,
+                spacer,
+                summaryLabel);
+
+        autoRefreshTimeline.setCycleCount(Timeline.INDEFINITE);
+        setActionsEnabled(false);
+    }
+
+    public void setTableSupplier(Supplier<DynamicResultTable> tableSupplier) {
+        this.tableSupplier = tableSupplier == null ? () -> null : tableSupplier;
+    }
+
+    public void setOnExportToFile(Consumer<QueryResult> action) {
+        this.onExportToFile = action == null ? result -> { } : action;
+    }
+
+    public void setOnRefresh(Runnable action) {
+        this.onRefresh = action == null ? () -> { } : action;
+    }
+
+    public void setOnClear(Runnable action) {
+        this.onClear = action == null ? () -> { } : action;
+    }
+
+    public void setOnTogglePin(Runnable action) {
+        this.onTogglePin = action == null ? () -> { } : action;
+    }
+
+    public void setPinnedSelected(boolean pinned) {
+        pinButton.setSelected(pinned);
+    }
+
+    public void setSummary(String text) {
+        summaryLabel.setText(Objects.requireNonNullElse(text, ""));
+    }
+
+    public void setActionsEnabled(boolean enabled) {
+        exportButton.setDisable(!enabled);
+        pinButton.setDisable(!enabled);
+        clearButton.setDisable(!enabled);
+    }
+
+    public void setRefreshEnabled(boolean enabled) {
+        refreshButton.setDisable(!enabled);
+        autoRefreshButton.setDisable(!enabled);
+        if (!enabled && autoRefreshInterval != AutoRefreshInterval.OFF) {
+            // Keep selection label but pause ticking while refresh is unavailable.
+            autoRefreshTimeline.stop();
+        } else if (enabled && autoRefreshInterval.seconds() > 0) {
+            applyAutoRefresh(autoRefreshInterval);
+        }
+    }
+
+    public AutoRefreshInterval autoRefreshInterval() {
+        return autoRefreshInterval;
+    }
+
+    public void stopAutoRefresh() {
+        autoRefreshInterval = AutoRefreshInterval.OFF;
+        autoRefreshTimeline.stop();
+        autoRefreshTimeline.getKeyFrames().clear();
+        updateAutoRefreshLabel();
+    }
+
+    public boolean copyAsTsv() {
+        DynamicResultTable table = tableSupplier.get();
+        return table != null && table.copyAsTsv();
+    }
+
+    public boolean copyAsCsv() {
+        DynamicResultTable table = tableSupplier.get();
+        return table != null && table.copyAsCsv();
+    }
+
+    private void buildExportMenu() {
+        MenuItem copyTsv = new MenuItem("Copy as TSV");
+        copyTsv.setOnAction(event -> copyAsTsv());
+
+        MenuItem copyCsv = new MenuItem("Copy as CSV");
+        copyCsv.setOnAction(event -> copyAsCsv());
+
+        MenuItem exportAll = new MenuItem("Export all to File\u2026");
+        exportAll.setOnAction(event -> exportSlice(false));
+
+        MenuItem exportSelection = new MenuItem("Export selection to File\u2026");
+        exportSelection.setOnAction(event -> exportSlice(true));
+
+        exportButton.getItems().setAll(copyTsv, copyCsv, new SeparatorMenuItem(), exportAll, exportSelection);
+        exportButton.setOnShowing(event -> {
+            DynamicResultTable table = tableSupplier.get();
+            boolean ready = table != null && table.hasExportableResult();
+            boolean selection = table != null && table.hasRowSelection();
+            copyTsv.setDisable(!ready);
+            copyCsv.setDisable(!ready);
+            exportAll.setDisable(!ready);
+            exportSelection.setDisable(!ready || !selection);
+            copyTsv.setText(selection ? "Copy selection as TSV" : "Copy as TSV");
+            copyCsv.setText(selection ? "Copy selection as CSV" : "Copy as CSV");
+        });
+    }
+
+    private void buildAutoRefreshMenu() {
+        for (AutoRefreshInterval interval : AutoRefreshInterval.values()) {
+            MenuItem item = new MenuItem(interval == AutoRefreshInterval.OFF
+                    ? "Off"
+                    : interval.menuLabel());
+            item.setOnAction(event -> {
+                autoRefreshInterval = interval;
+                updateAutoRefreshLabel();
+                applyAutoRefresh(interval);
+            });
+            autoRefreshButton.getItems().add(item);
+        }
+    }
+
+    private void updateAutoRefreshLabel() {
+        autoRefreshButton.setText("Auto: " + autoRefreshInterval.menuLabel());
+    }
+
+    private void exportSlice(boolean selectionOnly) {
+        DynamicResultTable table = tableSupplier.get();
+        if (table == null) {
+            return;
+        }
+        QueryResult slice = table.exportableResult(selectionOnly);
+        if (slice != null) {
+            onExportToFile.accept(slice);
+        }
+    }
+
+    private void applyAutoRefresh(AutoRefreshInterval interval) {
+        autoRefreshTimeline.stop();
+        autoRefreshTimeline.getKeyFrames().clear();
+        if (interval == null || interval.seconds() <= 0) {
+            return;
+        }
+        autoRefreshTimeline.getKeyFrames().add(new KeyFrame(
+                Duration.seconds(interval.seconds()),
+                event -> onRefresh.run()));
+        autoRefreshTimeline.playFromStart();
+    }
+
+    private static Separator subtleSeparator() {
+        Separator separator = new Separator(Orientation.VERTICAL);
+        separator.getStyleClass().add("result-toolbar-separator");
+        separator.setOpacity(0.5);
+        separator.setMaxHeight(16);
+        return separator;
+    }
+}

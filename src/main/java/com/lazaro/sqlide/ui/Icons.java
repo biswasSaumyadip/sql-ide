@@ -229,6 +229,36 @@ public final class Icons {
         return group(body, shutter, label);
     }
 
+    /** Tray with a downward arrow for Export. */
+    public static Node export() {
+        Line shaft = outlined(new Line(7, 2.0, 7, 8.5), "icon-export");
+        Polygon head = new Polygon(4.0, 7.0, 7.0, 11.0, 10.0, 7.0);
+        head.setFill(null);
+        head.setStrokeWidth(STROKE);
+        head.getStyleClass().addAll(BASE_CLASS, "icon-export");
+        Line tray = outlined(new Line(2.5, 12.0, 11.5, 12.0), "icon-export");
+        return group(shaft, head, tray);
+    }
+
+    /** Pushpin for pinning a result tab. */
+    public static Node pin() {
+        Line shaft = outlined(new Line(7, 8.5, 7, 12.5), "icon-pin");
+        Ellipse head = outlined(new Ellipse(7, 5.5, 3.2, 2.6), "icon-pin");
+        Line arm = outlined(new Line(4.0, 5.5, 10.0, 5.5), "icon-pin");
+        return group(head, arm, shaft);
+    }
+
+    /** Trash / clear glyph for clearing result tabs. */
+    public static Node clear() {
+        Line lid = outlined(new Line(3.5, 4.5, 10.5, 4.5), "icon-clear");
+        Line handle = outlined(new Line(5.5, 3.0, 8.5, 3.0), "icon-clear");
+        Rectangle body = outlined(new Rectangle(4.0, 5.0, 6.0, 7.5), "icon-clear");
+        body.setArcWidth(1.5);
+        body.setArcHeight(1.5);
+        Line crease = outlined(new Line(7.0, 6.5, 7.0, 10.5), "icon-clear");
+        return group(lid, handle, body, crease);
+    }
+
     /** Funnel glyph for the schema-filter toolbar action. */
     public static Node schemaFilter() {
         Polygon funnel = new Polygon(

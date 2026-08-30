@@ -272,7 +272,8 @@ public final class JdbcSqlDriver implements DataSourceDriver {
                 executing = true;
             }
 
-            statement.setMaxRows(MAX_ROWS);
+            // Allow one extra row so ResultSetMapper can detect truncation.
+            statement.setMaxRows(MAX_ROWS + 1);
             boolean producedResultSet = statement.execute(sql);
 
             if (producedResultSet) {

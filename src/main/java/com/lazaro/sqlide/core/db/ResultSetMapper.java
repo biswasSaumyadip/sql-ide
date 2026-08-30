@@ -39,15 +39,18 @@ public final class ResultSetMapper {
         int columnCount = metaData.getColumnCount();
         List<String> columnNames = columnLabels(metaData, columnCount);
 
+        int limit = Math.max(0, maxRows);
         List<List<String>> rows = new ArrayList<>();
-        while (rows.size() < maxRows && resultSet.next()) {
+        while (rows.size() < limit && resultSet.next()) {
             List<String> row = new ArrayList<>(columnCount);
             for (int i = 1; i <= columnCount; i++) {
                 row.add(stringify(resultSet, i));
             }
             rows.add(row);
         }
-        return QueryResult.ofRows(columnNames, rows, elapsedMs(startNanos));
+        // Peek one past the cap so the UI can warn that more rows exist.
+        boolean truncated = limit > 0 && rows.size() == limit && resultSet.next();
+        return QueryResult.ofRows(columnNames, rows, elapsedMs(startNanos), truncated);
     }
 
     private static List<String> columnLabels(ResultSetMetaData metaData, int columnCount) throws SQLException {

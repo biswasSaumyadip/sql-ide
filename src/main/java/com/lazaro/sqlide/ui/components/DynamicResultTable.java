@@ -3,6 +3,7 @@ package com.lazaro.sqlide.ui.components;
 import com.lazaro.sqlide.core.db.JdbcSqlDriver;
 import com.lazaro.sqlide.core.db.QueryResult;
 import com.lazaro.sqlide.core.db.ResultSetMapper;
+import com.lazaro.sqlide.core.export.ResultExporter;
 import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.collections.FXCollections;
@@ -12,14 +13,22 @@ import javafx.css.PseudoClass;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
+import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
+import javafx.scene.control.TablePosition;
 import javafx.scene.control.TableView;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Grid that shapes itself around whatever a query returns, building its columns
@@ -42,7 +51,7 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
 
     private final Label placeholder = new Label(PLACEHOLDER_IDLE);
     private QueryResult currentResult;
-    private Runnable onExportRequest = () -> { };
+    private Consumer<QueryResult> onExportToFile = result -> { };
 
     public DynamicResultTable() {
         getStyleClass().add("result-table");
@@ -61,15 +70,68 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
         setContextMenu(buildExportMenu());
     }
 
-    public void setOnExportRequest(Runnable action) {
-        this.onExportRequest = action == null ? () -> { } : action;
+    /** Opens a save dialog for the given slice (selection or full result). */
+    public void setOnExportToFile(Consumer<QueryResult> action) {
+        this.onExportToFile = action == null ? result -> { } : action;
     }
 
     public QueryResult currentResult() {
         return currentResult;
     }
 
-    // ---------------------------------------------------------------- public API
+    public boolean hasExportableResult() {
+        return currentResult != null && !currentResult.isError() && currentResult.isResultSet();
+    }
+
+    public boolean hasRowSelection() {
+        return !selectedRowIndices().isEmpty();
+    }
+
+    /**
+     * Result to export/copy. When {@code preferSelection} is true and cells are
+     * selected, returns only those rows; otherwise the full grid.
+     */
+    public QueryResult exportableResult(boolean preferSelection) {
+        if (!hasExportableResult()) {
+            return null;
+        }
+        if (preferSelection) {
+            Set<Integer> indices = selectedRowIndices();
+            if (!indices.isEmpty()) {
+                List<List<String>> rows = new ArrayList<>(indices.size());
+                for (int index : indices) {
+                    if (index >= 0 && index < currentResult.rows().size()) {
+                        rows.add(currentResult.rows().get(index));
+                    }
+                }
+                if (!rows.isEmpty()) {
+                    return ResultExporter.subset(currentResult, rows);
+                }
+            }
+        }
+        return currentResult;
+    }
+
+    /** Copies TSV to the clipboard (selection if any, otherwise all rows). */
+    public boolean copyAsTsv() {
+        return copyFormatted(ResultExporter.Format.TSV);
+    }
+
+    public boolean copyAsCsv() {
+        return copyFormatted(ResultExporter.Format.CSV);
+    }
+
+    private boolean copyFormatted(ResultExporter.Format format) {
+        QueryResult slice = exportableResult(true);
+        if (slice == null) {
+            return false;
+        }
+        String text = ResultExporter.export(slice, format, null);
+        ClipboardContent content = new ClipboardContent();
+        content.putString(text);
+        Clipboard.getSystemClipboard().setContent(content);
+        return true;
+    }
 
     /**
      * Renders an already-drained result. Must be called on the JavaFX Application
@@ -140,15 +202,52 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
         placeholder.setText(Objects.requireNonNullElse(message, PLACEHOLDER_IDLE));
     }
 
-    // ---------------------------------------------------------------- internals
-
     private ContextMenu buildExportMenu() {
-        MenuItem export = new MenuItem("Export results\u2026");
-        export.setOnAction(event -> onExportRequest.run());
-        ContextMenu menu = new ContextMenu(export);
-        menu.setOnShowing(event -> export.setDisable(
-                currentResult == null || currentResult.isError() || !currentResult.isResultSet()));
+        MenuItem copyTsv = new MenuItem("Copy as TSV");
+        copyTsv.setOnAction(event -> copyAsTsv());
+
+        MenuItem copyCsv = new MenuItem("Copy as CSV");
+        copyCsv.setOnAction(event -> copyAsCsv());
+
+        MenuItem exportAll = new MenuItem("Export all to File\u2026");
+        exportAll.setOnAction(event -> {
+            QueryResult slice = exportableResult(false);
+            if (slice != null) {
+                onExportToFile.accept(slice);
+            }
+        });
+
+        MenuItem exportSelection = new MenuItem("Export selection to File\u2026");
+        exportSelection.setOnAction(event -> {
+            QueryResult slice = exportableResult(true);
+            if (slice != null) {
+                onExportToFile.accept(slice);
+            }
+        });
+
+        ContextMenu menu = new ContextMenu(copyTsv, copyCsv, new SeparatorMenuItem(), exportAll, exportSelection);
+        menu.setOnShowing(event -> {
+            boolean ready = hasExportableResult();
+            boolean selection = hasRowSelection();
+            copyTsv.setDisable(!ready);
+            copyCsv.setDisable(!ready);
+            exportAll.setDisable(!ready);
+            exportSelection.setDisable(!ready || !selection);
+            copyTsv.setText(selection ? "Copy selection as TSV" : "Copy as TSV");
+            copyCsv.setText(selection ? "Copy selection as CSV" : "Copy as CSV");
+        });
         return menu;
+    }
+
+    private Set<Integer> selectedRowIndices() {
+        Set<Integer> indices = new LinkedHashSet<>();
+        for (TablePosition<?, ?> position : getSelectionModel().getSelectedCells()) {
+            int row = position.getRow();
+            if (row >= 0) {
+                indices.add(row);
+            }
+        }
+        return indices;
     }
 
     private void buildColumns(QueryResult result) {
@@ -172,10 +271,6 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
         }
     }
 
-    /**
-     * Ordinal column. Derived from the cell index rather than a lookup in the item
-     * list, which would be quadratic over a thousand rows.
-     */
     private TableColumn<ObservableList<String>, Void> rowNumberColumn() {
         TableColumn<ObservableList<String>, Void> column = new TableColumn<>("#");
         column.setSortable(false);
@@ -214,7 +309,6 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
                 .toExternalForm();
     }
 
-    /** Renders SQL NULL as a muted literal so it cannot be confused with an empty string. */
     private static final class ValueCell extends TableCell<ObservableList<String>, String> {
 
         private static final String NULL_STYLE_CLASS = "null-value";
