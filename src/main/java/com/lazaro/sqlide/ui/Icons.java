@@ -31,7 +31,8 @@ public final class Icons {
 
     public static Node forNode(SchemaNode node) {
         return switch (node.type()) {
-            case DATA_SOURCE, DATABASE, SCHEMA -> database();
+            case DATA_SOURCE -> database();
+            case DATABASE, SCHEMA -> schema();
             case TABLE -> table();
             case VIEW -> view();
             case COLUMN -> node.metadataFlag(SchemaNode.META_PRIMARY_KEY) ? primaryKeyColumn() : column();
@@ -44,6 +45,21 @@ public final class Icons {
         Ellipse middle = outlined(new Ellipse(7, 7, 5.5, 2.2), "icon-database");
         Ellipse bottom = outlined(new Ellipse(7, 10.5, 5.5, 2.2), "icon-database");
         return group(top, middle, bottom);
+    }
+
+    /**
+     * Folder glyph for a schema/namespace — distinct from the database cylinder stack.
+     */
+    public static Node schema() {
+        // Tab
+        Rectangle tab = outlined(new Rectangle(2.0, 3.0, 4.5, 2.2), "icon-schema");
+        tab.setArcWidth(1.5);
+        tab.setArcHeight(1.5);
+        // Body
+        Rectangle body = outlined(new Rectangle(2.0, 5.0, 10.0, 7.0), "icon-schema");
+        body.setArcWidth(1.5);
+        body.setArcHeight(1.5);
+        return group(tab, body);
     }
 
     /** A grid: outer frame plus one row and one column rule. */

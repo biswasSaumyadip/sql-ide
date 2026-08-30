@@ -159,6 +159,10 @@
     -fx-stroke: #6aa9e0;
 }
 
+.icon-schema {
+    -fx-stroke: #9b7ed9;
+}
+
 .icon-table {
     -fx-stroke: #8fbf7f;
 }
