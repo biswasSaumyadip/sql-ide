@@ -234,7 +234,8 @@ public final class QueryOutcomePane extends VBox {
     private void syncToolbarState() {
         Tab selected = resultTabs.getSelectionModel().getSelectedItem();
         boolean hasPage = selected != null && selected.getContent() instanceof ResultPage;
-        toolbar.setActionsEnabled(hasPage);
+        DynamicResultTable table = hasPage ? ((ResultPage) selected.getContent()).table() : null;
+        toolbar.bindActiveTable(table, hasPage);
         toolbar.setPinnedSelected(isPinned(selected));
         if (hasPage) {
             ResultPage page = (ResultPage) selected.getContent();

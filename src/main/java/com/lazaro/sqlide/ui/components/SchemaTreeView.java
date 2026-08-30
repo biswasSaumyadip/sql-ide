@@ -1038,8 +1038,10 @@ public final class SchemaTreeView extends VBox {
                 event.consume();
             });
             left.setAlignment(Pos.CENTER_LEFT);
+            left.getStyleClass().add("tree-cell-graphic");
             BorderPane.setAlignment(schemaBadge, Pos.CENTER_RIGHT);
             layout.setLeft(left);
+            layout.getStyleClass().add("tree-cell-graphic");
         }
 
         @Override

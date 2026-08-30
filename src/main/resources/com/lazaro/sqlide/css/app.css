@@ -207,16 +207,10 @@
 
 .result-toolbar {
     -fx-background-color: #1e1f22;
-    -fx-border-color: transparent transparent #303237 transparent;
-    -fx-border-width: 0 0 1 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
     -fx-alignment: center-left;
-}
-
-.result-toolbar-title {
-    -fx-text-fill: #a4acb9;
-    -fx-font-size: 11px;
-    -fx-font-weight: bold;
-    -fx-padding: 0 6px 0 0;
+    -fx-padding: 3px 8px 2px 8px;
 }
 
 .result-toolbar-summary {
@@ -296,6 +290,15 @@
     -fx-scale-shape: true;
     -fx-pref-width: 7px;
     -fx-pref-height: 4px;
+}
+
+.export-menu-button {
+    -fx-padding: 2px 6px;
+    -fx-graphic-text-gap: 4px;
+}
+
+.export-menu-button > .arrow-button {
+    -fx-padding: 0 2px 0 2px;
 }
 
 .icon-clear {
@@ -699,24 +702,39 @@
 .schema-tree {
     -fx-background-color: transparent;
     -fx-border-width: 0;
+    -fx-padding: 0;
 }
 
 .schema-tree .tree-cell {
     -fx-background-color: transparent;
-    -fx-background-radius: 4px;
-    -fx-padding: 2px 4px;
+    -fx-background-radius: 0;
+    -fx-background-insets: 0;
+    -fx-border-width: 0;
+    -fx-padding: 2px 6px;
 }
 
 .schema-tree .tree-cell:hover {
     -fx-background-color: #262a32;
+    -fx-background-radius: 0;
+    -fx-background-insets: 0;
 }
 
-.schema-tree .tree-cell:selected {
+.schema-tree .tree-cell:selected,
+.schema-tree .tree-cell:focused:selected {
     -fx-background-color: #2f5d8c;
+    -fx-background-radius: 0;
+    -fx-background-insets: 0;
+    -fx-border-width: 0;
 }
 
 .schema-tree .tree-cell:selected:hover {
     -fx-background-color: derive(#2f5d8c, 8%);
+    -fx-background-radius: 0;
+    -fx-background-insets: 0;
+}
+
+.schema-tree .tree-cell .tree-cell-graphic {
+    -fx-padding: 0 4px 0 0;
 }
 
 .schema-tree .tree-cell:selected .schema-node-name,
@@ -844,16 +862,29 @@
 
 .query-outcome-pane {
     -fx-background-color: #17181b;
+    -fx-spacing: 0;
+    -fx-padding: 0;
 }
 
 .result-tabs {
     -fx-background-color: #17181b;
 }
 
+/* Same chrome as .result-toolbar so the strip + tab headers read as one bar. */
+.result-tabs > .tab-header-area {
+    -fx-padding: 0;
+    -fx-background-insets: 0;
+}
+
 .result-tabs > .tab-header-area .tab-header-background {
     -fx-background-color: #1e1f22;
-    -fx-border-color: transparent transparent #303237 transparent;
-    -fx-border-width: 0 0 1 0;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
+    -fx-background-insets: 0;
+}
+
+.result-tabs > .tab-header-area .headers-region {
+    -fx-padding: 0;
 }
 
 .result-tabs .tab {
@@ -877,6 +908,13 @@
     -fx-text-fill: #e06c75;
 }
 
+/* Content below the connected toolbar + tab-header chrome. */
+.result-tabs > .tab-content-area {
+    -fx-border-color: #303237 transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+    -fx-padding: 0;
+}
+
 .explain-plan-tree {
     -fx-background-color: #17181b;
     -fx-border-width: 0;
@@ -885,16 +923,24 @@
 
 .explain-plan-tree .tree-cell {
     -fx-background-color: transparent;
-    -fx-background-radius: 4px;
+    -fx-background-radius: 0;
+    -fx-background-insets: 0;
+    -fx-border-width: 0;
     -fx-padding: 3px 6px;
 }
 
 .explain-plan-tree .tree-cell:hover {
     -fx-background-color: #262a32;
+    -fx-background-radius: 0;
+    -fx-background-insets: 0;
 }
 
-.explain-plan-tree .tree-cell:selected {
+.explain-plan-tree .tree-cell:selected,
+.explain-plan-tree .tree-cell:focused:selected {
     -fx-background-color: #2f5d8c;
+    -fx-background-radius: 0;
+    -fx-background-insets: 0;
+    -fx-border-width: 0;
 }
 
 .explain-node-label {
@@ -1137,8 +1183,9 @@
 
 .context-menu .menu-item,
 .menu-popup .menu-item,
-.schema-context-menu .menu-item {
-    -fx-padding: 6px 12px;
+.schema-context-menu .menu-item,
+.export-menu-button .menu-item {
+    -fx-padding: 4px 12px;
     -fx-background-radius: 4px;
 }
 

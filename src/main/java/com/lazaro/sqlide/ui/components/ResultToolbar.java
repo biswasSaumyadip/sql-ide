@@ -5,6 +5,11 @@ import com.lazaro.sqlide.core.db.QueryResult;
 import com.lazaro.sqlide.ui.Icons;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
+import javafx.beans.binding.Bindings;
+import javafx.beans.binding.BooleanBinding;
+import javafx.beans.value.ChangeListener;
+import javafx.collections.ListChangeListener;
+import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
@@ -76,17 +81,19 @@ public final class ResultToolbar extends HBox {
     private Consumer<QueryResult> onExportToFile = result -> { };
     private Supplier<DynamicResultTable> tableSupplier = () -> null;
 
+    private DynamicResultTable boundTable;
+    private BooleanBinding tableEmptyBinding;
+    private ListChangeListener<ObservableList<String>> itemsListener;
+    private ChangeListener<ObservableList<ObservableList<String>>> itemsPropertyListener;
+
     public ResultToolbar() {
         getStyleClass().add("result-toolbar");
         setAlignment(Pos.CENTER_LEFT);
         setSpacing(2);
-        setPadding(new Insets(4, 8, 4, 8));
-
-        Label title = new Label("Results");
-        title.getStyleClass().add("result-toolbar-title");
+        setPadding(new Insets(3, 8, 0, 8));
 
         buildExportMenu();
-        exportButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-button");
+        exportButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-button", "export-menu-button");
         exportButton.setGraphicTextGap(4);
         exportButton.setTooltip(new Tooltip("Export results (Ctrl+Shift+C / Ctrl+Shift+X)"));
 
@@ -152,8 +159,6 @@ public final class ResultToolbar extends HBox {
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
         getChildren().addAll(
-                title,
-                subtleSeparator(),
                 exportButton,
                 copyButton,
                 findButton,
@@ -170,7 +175,7 @@ public final class ResultToolbar extends HBox {
                 summaryLabel);
 
         autoRefreshTimeline.setCycleCount(Timeline.INDEFINITE);
-        setActionsEnabled(false);
+        bindActiveTable(null, false);
         setViewToggleAvailable(false, false);
     }
 
@@ -215,17 +220,26 @@ public final class ResultToolbar extends HBox {
         summaryLabel.setText(Objects.requireNonNullElse(text, ""));
     }
 
-    public void setActionsEnabled(boolean enabled) {
-        exportButton.setDisable(!enabled);
-        copyButton.setDisable(!enabled);
-        findButton.setDisable(!enabled);
-        fitColumnsButton.setDisable(!enabled);
-        pinButton.setDisable(!enabled);
-        clearButton.setDisable(!enabled);
-        if (!enabled) {
-            toggleFindBar(false);
-            findButton.setSelected(false);
+    /**
+     * Rebinds data-dependent controls to the active result grid. Call whenever the
+     * selected result tab changes so empty/idle tabs disable Export / Find / etc.
+     */
+    public void bindActiveTable(DynamicResultTable table, boolean hasPage) {
+        detachTableListeners();
+        unbindDataActions();
+        this.boundTable = table;
+
+        pinButton.setDisable(!hasPage);
+        clearButton.setDisable(!hasPage);
+
+        if (table == null || !hasPage) {
+            setDataActionsDisabled(true);
+            closeFindIfNeeded();
+            return;
         }
+
+        bindEmptyState(table);
+        attachItemsListeners(table);
     }
 
     public void setRefreshEnabled(boolean enabled) {
@@ -278,6 +292,97 @@ public final class ResultToolbar extends HBox {
         return table != null && table.copyAsCsv();
     }
 
+    private void bindEmptyState(DynamicResultTable table) {
+        unbindDataActions();
+        tableEmptyBinding = Bindings.createBooleanBinding(
+                () -> isTableDataEmpty(table),
+                table.itemsProperty(),
+                table.getItems());
+        exportButton.disableProperty().bind(tableEmptyBinding);
+        copyButton.disableProperty().bind(tableEmptyBinding);
+        findButton.disableProperty().bind(tableEmptyBinding);
+        fitColumnsButton.disableProperty().bind(tableEmptyBinding);
+        if (tableEmptyBinding.get()) {
+            closeFindIfNeeded();
+        }
+        tableEmptyBinding.addListener((observable, wasEmpty, isEmpty) -> {
+            if (Boolean.TRUE.equals(isEmpty)) {
+                closeFindIfNeeded();
+            }
+        });
+    }
+
+    private void attachItemsListeners(DynamicResultTable table) {
+        itemsListener = change -> {
+            if (tableEmptyBinding != null) {
+                tableEmptyBinding.invalidate();
+            }
+        };
+        itemsPropertyListener = (observable, previous, next) -> {
+            if (previous != null && itemsListener != null) {
+                previous.removeListener(itemsListener);
+            }
+            if (next != null && itemsListener != null) {
+                next.addListener(itemsListener);
+            }
+            // List instance swapped via setItems — rebuild the binding dependencies.
+            bindEmptyState(table);
+        };
+        table.itemsProperty().addListener(itemsPropertyListener);
+        ObservableList<ObservableList<String>> items = table.getItems();
+        if (items != null) {
+            items.addListener(itemsListener);
+        }
+    }
+
+    private void detachTableListeners() {
+        if (boundTable != null) {
+            if (itemsPropertyListener != null) {
+                boundTable.itemsProperty().removeListener(itemsPropertyListener);
+            }
+            if (itemsListener != null) {
+                ObservableList<ObservableList<String>> items = boundTable.getItems();
+                if (items != null) {
+                    items.removeListener(itemsListener);
+                }
+            }
+        }
+        itemsListener = null;
+        itemsPropertyListener = null;
+        boundTable = null;
+    }
+
+    private void unbindDataActions() {
+        exportButton.disableProperty().unbind();
+        copyButton.disableProperty().unbind();
+        findButton.disableProperty().unbind();
+        fitColumnsButton.disableProperty().unbind();
+        if (tableEmptyBinding != null) {
+            tableEmptyBinding.dispose();
+            tableEmptyBinding = null;
+        }
+    }
+
+    private void setDataActionsDisabled(boolean disabled) {
+        exportButton.setDisable(disabled);
+        copyButton.setDisable(disabled);
+        findButton.setDisable(disabled);
+        fitColumnsButton.setDisable(disabled);
+    }
+
+    private void closeFindIfNeeded() {
+        toggleFindBar(false);
+        findButton.setSelected(false);
+    }
+
+    private static boolean isTableDataEmpty(DynamicResultTable table) {
+        if (table == null || !table.hasExportableResult()) {
+            return true;
+        }
+        ObservableList<?> items = table.getItems();
+        return items == null || items.isEmpty();
+    }
+
     private void toggleFindBar(boolean show) {
         findField.setVisible(show);
         findField.setManaged(show);
@@ -313,7 +418,7 @@ public final class ResultToolbar extends HBox {
         exportButton.getItems().setAll(copyTsv, copyCsv, new SeparatorMenuItem(), exportAll, exportSelection);
         exportButton.setOnShowing(event -> {
             DynamicResultTable table = tableSupplier.get();
-            boolean ready = table != null && table.hasExportableResult();
+            boolean ready = table != null && table.hasExportableResult() && !table.getItems().isEmpty();
             boolean selection = table != null && table.hasRowSelection();
             copyTsv.setDisable(!ready);
             copyCsv.setDisable(!ready);
