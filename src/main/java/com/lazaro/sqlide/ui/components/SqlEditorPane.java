@@ -29,6 +29,7 @@ import javafx.beans.property.StringProperty;
 import javafx.beans.value.ObservableValue;
 import javafx.collections.FXCollections;
 import javafx.concurrent.Task;
+import javafx.geometry.BoundingBox;
 import javafx.geometry.Bounds;
 import javafx.geometry.Insets;
 import javafx.geometry.Point2D;
@@ -56,6 +57,9 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
+import javafx.scene.shape.Rectangle;
+import javafx.scene.shape.StrokeType;
 import javafx.stage.Popup;
 import javafx.stage.Screen;
 import javafx.util.Duration;
@@ -65,6 +69,7 @@ import org.fxmisc.richtext.LineNumberFactory;
 import org.fxmisc.richtext.event.MouseOverTextEvent;
 import org.fxmisc.richtext.model.StyleSpans;
 import org.fxmisc.richtext.model.StyleSpansBuilder;
+import org.fxmisc.richtext.model.TwoDimensional;
 import org.reactfx.Subscription;
 
 import java.util.ArrayList;
@@ -108,6 +113,8 @@ public final class SqlEditorPane extends BorderPane {
 
     private final CodeArea codeArea = new CodeArea();
     private final Pane inlayLayer = new PassThroughPane();
+    private final Pane statementLayer = new PassThroughPane();
+    private final Rectangle statementFrame = new Rectangle();
     private final EditorFindBar findBar;
     private final ExecutorService highlightExecutor;
     private final ExecutorService inspectionExecutor;
@@ -163,6 +170,7 @@ public final class SqlEditorPane extends BorderPane {
     private List<InlayPadSupport.Pad> activeInlayPads = List.of();
     private boolean mutatingDocument;
     private boolean ignoreFoldDocumentEvents;
+    private boolean statementHighlightPending;
     private final PauseTransition foldEventSuppress = new PauseTransition(Duration.millis(180));
     private double monospaceCharWidth = 7.8;
 
@@ -266,11 +274,27 @@ public final class SqlEditorPane extends BorderPane {
         inlayLayer.setFocusTraversable(false);
         inlayLayer.setBackground(null);
         inlayLayer.getStyleClass().add("inlay-layer");
+        statementFrame.getStyleClass().add("current-statement-frame");
+        statementFrame.setManaged(false);
+        statementFrame.setMouseTransparent(true);
+        statementFrame.setVisible(false);
+        statementFrame.setFill(Color.TRANSPARENT);
+        statementFrame.setStroke(Color.web("#5dcc6c"));
+        statementFrame.setStrokeWidth(0.5);
+        statementFrame.setStrokeType(StrokeType.INSIDE);
+        statementFrame.setArcWidth(6);
+        statementFrame.setArcHeight(6);
+        statementLayer.setMouseTransparent(true);
+        statementLayer.setFocusTraversable(false);
+        statementLayer.setBackground(null);
+        statementLayer.getStyleClass().add("current-statement-layer");
+        statementLayer.getChildren().add(statementFrame);
         VirtualizedScrollPane<CodeArea> scroll = new VirtualizedScrollPane<>(codeArea);
-        StackPane editorStack = new StackPane(scroll, inlayLayer);
+        StackPane editorStack = new StackPane(scroll, inlayLayer, statementLayer);
         editorStack.getStyleClass().add("sql-editor-stack");
         setCenter(editorStack);
         installEditorContextMenu();
+        wireCurrentStatementHighlight();
 
         if (initialSql != null && !initialSql.isEmpty()) {
             setSql(initialSql);
@@ -1368,18 +1392,22 @@ public final class SqlEditorPane extends BorderPane {
             if (mutatingDocument || ignoreFoldDocumentEvents) {
                 return;
             }
-            // Purge immediately so stale pads never accumulate across edits.
+            // Overlay can go immediately; never mutate the document from inside
+            // this notification — a nested replaceText leaves caret/anchor past
+            // EOF and the in-flight keystroke then blows up in replaceSelection.
             clearInlayOverlay();
-            stripInlayPadsNow();
             cancelActiveInlay();
             inlayDebounce.stop();
             inlayDebounce.playFromStart();
+            Platform.runLater(this::stripInlayPadsNow);
         });
         codeArea.estimatedScrollYProperty().addListener((obs, o, n) -> repositionInlayOverlayAfterLayout());
         codeArea.estimatedScrollXProperty().addListener((obs, o, n) -> repositionInlayOverlayAfterLayout());
         codeArea.layoutBoundsProperty().addListener((obs, o, n) -> repositionInlayOverlayAfterLayout());
         inlayLayer.widthProperty().addListener((obs, o, n) -> repositionInlayOverlayAfterLayout());
         inlayLayer.heightProperty().addListener((obs, o, n) -> repositionInlayOverlayAfterLayout());
+        statementLayer.widthProperty().addListener((obs, o, n) -> scheduleStatementHighlight());
+        statementLayer.heightProperty().addListener((obs, o, n) -> scheduleStatementHighlight());
         Platform.runLater(this::runInlayExtraction);
     }
 
@@ -1420,7 +1448,9 @@ public final class SqlEditorPane extends BorderPane {
         }
         try {
             codeArea.replaceText(stripped);
-            codeArea.moveTo(Math.max(0, Math.min(logicalCaret, stripped.length())));
+            collapseCaret(Math.max(0, Math.min(logicalCaret, stripped.length())));
+        } catch (IllegalArgumentException | IndexOutOfBoundsException ignored) {
+            // Caret was already past EOF; document content is updated.
         } finally {
             if (!alreadyMutating) {
                 mutatingDocument = false;
@@ -1446,11 +1476,169 @@ public final class SqlEditorPane extends BorderPane {
     }
 
     private void repositionInlayOverlayAfterLayout() {
+        scheduleStatementHighlight();
         clearInlayOverlay();
         if (activeInlayPads.isEmpty()) {
             return;
         }
         Platform.runLater(this::paintInlayOverlay);
+    }
+
+    private void wireCurrentStatementHighlight() {
+        codeArea.textProperty().addListener((obs, prev, next) -> {
+            if (mutatingDocument) {
+                return;
+            }
+            scheduleStatementHighlight();
+        });
+        codeArea.caretBoundsProperty().addListener((obs, prev, next) -> scheduleStatementHighlight());
+        codeArea.sceneProperty().addListener((obs, prev, next) -> {
+            if (next != null) {
+                scheduleStatementHighlight();
+            }
+        });
+        scheduleStatementHighlight();
+    }
+
+    private void scheduleStatementHighlight() {
+        if (statementHighlightPending) {
+            return;
+        }
+        statementHighlightPending = true;
+        Platform.runLater(() -> {
+            statementHighlightPending = false;
+            refreshCurrentStatementHighlight();
+        });
+    }
+
+    /**
+     * Collapses caret and anchor together so typing cannot hit an inverted
+     * {@code replaceSelection} range after the document shrinks (inlay pads).
+     */
+    private void collapseCaret(int position) {
+        int len = codeArea.getLength();
+        int pos = Math.max(0, Math.min(position, len));
+        try {
+            codeArea.selectRange(pos, pos);
+        } catch (IllegalArgumentException | IndexOutOfBoundsException ignored) {
+            try {
+                codeArea.displaceCaret(pos);
+            } catch (IllegalArgumentException | IndexOutOfBoundsException ignoredAgain) {
+                // document is mid-update; the next scheduled strip will resync
+            }
+        }
+    }
+
+    /**
+     * DataGrip-style green frame around the statement that contains the caret
+     * (the same range {@link #getEffectiveSql()} would run).
+     */
+    private void refreshCurrentStatementHighlight() {
+        if (mutatingDocument) {
+            scheduleStatementHighlight();
+            return;
+        }
+        try {
+            String text = codeArea.getText();
+            int length = text == null ? 0 : text.length();
+            SqlStatementExtractor.Span span = SqlStatementExtractor.rangeAt(text, codeArea.getCaretPosition());
+            if (span.isEmpty() || text == null || text.isBlank() || statementLayer.getWidth() <= 0) {
+                statementFrame.setVisible(false);
+                return;
+            }
+            int from = Math.max(0, Math.min(span.start(), length));
+            int to = Math.max(from, Math.min(span.end(), length));
+            Optional<Bounds> bounds = statementBoundsOnScreen(from, to);
+            if (bounds.isEmpty()) {
+                statementFrame.setVisible(false);
+                return;
+            }
+            Bounds screen = bounds.get();
+            Point2D topLeft = statementLayer.screenToLocal(screen.getMinX(), screen.getMinY());
+            Point2D bottomRight = statementLayer.screenToLocal(screen.getMaxX(), screen.getMaxY());
+            if (topLeft == null || bottomRight == null) {
+                statementFrame.setVisible(false);
+                return;
+            }
+            double padX = 6;
+            double padY = 2;
+            double width = Math.max(16, bottomRight.getX() - topLeft.getX() + padX * 2);
+            double height = Math.max(16, bottomRight.getY() - topLeft.getY() + padY * 2);
+            statementFrame.setX(topLeft.getX() - padX);
+            statementFrame.setY(topLeft.getY() - padY);
+            statementFrame.setWidth(width);
+            statementFrame.setHeight(height);
+            statementFrame.setVisible(true);
+        } catch (IllegalArgumentException | IndexOutOfBoundsException ex) {
+            statementFrame.setVisible(false);
+        }
+    }
+
+    private Optional<Bounds> statementBoundsOnScreen(int from, int to) {
+        int length = codeArea.getLength();
+        from = Math.max(0, Math.min(from, length));
+        to = Math.max(from, Math.min(to, length));
+        if (to > from) {
+            Optional<Bounds> full = characterBoundsOnScreen(from, to);
+            if (full.isPresent()) {
+                return full;
+            }
+        }
+        Bounds union = null;
+        int last = Math.max(from, to - 1);
+        int startPar;
+        int endPar;
+        try {
+            startPar = codeArea.offsetToPosition(from, TwoDimensional.Bias.Forward).getMajor();
+            endPar = codeArea.offsetToPosition(last, TwoDimensional.Bias.Backward).getMajor();
+        } catch (IllegalArgumentException | IndexOutOfBoundsException ex) {
+            return codeArea.getCaretBounds();
+        }
+        int paragraphs = codeArea.getParagraphs().size();
+        for (int p = Math.max(0, startPar); p <= endPar && p < paragraphs; p++) {
+            int parStart;
+            int parLen;
+            try {
+                parStart = codeArea.getAbsolutePosition(p, 0);
+                parLen = codeArea.getParagraph(p).length();
+            } catch (IllegalArgumentException | IndexOutOfBoundsException ex) {
+                continue;
+            }
+            int a = Math.max(from, parStart);
+            int b = Math.min(to, parStart + parLen);
+            if (b <= a) {
+                b = Math.min(codeArea.getLength(), a + 1);
+            }
+            Optional<Bounds> slice = characterBoundsOnScreen(a, b);
+            if (slice.isEmpty()) {
+                continue;
+            }
+            union = union == null ? slice.get() : unionBounds(union, slice.get());
+        }
+        if (union != null) {
+            return Optional.of(union);
+        }
+        return codeArea.getCaretBounds();
+    }
+
+    private Optional<Bounds> characterBoundsOnScreen(int from, int to) {
+        int length = codeArea.getLength();
+        if (from < 0 || to <= from || to > length || from > length) {
+            return Optional.empty();
+        }
+        try {
+            return codeArea.getCharacterBoundsOnScreen(from, to);
+        } catch (IllegalArgumentException | IndexOutOfBoundsException ex) {
+            return Optional.empty();
+        }
+    }
+
+    private static Bounds unionBounds(Bounds a, Bounds b) {
+        double minX = Math.min(a.getMinX(), b.getMinX());
+        double minY = Math.min(a.getMinY(), b.getMinY());
+        double maxX = Math.max(a.getMaxX(), b.getMaxX());
+        double maxY = Math.max(a.getMaxY(), b.getMaxY());
+        return new BoundingBox(minX, minY, maxX - minX, maxY - minY);
     }
 
     private void runInlayExtraction() {
@@ -1532,7 +1720,7 @@ public final class SqlEditorPane extends BorderPane {
                 if (!result.text().equals(codeArea.getText())) {
                     codeArea.replaceText(result.text());
                     int docCaret = InlayPadSupport.toDocumentOffset(logicalCaretPos, activeInlayPads);
-                    codeArea.moveTo(Math.max(0, Math.min(docCaret, result.text().length())));
+                    collapseCaret(Math.max(0, Math.min(docCaret, result.text().length())));
                 }
             } finally {
                 mutatingDocument = false;
@@ -1599,6 +1787,7 @@ public final class SqlEditorPane extends BorderPane {
                 pill.relocate(local.getX(), local.getY() + 1);
                 inlayLayer.getChildren().add(pill);
             }
+            refreshCurrentStatementHighlight();
         };
         if (Platform.isFxApplicationThread()) {
             paint.run();
@@ -1823,7 +2012,10 @@ public final class SqlEditorPane extends BorderPane {
                 hideQuickDocumentation();
             }
         });
-        codeArea.caretPositionProperty().addListener((obs, prev, next) -> hideQuickDocumentation());
+        codeArea.caretPositionProperty().addListener((obs, prev, next) -> {
+            hideQuickDocumentation();
+            scheduleStatementHighlight();
+        });
     }
 
     private void scheduleQuickDocumentation(int charIndex, double screenX, double screenY) {

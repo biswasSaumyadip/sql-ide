@@ -192,19 +192,14 @@ public final class Icons {
         return group(dot, shaft);
     }
 
-    /** Gear for Settings. */
+    /** Six-tooth cog for Settings (not a sun / asterisk). */
     public static Node settings() {
-        Circle hub = outlined(new Circle(7, 7, 2.2), "icon-settings");
-        // eight short teeth
-        Line n = outlined(new Line(7, 1.5, 7, 3.2), "icon-settings");
-        Line s = outlined(new Line(7, 10.8, 7, 12.5), "icon-settings");
-        Line e = outlined(new Line(10.8, 7, 12.5, 7), "icon-settings");
-        Line w = outlined(new Line(1.5, 7, 3.2, 7), "icon-settings");
-        Line ne = outlined(new Line(10.2, 3.8, 11.4, 2.6), "icon-settings");
-        Line nw = outlined(new Line(3.8, 3.8, 2.6, 2.6), "icon-settings");
-        Line se = outlined(new Line(10.2, 10.2, 11.4, 11.4), "icon-settings");
-        Line sw = outlined(new Line(3.8, 10.2, 2.6, 11.4), "icon-settings");
-        return group(hub, n, s, e, w, ne, nw, se, sw);
+        Polygon cog = gearOutline(7, 7, 5.6, 3.55, 6);
+        cog.setFill(null);
+        cog.setStrokeWidth(STROKE);
+        cog.getStyleClass().addAll(BASE_CLASS, "icon-settings");
+        Circle hole = outlined(new Circle(7, 7, 1.7), "icon-settings");
+        return group(cog, hole);
     }
 
     // ---------------------------------------------------------------- toolbar
@@ -422,6 +417,32 @@ public final class Icons {
         // Icons are decoration; clicks belong to the control underneath.
         icon.setMouseTransparent(true);
         return icon;
+    }
+
+    /**
+     * Closed cog silhouette: six (or {@code teeth}) rectangular teeth around a ring.
+     * Pointy radial ticks read as a sun at this size, so teeth have a flat top.
+     */
+    private static Polygon gearOutline(double cx, double cy, double outerR, double innerR, int teeth) {
+        double[] points = new double[teeth * 8];
+        int n = 0;
+        double step = 2 * Math.PI / teeth;
+        double rise = step * 0.14;
+        double tooth = step * 0.36;
+        for (int i = 0; i < teeth; i++) {
+            double a = i * step - Math.PI / 2;
+            n = addPolar(points, n, cx, cy, innerR, a);
+            n = addPolar(points, n, cx, cy, outerR, a + rise);
+            n = addPolar(points, n, cx, cy, outerR, a + rise + tooth);
+            n = addPolar(points, n, cx, cy, innerR, a + 2 * rise + tooth);
+        }
+        return new Polygon(points);
+    }
+
+    private static int addPolar(double[] points, int n, double cx, double cy, double r, double angle) {
+        points[n] = cx + r * Math.cos(angle);
+        points[n + 1] = cy + r * Math.sin(angle);
+        return n + 2;
     }
 
     private static Group clickableGroup(Shape... shapes) {

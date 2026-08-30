@@ -26,6 +26,17 @@
     -fx-background-color: #26282d;
 }
 
+/* DataGrip-style frame around the statement under the caret. */
+.current-statement-layer {
+    -fx-background-color: null;
+}
+
+.current-statement-frame {
+    -fx-stroke: #5dcc6c;
+    -fx-stroke-width: 0.5;
+    -fx-fill: transparent;
+}
+
 /* Qualified with .sql-editor so the gutter keeps its muted colour instead of
    inheriting the theme's default label styling. */
 .sql-editor .lineno {

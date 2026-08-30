@@ -51,4 +51,27 @@ class SqlStatementExtractorTest {
                 java.util.List.of("INSERT INTO t VALUES ('a;b')", "SELECT 1"),
                 SqlStatementExtractor.statements("INSERT INTO t VALUES ('a;b'); SELECT 1;"));
     }
+
+    @Test
+    @DisplayName("rangeAt hugs the statement including its trailing semicolon")
+    void rangeCoversStatementAndSemicolon() {
+        String sql = """
+                USE warcraft;
+
+                Insert into race (id, name) VALUES (1, 'Human');
+                """;
+        int caret = sql.indexOf("Insert");
+        SqlStatementExtractor.Span span = SqlStatementExtractor.rangeAt(sql, caret);
+        assertEquals("Insert into race (id, name) VALUES (1, 'Human');",
+                sql.substring(span.start(), span.end()));
+    }
+
+    @Test
+    @DisplayName("rangeAt ignores semicolons inside strings")
+    void rangeIgnoresQuotedSemicolon() {
+        String sql = "INSERT INTO t VALUES ('a;b'); SELECT 1;";
+        int caret = sql.indexOf("SELECT");
+        SqlStatementExtractor.Span span = SqlStatementExtractor.rangeAt(sql, caret);
+        assertEquals("SELECT 1;", sql.substring(span.start(), span.end()));
+    }
 }
