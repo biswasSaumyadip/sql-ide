@@ -2,7 +2,6 @@ package com.lazaro.sqlide.ui.components;
 
 import com.lazaro.sqlide.core.db.SchemaCache;
 import com.lazaro.sqlide.core.db.SchemaNode;
-import com.lazaro.sqlide.core.db.ScriptResult;
 import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -21,9 +20,6 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executor;
-import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -141,32 +137,6 @@ public final class EditorTabPane extends TabPane {
         getSelectionModel().select(tab);
     }
 
-    /**
-     * Opens (or focuses) a table data editor tab.
-     *
-     * @param scriptRunner executes SQL scripts asynchronously (load / submit)
-     * @param background   FX Task executor
-     */
-    public void openTableData(
-            SchemaNode node,
-            String qualifiedName,
-            List<String> primaryKeyColumns,
-            Function<List<String>, CompletableFuture<ScriptResult>> scriptRunner,
-            Executor background) {
-        if (node == null) {
-            return;
-        }
-        for (Tab tab : getTabs()) {
-            if (tab instanceof DataTab dataTab && dataTab.matches(node)) {
-                getSelectionModel().select(dataTab);
-                return;
-            }
-        }
-        DataTab tab = new DataTab(node, qualifiedName, primaryKeyColumns, scriptRunner, background);
-        getTabs().add(tab);
-        getSelectionModel().select(tab);
-    }
-
     /** Closes the selected tab, honouring the unsaved-changes prompt. */
     public void closeActiveTab() {
         Tab tab = getSelectionModel().getSelectedItem();
@@ -174,10 +144,6 @@ public final class EditorTabPane extends TabPane {
             if (queryTab.confirmClose()) {
                 getTabs().remove(queryTab);
                 queryTab.dispose();
-            }
-        } else if (tab instanceof DataTab dataTab) {
-            if (dataTab.confirmClose()) {
-                getTabs().remove(dataTab);
             }
         } else if (tab != null) {
             getTabs().remove(tab);
@@ -211,11 +177,6 @@ public final class EditorTabPane extends TabPane {
             if (tab instanceof QueryTab queryTab) {
                 getSelectionModel().select(queryTab);
                 if (!queryTab.confirmClose()) {
-                    return false;
-                }
-            } else if (tab instanceof DataTab dataTab) {
-                getSelectionModel().select(dataTab);
-                if (!dataTab.confirmClose()) {
                     return false;
                 }
             }
@@ -356,46 +317,6 @@ public final class EditorTabPane extends TabPane {
         private static String keyOf(SchemaNode node) {
             String catalog = Objects.requireNonNullElse(node.metadata(SchemaNode.META_CATALOG), "");
             return catalog + "/" + node.name();
-        }
-    }
-
-    private static final class DataTab extends Tab {
-
-        private final TableDataEditorPane editor;
-        private final String baseTitle;
-
-        DataTab(
-                SchemaNode node,
-                String qualifiedName,
-                List<String> primaryKeyColumns,
-                Function<List<String>, CompletableFuture<ScriptResult>> scriptRunner,
-                Executor background) {
-            this.editor = new TableDataEditorPane(node, qualifiedName, primaryKeyColumns, scriptRunner, background);
-            this.baseTitle = node.name() + " data";
-            setText(baseTitle);
-            setContent(editor);
-            getStyleClass().add("table-data-tab");
-            setOnCloseRequest(event -> {
-                if (!confirmClose()) {
-                    event.consume();
-                }
-            });
-            editor.setOnDirtyChanged(this::refreshTitle);
-            refreshTitle();
-        }
-
-        boolean matches(SchemaNode node) {
-            return editor.matches(node);
-        }
-
-        boolean confirmClose() {
-            boolean ok = editor.confirmClose();
-            refreshTitle();
-            return ok;
-        }
-
-        private void refreshTitle() {
-            setText(editor.isDirty() ? DIRTY_MARK + baseTitle : baseTitle);
         }
     }
 }

@@ -354,7 +354,7 @@ public final class MainController {
     }
 
     public boolean confirmExit() {
-        return editors.confirmCloseAll();
+        return editors.confirmCloseAll() && outcome.confirmCloseAll();
     }
 
     public void saveState(Stage stage) {
@@ -525,7 +525,7 @@ public final class MainController {
                 ? detailed.name()
                 : catalog + "." + detailed.name();
         List<String> primaryKeys = primaryKeyColumns(detailed);
-        editors.openTableData(
+        outcome.openTableData(
                 detailed,
                 qualified,
                 primaryKeys,

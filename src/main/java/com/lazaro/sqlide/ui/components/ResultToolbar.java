@@ -28,6 +28,7 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.util.Duration;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
@@ -101,6 +102,10 @@ public final class ResultToolbar extends HBox {
     private final ToggleButton pinButton = new ToggleButton();
     private final Button refreshButton = new Button();
     private final Button clearButton = new Button();
+    private final Button addRowButton = new Button();
+    private final Button deleteRowsButton = new Button();
+    private final Button submitEditsButton = new Button();
+    private final Button revertEditsButton = new Button();
     private final MenuButton autoRefreshButton = new MenuButton();
     private final CheckMenuItem stopOnErrorItem = new CheckMenuItem("Stop on error");
     private final MenuButton maxRowsButton = new MenuButton();
@@ -114,6 +119,10 @@ public final class ResultToolbar extends HBox {
     private Runnable onClear = () -> { };
     private Runnable onTogglePin = () -> { };
     private Runnable onToggleView = () -> { };
+    private Runnable onAddRow = () -> { };
+    private Runnable onDeleteRows = () -> { };
+    private Runnable onSubmitEdits = () -> { };
+    private Runnable onRevertEdits = () -> { };
     private Consumer<QueryResult> onExportToFile = result -> { };
     private IntConsumer onMaxRowsChanged = rows -> { };
     private Consumer<Boolean> onStopOnErrorChanged = stop -> { };
@@ -123,6 +132,8 @@ public final class ResultToolbar extends HBox {
     private BooleanBinding tableEmptyBinding;
     private ListChangeListener<ObservableList<String>> itemsListener;
     private ChangeListener<ObservableList<ObservableList<String>>> itemsPropertyListener;
+    private Separator dataEditSeparator;
+    private boolean dataEditMode;
 
     public ResultToolbar() {
         getStyleClass().add("result-toolbar");
@@ -184,6 +195,29 @@ public final class ResultToolbar extends HBox {
         clearButton.setTooltip(new Tooltip("Clear unpinned result tabs"));
         clearButton.setOnAction(event -> onClear.run());
 
+        addRowButton.setGraphic(Icons.newQuery());
+        addRowButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-icon-button");
+        addRowButton.setTooltip(new Tooltip("Insert row"));
+        addRowButton.setOnAction(event -> onAddRow.run());
+
+        deleteRowsButton.setGraphic(Icons.clear());
+        deleteRowsButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-icon-button");
+        deleteRowsButton.setTooltip(new Tooltip("Delete selected row(s)"));
+        deleteRowsButton.setOnAction(event -> onDeleteRows.run());
+
+        submitEditsButton.setGraphic(Icons.commit());
+        submitEditsButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-icon-button");
+        submitEditsButton.setTooltip(new Tooltip("Submit pending INSERT / UPDATE / DELETE"));
+        submitEditsButton.setOnAction(event -> onSubmitEdits.run());
+
+        revertEditsButton.setGraphic(Icons.rollback());
+        revertEditsButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-icon-button");
+        revertEditsButton.setTooltip(new Tooltip("Revert unsaved edits"));
+        revertEditsButton.setOnAction(event -> onRevertEdits.run());
+
+        dataEditSeparator = subtleSeparator();
+        setDataEditControlsVisible(false);
+
         buildAutoRefreshMenu();
         autoRefreshButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-button");
         autoRefreshButton.setTooltip(new Tooltip("Automatically re-run the last query on an interval"));
@@ -212,6 +246,11 @@ public final class ResultToolbar extends HBox {
                 pinButton,
                 refreshButton,
                 clearButton,
+                dataEditSeparator,
+                addRowButton,
+                deleteRowsButton,
+                submitEditsButton,
+                revertEditsButton,
                 subtleSeparator(),
                 autoRefreshButton,
                 maxRowsButton,
@@ -245,6 +284,22 @@ public final class ResultToolbar extends HBox {
 
     public void setOnToggleView(Runnable action) {
         this.onToggleView = action == null ? () -> { } : action;
+    }
+
+    public void setOnAddRow(Runnable action) {
+        this.onAddRow = action == null ? () -> { } : action;
+    }
+
+    public void setOnDeleteRows(Runnable action) {
+        this.onDeleteRows = action == null ? () -> { } : action;
+    }
+
+    public void setOnSubmitEdits(Runnable action) {
+        this.onSubmitEdits = action == null ? () -> { } : action;
+    }
+
+    public void setOnRevertEdits(Runnable action) {
+        this.onRevertEdits = action == null ? () -> { } : action;
     }
 
     public void setOnMaxRowsChanged(IntConsumer action) {
@@ -295,6 +350,24 @@ public final class ResultToolbar extends HBox {
                 : "Show execution plan"));
     }
 
+    /**
+     * Shows INSERT / DELETE / Submit / Revert when the active tab is table data.
+     */
+    public void setDataEditMode(boolean dataTab, boolean editable, boolean dirty) {
+        this.dataEditMode = dataTab;
+        setDataEditControlsVisible(dataTab);
+        addRowButton.setDisable(!editable);
+        deleteRowsButton.setDisable(!editable);
+        submitEditsButton.setDisable(!editable || !dirty);
+        revertEditsButton.setDisable(!dirty);
+        if (dataTab) {
+            refreshButton.setDisable(false);
+            refreshButton.setTooltip(new Tooltip("Reload table rows from the database"));
+        } else {
+            refreshButton.setTooltip(new Tooltip("Re-run last query now"));
+        }
+    }
+
     public void setSummary(String text) {
         summaryLabel.setText(Objects.requireNonNullElse(text, ""));
     }
@@ -322,7 +395,11 @@ public final class ResultToolbar extends HBox {
     }
 
     public void setRefreshEnabled(boolean enabled) {
-        refreshButton.setDisable(!enabled);
+        if (dataEditMode) {
+            refreshButton.setDisable(false);
+        } else {
+            refreshButton.setDisable(!enabled);
+        }
         autoRefreshButton.setDisable(!enabled);
         if (!enabled && autoRefreshInterval != AutoRefreshInterval.OFF) {
             // Keep selection label but pause ticking while refresh is unavailable.
@@ -581,5 +658,13 @@ public final class ResultToolbar extends HBox {
         separator.setOpacity(0.5);
         separator.setMaxHeight(16);
         return separator;
+    }
+
+    private void setDataEditControlsVisible(boolean visible) {
+        for (javafx.scene.Node node : List.of(
+                dataEditSeparator, addRowButton, deleteRowsButton, submitEditsButton, revertEditsButton)) {
+            node.setVisible(visible);
+            node.setManaged(visible);
+        }
     }
 }

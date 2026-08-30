@@ -1,6 +1,7 @@
 package com.lazaro.sqlide.ui.components;
 
 import com.lazaro.sqlide.core.db.QueryResult;
+import com.lazaro.sqlide.core.db.SchemaNode;
 import com.lazaro.sqlide.core.db.ScriptResult;
 import com.lazaro.sqlide.core.explain.ExplainPlanNode;
 import com.lazaro.sqlide.core.explain.ExplainPlanParser;
@@ -14,15 +15,20 @@ import javafx.scene.layout.VBox;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 /**
  * Everything below the editor: results toolbar, error strip, and one or more
- * result tabs (grid, update message, or EXPLAIN plan).
+ * result tabs (grid, update message, EXPLAIN plan, or editable table data).
  */
 public final class QueryOutcomePane extends VBox {
 
     private static final String PINNED_STYLE = "result-tab-pinned";
+    private static final String DATA_TAB_STYLE = "result-tab-data";
+    private static final String DIRTY_MARK = "\u25CF ";
 
     private final ResultToolbar toolbar = new ResultToolbar();
     private final QueryErrorPanel errorPanel = new QueryErrorPanel();
@@ -43,10 +49,34 @@ public final class QueryOutcomePane extends VBox {
 
         toolbar.setTableSupplier(this::results);
         toolbar.setOnExportToFile(result -> onExportToFile.accept(result));
-        toolbar.setOnRefresh(() -> onRefresh.run());
+        toolbar.setOnRefresh(this::refreshActive);
         toolbar.setOnClear(this::clearUnpinned);
         toolbar.setOnTogglePin(this::togglePinSelected);
         toolbar.setOnToggleView(this::toggleViewSelected);
+        toolbar.setOnAddRow(() -> {
+            TableDataEditSession session = activeEditSession();
+            if (session != null) {
+                session.addRow();
+            }
+        });
+        toolbar.setOnDeleteRows(() -> {
+            TableDataEditSession session = activeEditSession();
+            if (session != null) {
+                session.deleteSelected();
+            }
+        });
+        toolbar.setOnSubmitEdits(() -> {
+            TableDataEditSession session = activeEditSession();
+            if (session != null) {
+                session.submitChanges();
+            }
+        });
+        toolbar.setOnRevertEdits(() -> {
+            TableDataEditSession session = activeEditSession();
+            if (session != null) {
+                session.revertChanges();
+            }
+        });
         resultTabs.getSelectionModel().selectedItemProperty().addListener((observable, previous, current) -> {
             syncToolbarState();
             onActionsChanged.run();
@@ -67,7 +97,6 @@ public final class QueryOutcomePane extends VBox {
 
     public void setOnRefresh(Runnable action) {
         this.onRefresh = action == null ? () -> { } : action;
-        toolbar.setOnRefresh(this.onRefresh);
     }
 
     public void setOnActionsChanged(Runnable action) {
@@ -94,23 +123,70 @@ public final class QueryOutcomePane extends VBox {
         return null;
     }
 
+    /**
+     * Opens (or focuses) an editable table-data tab in the results pane.
+     */
+    public void openTableData(
+            SchemaNode node,
+            String qualifiedName,
+            List<String> primaryKeyColumns,
+            Function<List<String>, CompletableFuture<ScriptResult>> scriptRunner,
+            Executor background) {
+        if (node == null) {
+            return;
+        }
+        for (Tab tab : resultTabs.getTabs()) {
+            if (tab.getContent() instanceof ResultPage page
+                    && page.editSession() != null
+                    && page.editSession().matches(node)) {
+                resultTabs.getSelectionModel().select(tab);
+                syncToolbarState();
+                return;
+            }
+        }
+
+        ResultPage page = ResultPage.forTableData(
+                node, qualifiedName, primaryKeyColumns, scriptRunner, background, onExportToFile);
+        Tab tab = wrap(node.name() + " data", page, false, false);
+        tab.getStyleClass().add(DATA_TAB_STYLE);
+        page.editSession().setOnDirtyChanged(() -> {
+            refreshDataTabTitle(tab, page);
+            syncToolbarState();
+        });
+        page.editSession().setOnStatusChanged(() -> {
+            if (resultTabs.getSelectionModel().getSelectedItem() == tab) {
+                toolbar.setSummary(page.editSession().statusText());
+            }
+        });
+        tab.setOnCloseRequest(event -> {
+            if (page.editSession() != null && !page.editSession().confirmClose()) {
+                event.consume();
+            }
+        });
+        tab.setOnClosed(event -> page.disposeEditSession());
+        resultTabs.getTabs().add(tab);
+        resultTabs.getSelectionModel().select(tab);
+        syncToolbarState();
+        onActionsChanged.run();
+    }
+
     public void showIdle() {
         errorPanel.clear();
-        replaceUnpinnedWith(List.of(wrap("Result", ResultPage.message("Run a query to see results."), false, false)));
+        replaceTransientWith(List.of(wrap("Result", ResultPage.message("Run a query to see results."), false, false)));
         toolbar.setSummary("");
         syncToolbarState();
     }
 
     public void showLoading() {
         errorPanel.clear();
-        replaceUnpinnedWith(List.of(wrap("Running", ResultPage.message("Running query\u2026"), false, false)));
+        replaceTransientWith(List.of(wrap("Running", ResultPage.message("Running query\u2026"), false, false)));
         toolbar.setSummary("Running\u2026");
         syncToolbarState();
     }
 
     public void showCancelling() {
         errorPanel.clear();
-        replaceUnpinnedWith(List.of(wrap("Cancelling", ResultPage.message("Cancelling query\u2026"), false, false)));
+        replaceTransientWith(List.of(wrap("Cancelling", ResultPage.message("Cancelling query\u2026"), false, false)));
         toolbar.setSummary("Cancelling\u2026");
         syncToolbarState();
     }
@@ -146,11 +222,10 @@ public final class QueryOutcomePane extends VBox {
             ResultPage page = ResultPage.from(result, preferPlan && results.size() == 1, onExportToFile);
             fresh.add(wrap(title, page, result.isError(), false));
         }
-        replaceUnpinnedWith(fresh);
+        replaceTransientWith(fresh);
         if (lastError != null) {
             errorPanel.show(lastError.errorMessage());
         }
-        // Prefer the first new tab when present.
         if (!fresh.isEmpty()) {
             resultTabs.getSelectionModel().select(fresh.getFirst());
         }
@@ -164,34 +239,74 @@ public final class QueryOutcomePane extends VBox {
     }
 
     public void clearUnpinned() {
-        List<Tab> pinned = pinnedTabs();
-        resultTabs.getTabs().setAll(pinned);
-        if (pinned.isEmpty()) {
+        List<Tab> keep = stickyTabs();
+        resultTabs.getTabs().setAll(keep);
+        if (keep.isEmpty()) {
             showIdle();
         } else {
-            resultTabs.getSelectionModel().select(pinned.getFirst());
+            resultTabs.getSelectionModel().select(keep.getFirst());
             toolbar.setSummary("");
             syncToolbarState();
             onActionsChanged.run();
         }
     }
 
-    private void replaceUnpinnedWith(List<Tab> fresh) {
-        List<Tab> pinned = pinnedTabs();
-        List<Tab> next = new ArrayList<>(pinned.size() + fresh.size());
-        next.addAll(pinned);
+    /** Prompts for dirty data tabs (e.g. app exit). */
+    public boolean confirmCloseAll() {
+        for (Tab tab : List.copyOf(resultTabs.getTabs())) {
+            if (tab.getContent() instanceof ResultPage page
+                    && page.editSession() != null
+                    && page.editSession().isDirty()) {
+                resultTabs.getSelectionModel().select(tab);
+                if (!page.editSession().confirmClose()) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private void refreshActive() {
+        TableDataEditSession session = activeEditSession();
+        if (session != null) {
+            session.reloadWithConfirm();
+            return;
+        }
+        onRefresh.run();
+    }
+
+    private TableDataEditSession activeEditSession() {
+        Tab selected = resultTabs.getSelectionModel().getSelectedItem();
+        if (selected != null && selected.getContent() instanceof ResultPage page) {
+            return page.editSession();
+        }
+        return null;
+    }
+
+    private void replaceTransientWith(List<Tab> fresh) {
+        List<Tab> sticky = stickyTabs();
+        List<Tab> next = new ArrayList<>(sticky.size() + fresh.size());
+        next.addAll(sticky);
         next.addAll(fresh);
         resultTabs.getTabs().setAll(next);
     }
 
-    private List<Tab> pinnedTabs() {
-        List<Tab> pinned = new ArrayList<>();
+    private List<Tab> stickyTabs() {
+        List<Tab> sticky = new ArrayList<>();
         for (Tab tab : resultTabs.getTabs()) {
-            if (isPinned(tab)) {
-                pinned.add(tab);
+            if (isSticky(tab)) {
+                sticky.add(tab);
             }
         }
-        return pinned;
+        return sticky;
+    }
+
+    private static boolean isSticky(Tab tab) {
+        return isPinned(tab) || isDataTab(tab);
+    }
+
+    private static boolean isDataTab(Tab tab) {
+        return tab != null && tab.getStyleClass().contains(DATA_TAB_STYLE);
     }
 
     private void togglePinSelected() {
@@ -240,10 +355,27 @@ public final class QueryOutcomePane extends VBox {
         if (hasPage) {
             ResultPage page = (ResultPage) selected.getContent();
             toolbar.setViewToggleAvailable(page.hasPlan(), page.showingPlan());
+            TableDataEditSession session = page.editSession();
+            if (session != null) {
+                toolbar.setDataEditMode(true, session.editable(), session.isDirty());
+                toolbar.setSummary(session.statusText());
+            } else {
+                toolbar.setDataEditMode(false, false, false);
+            }
         } else {
             toolbar.setViewToggleAvailable(false, false);
+            toolbar.setDataEditMode(false, false, false);
         }
         toolbar.reapplyFindIfOpen();
+    }
+
+    private static void refreshDataTabTitle(Tab tab, ResultPage page) {
+        TableDataEditSession session = page.editSession();
+        if (session == null) {
+            return;
+        }
+        String base = session.schemaTable().name() + " data";
+        tab.setText(session.isDirty() ? DIRTY_MARK + base : base);
     }
 
     private static Tab wrap(String title, ResultPage page, boolean error, boolean pinned) {
@@ -255,9 +387,6 @@ public final class QueryOutcomePane extends VBox {
         if (pinned) {
             setPinned(tab, true);
         }
-        tab.setOnClosed(event -> {
-            // no-op; selection listener refreshes toolbar
-        });
         return tab;
     }
 
@@ -282,6 +411,7 @@ public final class QueryOutcomePane extends VBox {
         private QueryResult result;
         private ExplainPlanNode plan;
         private boolean showingPlan;
+        private TableDataEditSession editSession;
 
         private ResultPage() {
             truncationBanner.getStyleClass().add("result-truncation-banner");
@@ -329,12 +459,38 @@ public final class QueryOutcomePane extends VBox {
             return page;
         }
 
+        static ResultPage forTableData(
+                SchemaNode node,
+                String qualifiedName,
+                List<String> primaryKeyColumns,
+                Function<List<String>, CompletableFuture<ScriptResult>> scriptRunner,
+                Executor background,
+                Consumer<QueryResult> onExportToFile) {
+            ResultPage page = new ResultPage();
+            page.table.setOnExportToFile(onExportToFile);
+            TableDataEditSession session = new TableDataEditSession(
+                    page.table, node, qualifiedName, primaryKeyColumns, scriptRunner, background);
+            page.table.attachEditSession(session);
+            page.editSession = session;
+            session.reload();
+            return page;
+        }
+
         DynamicResultTable table() {
             return table;
         }
 
         QueryResult result() {
-            return result;
+            return result != null ? result : table.currentResult();
+        }
+
+        TableDataEditSession editSession() {
+            return editSession;
+        }
+
+        void disposeEditSession() {
+            table.detachEditSession();
+            editSession = null;
         }
 
         boolean hasPlan() {

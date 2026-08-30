@@ -54,6 +54,7 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
     private QueryResult currentResult;
     private String rowFilter = "";
     private Consumer<QueryResult> onExportToFile = result -> { };
+    private TableDataEditSession editSession;
 
     public DynamicResultTable() {
         getStyleClass().add("result-table");
@@ -70,6 +71,46 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
         getSelectionModel().setCellSelectionEnabled(true);
         getSelectionModel().setSelectionMode(javafx.scene.control.SelectionMode.MULTIPLE);
         setContextMenu(buildExportMenu());
+    }
+
+    /** Live backing store used by both read-only results and data-edit mode. */
+    ObservableList<ObservableList<String>> backingRows() {
+        return allRows;
+    }
+
+    /** Row-number column shared with {@link TableDataEditSession}. */
+    TableColumn<ObservableList<String>, Void> createRowNumberColumn() {
+        return rowNumberColumn();
+    }
+
+    /**
+     * Marks the grid as holding an editable table-data result so export/copy use
+     * live rows (including unsaved inserts).
+     */
+    void beginEditPresent(QueryResult result) {
+        Objects.requireNonNull(result, "result must not be null");
+        currentResult = result;
+        rowFilter = "";
+        placeholder.setText(PLACEHOLDER_IDLE);
+    }
+
+    public boolean isDataEditMode() {
+        return editSession != null;
+    }
+
+    public TableDataEditSession editSession() {
+        return editSession;
+    }
+
+    void attachEditSession(TableDataEditSession session) {
+        this.editSession = session;
+    }
+
+    void detachEditSession() {
+        if (editSession != null) {
+            editSession.dispose();
+            editSession = null;
+        }
     }
 
     /** Opens a save dialog for the given slice (selection or full result). */
@@ -97,21 +138,34 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
         if (!hasExportableResult()) {
             return null;
         }
+        QueryResult base = liveExportBase();
         if (preferSelection) {
             Set<Integer> indices = selectedRowIndices();
             if (!indices.isEmpty()) {
                 List<List<String>> rows = new ArrayList<>(indices.size());
+                ObservableList<ObservableList<String>> items = getItems();
                 for (int index : indices) {
-                    if (index >= 0 && index < currentResult.rows().size()) {
-                        rows.add(currentResult.rows().get(index));
+                    if (index >= 0 && index < items.size()) {
+                        rows.add(new ArrayList<>(items.get(index)));
                     }
                 }
                 if (!rows.isEmpty()) {
-                    return ResultExporter.subset(currentResult, rows);
+                    return ResultExporter.subset(base, rows);
                 }
             }
         }
-        return currentResult;
+        return base;
+    }
+
+    private QueryResult liveExportBase() {
+        if (!isDataEditMode()) {
+            return currentResult;
+        }
+        List<List<String>> rows = new ArrayList<>(allRows.size());
+        for (ObservableList<String> row : allRows) {
+            rows.add(new ArrayList<>(row));
+        }
+        return ResultExporter.subset(currentResult, rows);
     }
 
     /** Copies TSV to the clipboard (selection if any, otherwise all rows). */
@@ -141,7 +195,8 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
      */
     public void setResult(QueryResult result) {
         Objects.requireNonNull(result, "result must not be null");
-        clear();
+        detachEditSession();
+        clearGridOnly();
         currentResult = result;
 
         if (result.isError()) {
@@ -202,6 +257,15 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
             return;
         }
         List<String> names = currentResult.columnNames();
+        List<List<String>> sampleRows;
+        if (isDataEditMode()) {
+            sampleRows = new ArrayList<>(allRows.size());
+            for (ObservableList<String> row : allRows) {
+                sampleRows.add(new ArrayList<>(row));
+            }
+        } else {
+            sampleRows = currentResult.rows();
+        }
         // Skip the leading "#" column.
         for (int i = 0; i < names.size(); i++) {
             int tableColumnIndex = i + 1;
@@ -209,7 +273,7 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
                 break;
             }
             TableColumn<ObservableList<String>, ?> column = getColumns().get(tableColumnIndex);
-            column.setPrefWidth(estimateWidth(names.get(i), currentResult.rows(), i));
+            column.setPrefWidth(estimateWidth(names.get(i), sampleRows, i));
         }
     }
 
@@ -235,12 +299,20 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
 
     /** Drops all columns and rows and restores the idle placeholder. */
     public void clear() {
+        detachEditSession();
+        clearGridOnly();
+        placeholder.setText(PLACEHOLDER_IDLE);
+    }
+
+    private void clearGridOnly() {
         currentResult = null;
         rowFilter = "";
         allRows.clear();
         setItems(FXCollections.observableArrayList());
         getColumns().clear();
-        placeholder.setText(PLACEHOLDER_IDLE);
+        setEditable(false);
+        setRowFactory(null);
+        getStyleClass().remove("table-data-grid");
     }
 
     private static boolean rowMatches(ObservableList<String> row, String needleLower) {

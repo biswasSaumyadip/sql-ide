@@ -1,40 +1,29 @@
 package com.lazaro.sqlide.ui.components;
 
-import atlantafx.base.theme.Styles;
 import com.lazaro.sqlide.core.db.QueryResult;
 import com.lazaro.sqlide.core.db.SchemaNode;
 import com.lazaro.sqlide.core.db.SchemaNode.NodeType;
 import com.lazaro.sqlide.core.db.ScriptResult;
 import com.lazaro.sqlide.core.export.UpdateSqlGenerator;
-import com.lazaro.sqlide.ui.Icons;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.concurrent.Task;
-import javafx.geometry.Insets;
-import javafx.geometry.Pos;
 import javafx.scene.control.Alert;
-import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ContextMenu;
-import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TablePosition;
 import javafx.scene.control.TableRow;
-import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
-import javafx.scene.control.Tooltip;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.input.KeyCombination;
 import javafx.scene.input.KeyEvent;
-import javafx.scene.layout.BorderPane;
-import javafx.scene.layout.HBox;
-import javafx.scene.layout.Priority;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -51,10 +40,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
 /**
- * Browse / edit table rows with INSERT / UPDATE / DELETE, NULL-aware cells,
- * dirty-row highlighting, and confirm-before-close.
+ * DataGrip-style edit mode attached to a {@link DynamicResultTable}: INSERT / UPDATE /
+ * DELETE, NULL cells, dirty-row highlighting, and submit / revert.
  */
-public final class TableDataEditorPane extends BorderPane {
+public final class TableDataEditSession {
 
     private static final int DEFAULT_LIMIT = 1000;
     private static final String NULL_DISPLAY = "NULL";
@@ -68,167 +57,75 @@ public final class TableDataEditorPane extends BorderPane {
     private record RowState(RowKind kind, List<String> original) {
     }
 
-    private final SchemaNode table;
+    private final DynamicResultTable table;
+    private final SchemaNode schemaTable;
     private final String qualifiedName;
     private final List<String> primaryKeyColumns;
     private final boolean editable;
     private final Function<List<String>, CompletableFuture<ScriptResult>> scriptRunner;
     private final Executor background;
 
-    private final TableView<ObservableList<String>> grid = new TableView<>();
-    private final Label status = new Label();
-    private final Button addButton = new Button();
-    private final Button deleteButton = new Button();
-    private final Button submitButton = new Button();
-    private final Button revertButton = new Button();
-    private final Button refreshButton = new Button();
-
     private final Map<ObservableList<String>, RowState> rowStates = new HashMap<>();
     private List<String> columnNames = List.of();
     private boolean truncated;
     private Runnable onDirtyChanged = () -> { };
+    private Runnable onStatusChanged = () -> { };
+    private String statusText = "";
 
-    public TableDataEditorPane(
-            SchemaNode table,
+    public TableDataEditSession(
+            DynamicResultTable table,
+            SchemaNode schemaTable,
             String qualifiedName,
             List<String> primaryKeyColumns,
             Function<List<String>, CompletableFuture<ScriptResult>> scriptRunner,
             Executor background) {
         this.table = Objects.requireNonNull(table);
-        this.qualifiedName = Objects.requireNonNullElse(qualifiedName, table.name());
+        this.schemaTable = Objects.requireNonNull(schemaTable);
+        this.qualifiedName = Objects.requireNonNullElse(qualifiedName, schemaTable.name());
         this.primaryKeyColumns = List.copyOf(primaryKeyColumns == null ? List.of() : primaryKeyColumns);
-        this.editable = table.type() == NodeType.TABLE && !this.primaryKeyColumns.isEmpty();
+        this.editable = schemaTable.type() == NodeType.TABLE && !this.primaryKeyColumns.isEmpty();
         this.scriptRunner = Objects.requireNonNull(scriptRunner);
         this.background = Objects.requireNonNull(background);
 
-        getStyleClass().add("table-data-editor");
-        grid.getStyleClass().addAll("result-table", "table-data-grid");
-        grid.getStylesheets().add(Objects.requireNonNull(
-                        TableDataEditorPane.class.getResource("/com/lazaro/sqlide/css/result-table.css"),
-                        "result-table.css is missing from the classpath")
-                .toExternalForm());
-        grid.setEditable(editable);
-        grid.setColumnResizePolicy(TableView.UNCONSTRAINED_RESIZE_POLICY);
-        grid.getSelectionModel().setCellSelectionEnabled(true);
-        grid.getSelectionModel().setSelectionMode(javafx.scene.control.SelectionMode.MULTIPLE);
-        grid.setRowFactory(view -> new DataRow());
-
-        refreshButton.setGraphic(Icons.refresh());
-        addButton.setGraphic(Icons.newQuery());
-        deleteButton.setGraphic(Icons.clear());
-        submitButton.setGraphic(Icons.commit());
-        revertButton.setGraphic(Icons.rollback());
-        for (Button action : List.of(refreshButton, addButton, deleteButton, submitButton, revertButton)) {
-            action.getStyleClass().addAll(Styles.FLAT, "table-data-action", "table-data-icon-button");
-        }
-        refreshButton.setTooltip(new Tooltip("Refresh rows from the database"));
-        addButton.setTooltip(new Tooltip("Insert row"));
-        deleteButton.setTooltip(new Tooltip("Delete selected row(s)"));
-        submitButton.setTooltip(new Tooltip("Submit pending INSERT / UPDATE / DELETE"));
-        revertButton.setTooltip(new Tooltip("Revert unsaved edits"));
-        addButton.setDisable(!editable);
-        deleteButton.setDisable(!editable);
-        submitButton.setDisable(true);
-        revertButton.setDisable(true);
-        refreshButton.setOnAction(event -> reloadWithConfirm());
-        addButton.setOnAction(event -> addRow());
-        deleteButton.setOnAction(event -> deleteSelected());
-        submitButton.setOnAction(event -> submitChanges(false));
-        revertButton.setOnAction(event -> revertChanges());
-
-        status.getStyleClass().add("table-data-status");
-        HBox toolbar = new HBox(2, refreshButton, addButton, deleteButton, submitButton, revertButton, status);
-        toolbar.setAlignment(Pos.CENTER_LEFT);
-        toolbar.setPadding(new Insets(4, 8, 4, 8));
-        toolbar.getStyleClass().add("table-data-toolbar");
-        HBox.setHgrow(status, Priority.ALWAYS);
-
-        installShortcuts();
-        setTop(toolbar);
-        setCenter(grid);
-        reload();
+        table.getStyleClass().add("table-data-grid");
+        table.setEditable(editable);
+        table.setRowFactory(view -> new DataRow());
+        table.addEventFilter(KeyEvent.KEY_PRESSED, this::onKeyPressed);
     }
 
-    public SchemaNode table() {
-        return table;
+    public SchemaNode schemaTable() {
+        return schemaTable;
     }
 
     public boolean matches(SchemaNode node) {
-        return node != null && table.name().equalsIgnoreCase(node.name())
+        return node != null && schemaTable.name().equalsIgnoreCase(node.name())
                 && Objects.equals(
-                nullToEmpty(table.metadata(SchemaNode.META_CATALOG)),
+                nullToEmpty(schemaTable.metadata(SchemaNode.META_CATALOG)),
                 nullToEmpty(node.metadata(SchemaNode.META_CATALOG)));
+    }
+
+    public boolean editable() {
+        return editable;
     }
 
     public boolean isDirty() {
         return !pendingStatements().isEmpty();
     }
 
+    public String statusText() {
+        return statusText;
+    }
+
     public void setOnDirtyChanged(Runnable action) {
         this.onDirtyChanged = action == null ? () -> { } : action;
     }
 
-    /**
-     * Confirm discard/submit before closing. Returns {@code true} when safe to close.
-     */
-    public boolean confirmClose() {
-        if (!isDirty()) {
-            return true;
-        }
-        ButtonType submit = new ButtonType("Submit", ButtonBar.ButtonData.YES);
-        ButtonType discard = new ButtonType("Discard", ButtonBar.ButtonData.NO);
-        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-        alert.setTitle("Unsaved data edits");
-        alert.setHeaderText("\"" + table.name() + "\" has unsaved INSERT / UPDATE / DELETE changes.");
-        alert.setContentText("Submit them to the database before closing?");
-        alert.getButtonTypes().setAll(submit, discard, ButtonType.CANCEL);
-        if (getScene() != null) {
-            alert.initOwner(getScene().getWindow());
-        }
-        Optional<ButtonType> choice = alert.showAndWait();
-        if (choice.isEmpty() || choice.get() == ButtonType.CANCEL) {
-            return false;
-        }
-        if (choice.get() == discard) {
-            return true;
-        }
-        return submitChanges(true);
+    public void setOnStatusChanged(Runnable action) {
+        this.onStatusChanged = action == null ? () -> { } : action;
     }
 
-    private void installShortcuts() {
-        addEventFilter(KeyEvent.KEY_PRESSED, event -> {
-            if (!editable) {
-                return;
-            }
-            KeyCombination setNull = new KeyCodeCombination(KeyCode.N, KeyCombination.ALT_DOWN);
-            if (setNull.match(event)) {
-                setSelectedCellsNull();
-                event.consume();
-            }
-        });
-    }
-
-    private void reloadWithConfirm() {
-        if (isDirty()) {
-            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-            alert.setTitle("Discard edits?");
-            alert.setHeaderText("Reload will discard unsaved changes.");
-            alert.setContentText("Continue?");
-            if (getScene() != null) {
-                alert.initOwner(getScene().getWindow());
-            }
-            Optional<ButtonType> choice = alert.showAndWait();
-            if (choice.isEmpty() || choice.get() != ButtonType.OK) {
-                return;
-            }
-        }
-        reload();
-    }
-
-    private void reload() {
-        status.setText("Loading\u2026");
-        submitButton.setDisable(true);
-        revertButton.setDisable(true);
+    public void reload() {
+        setStatus("Loading\u2026");
         String sql = "SELECT * FROM " + qualifiedName + " LIMIT " + DEFAULT_LIMIT + ";";
         Task<ScriptResult> task = new Task<>() {
             @Override
@@ -239,71 +136,39 @@ public final class TableDataEditorPane extends BorderPane {
         task.setOnSucceeded(event -> {
             ScriptResult script = task.getValue();
             if (script == null || script.isEmpty()) {
-                status.setText("No result");
+                setStatus("No result");
                 return;
             }
             QueryResult result = script.results().getFirst();
             if (result.isError()) {
-                status.setText(result.errorMessage());
-                grid.getItems().clear();
-                grid.getColumns().clear();
+                setStatus(result.errorMessage());
+                table.clear();
                 rowStates.clear();
+                notifyDirty();
                 return;
             }
             present(result);
         });
-        task.setOnFailed(event -> status.setText(String.valueOf(task.getException().getMessage())));
+        task.setOnFailed(event -> setStatus(String.valueOf(task.getException().getMessage())));
         background.execute(task);
     }
 
-    private void present(QueryResult result) {
-        rowStates.clear();
-        truncated = result.truncated();
-        columnNames = result.columnNames();
-        grid.getColumns().clear();
-        ObservableList<ObservableList<String>> rows = FXCollections.observableArrayList();
-
-        for (int i = 0; i < columnNames.size(); i++) {
-            int columnIndex = i;
-            String name = columnNames.get(i);
-            boolean pk = containsIgnoreCase(primaryKeyColumns, name);
-            TableColumn<ObservableList<String>, String> column = new TableColumn<>(pk ? name + " (PK)" : name);
-            column.setPrefWidth(Math.clamp(name.length() * 8 + 28, 70, 280));
-            column.setEditable(editable);
-            column.setCellValueFactory(features -> {
-                ObservableList<String> row = features.getValue();
-                String value = columnIndex < row.size() ? row.get(columnIndex) : null;
-                return new SimpleStringProperty(value);
-            });
-            column.setCellFactory(ignored -> new NullAwareCell(columnIndex, pk));
-            column.setOnEditCommit(event -> {
-                ObservableList<String> row = event.getRowValue();
-                if (row == null || isDeleted(row)) {
-                    return;
-                }
-                if (pk && !isInserted(row)) {
-                    return;
-                }
-                if (columnIndex < row.size()) {
-                    row.set(columnIndex, event.getNewValue());
-                }
-                refreshRowStyles();
-                markDirtyState();
-            });
-            grid.getColumns().add(column);
+    public void reloadWithConfirm() {
+        if (isDirty()) {
+            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+            alert.setTitle("Discard edits?");
+            alert.setHeaderText("Reload will discard unsaved changes.");
+            alert.setContentText("Continue?");
+            initOwner(alert);
+            Optional<ButtonType> choice = alert.showAndWait();
+            if (choice.isEmpty() || choice.get() != ButtonType.OK) {
+                return;
+            }
         }
-
-        for (List<String> row : result.rows()) {
-            ObservableList<String> live = FXCollections.observableArrayList(row);
-            rowStates.put(live, new RowState(RowKind.EXISTING, copyRow(row)));
-            rows.add(live);
-        }
-        grid.setItems(rows);
-        updateStatusLine();
-        markDirtyState();
+        reload();
     }
 
-    private void addRow() {
+    public void addRow() {
         if (!editable || columnNames.isEmpty()) {
             return;
         }
@@ -312,16 +177,16 @@ public final class TableDataEditorPane extends BorderPane {
             live.add(null);
         }
         rowStates.put(live, new RowState(RowKind.INSERTED, null));
-        grid.getItems().add(live);
-        grid.getSelectionModel().clearSelection();
-        grid.getSelectionModel().select(live);
-        grid.scrollTo(live);
-        refreshRowStyles();
-        markDirtyState();
+        table.backingRows().add(live);
+        table.applyRowFilter(table.rowFilter());
+        table.getSelectionModel().clearSelection();
+        table.getSelectionModel().select(live);
+        table.scrollTo(live);
+        notifyDirty();
         updateStatusLine();
     }
 
-    private void deleteSelected() {
+    public void deleteSelected() {
         if (!editable) {
             return;
         }
@@ -344,78 +209,230 @@ public final class TableDataEditorPane extends BorderPane {
                 rowStates.put(row, new RowState(RowKind.EXISTING, state.original()));
             }
         }
-        grid.getItems().removeAll(toRemove);
-        refreshRowStyles();
-        markDirtyState();
+        table.backingRows().removeAll(toRemove);
+        table.applyRowFilter(table.rowFilter());
+        table.refresh();
+        notifyDirty();
         updateStatusLine();
     }
 
-    private void setSelectedCellsNull() {
+    public void submitChanges() {
+        submitChanges(false);
+    }
+
+    public boolean submitChanges(boolean blocking) {
+        List<String> statements = pendingStatements();
+        if (statements.isEmpty()) {
+            return true;
+        }
+        setStatus("Submitting " + statements.size() + " change(s)\u2026");
+        if (blocking) {
+            try {
+                ScriptResult script = scriptRunner.apply(statements).get(60, TimeUnit.SECONDS);
+                if (script.errorCount() > 0) {
+                    setStatus("Submit failed: " + script.summary());
+                    notifyDirty();
+                    return false;
+                }
+                setStatus("Submitted " + statements.size() + " change(s)");
+                reload();
+                return true;
+            } catch (Exception error) {
+                setStatus("Submit failed: " + error.getMessage());
+                notifyDirty();
+                return false;
+            }
+        }
+        Task<ScriptResult> task = new Task<>() {
+            @Override
+            protected ScriptResult call() throws Exception {
+                return scriptRunner.apply(statements).get();
+            }
+        };
+        task.setOnSucceeded(event -> {
+            ScriptResult script = task.getValue();
+            if (script.errorCount() > 0) {
+                setStatus("Submit failed: " + script.summary());
+                notifyDirty();
+                return;
+            }
+            setStatus("Submitted " + statements.size() + " change(s)");
+            Platform.runLater(this::reload);
+        });
+        task.setOnFailed(event -> {
+            setStatus("Submit failed: " + task.getException().getMessage());
+            notifyDirty();
+        });
+        background.execute(task);
+        return true;
+    }
+
+    public void revertChanges() {
+        List<ObservableList<String>> keep = new ArrayList<>();
+        for (ObservableList<String> row : List.copyOf(table.backingRows())) {
+            RowState state = rowStates.get(row);
+            if (state == null) {
+                continue;
+            }
+            if (state.kind() == RowKind.INSERTED) {
+                rowStates.remove(row);
+                continue;
+            }
+            if (state.kind() == RowKind.DELETED) {
+                rowStates.put(row, new RowState(RowKind.EXISTING, state.original()));
+            }
+            List<String> original = state.original();
+            for (int i = 0; i < original.size() && i < row.size(); i++) {
+                row.set(i, original.get(i));
+            }
+            keep.add(row);
+        }
+        table.backingRows().setAll(keep);
+        table.applyRowFilter(table.rowFilter());
+        table.refresh();
+        notifyDirty();
+        updateStatusLine();
+        setStatus("Reverted local edits");
+    }
+
+    /**
+     * Confirm discard/submit before closing. Returns {@code true} when safe to close.
+     */
+    public boolean confirmClose() {
+        if (!isDirty()) {
+            return true;
+        }
+        ButtonType submit = new ButtonType("Submit", ButtonBar.ButtonData.YES);
+        ButtonType discard = new ButtonType("Discard", ButtonBar.ButtonData.NO);
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+        alert.setTitle("Unsaved data edits");
+        alert.setHeaderText("\"" + schemaTable.name() + "\" has unsaved INSERT / UPDATE / DELETE changes.");
+        alert.setContentText("Submit them to the database before closing?");
+        alert.getButtonTypes().setAll(submit, discard, ButtonType.CANCEL);
+        initOwner(alert);
+        Optional<ButtonType> choice = alert.showAndWait();
+        if (choice.isEmpty() || choice.get() == ButtonType.CANCEL) {
+            return false;
+        }
+        if (choice.get() == discard) {
+            return true;
+        }
+        return submitChanges(true);
+    }
+
+    public void dispose() {
+        table.getStyleClass().remove("table-data-grid");
+        table.setEditable(false);
+        table.setRowFactory(null);
+        rowStates.clear();
+    }
+
+    private void present(QueryResult result) {
+        rowStates.clear();
+        truncated = result.truncated();
+        columnNames = result.columnNames();
+        table.beginEditPresent(result);
+
+        ObservableList<ObservableList<String>> rows = table.backingRows();
+        rows.clear();
+        table.getColumns().clear();
+        table.getColumns().add(table.createRowNumberColumn());
+
+        for (int i = 0; i < columnNames.size(); i++) {
+            int columnIndex = i;
+            String name = columnNames.get(i);
+            boolean pk = containsIgnoreCase(primaryKeyColumns, name);
+            TableColumn<ObservableList<String>, String> column = new TableColumn<>(pk ? name + " (PK)" : name);
+            column.setPrefWidth(Math.clamp(name.length() * 8 + 28, 70, 420));
+            column.setEditable(editable);
+            column.setCellValueFactory(features -> {
+                ObservableList<String> row = features.getValue();
+                String value = columnIndex < row.size() ? row.get(columnIndex) : null;
+                return new SimpleStringProperty(value);
+            });
+            column.setCellFactory(ignored -> new NullAwareCell(columnIndex, pk));
+            column.setOnEditCommit(event -> {
+                ObservableList<String> row = event.getRowValue();
+                if (row == null || isDeleted(row)) {
+                    return;
+                }
+                if (pk && !isInserted(row)) {
+                    return;
+                }
+                if (columnIndex < row.size()) {
+                    row.set(columnIndex, event.getNewValue());
+                }
+                table.refresh();
+                notifyDirty();
+            });
+            table.getColumns().add(column);
+        }
+
+        for (List<String> row : result.rows()) {
+            ObservableList<String> live = FXCollections.observableArrayList(row);
+            rowStates.put(live, new RowState(RowKind.EXISTING, copyRow(row)));
+            rows.add(live);
+        }
+        table.applyRowFilter("");
+        updateStatusLine();
+        notifyDirty();
+    }
+
+    private void onKeyPressed(KeyEvent event) {
         if (!editable) {
             return;
         }
+        KeyCombination setNull = new KeyCodeCombination(KeyCode.N, KeyCombination.ALT_DOWN);
+        if (setNull.match(event)) {
+            setSelectedCellsNull();
+            event.consume();
+        }
+    }
+
+    private void setSelectedCellsNull() {
         boolean changed = false;
-        for (TablePosition<?, ?> position : List.copyOf(grid.getSelectionModel().getSelectedCells())) {
+        for (TablePosition<?, ?> position : List.copyOf(table.getSelectionModel().getSelectedCells())) {
             int rowIndex = position.getRow();
             int colIndex = position.getColumn();
-            if (rowIndex < 0 || colIndex < 0 || rowIndex >= grid.getItems().size()) {
+            // Skip leading "#" column.
+            int dataCol = colIndex - 1;
+            if (rowIndex < 0 || dataCol < 0 || rowIndex >= table.getItems().size()) {
                 continue;
             }
-            ObservableList<String> row = grid.getItems().get(rowIndex);
+            ObservableList<String> row = table.getItems().get(rowIndex);
             if (isDeleted(row)) {
                 continue;
             }
-            boolean pk = colIndex < columnNames.size()
-                    && containsIgnoreCase(primaryKeyColumns, columnNames.get(colIndex));
+            boolean pk = dataCol < columnNames.size()
+                    && containsIgnoreCase(primaryKeyColumns, columnNames.get(dataCol));
             if (pk && !isInserted(row)) {
                 continue;
             }
-            if (colIndex < row.size()) {
-                row.set(colIndex, null);
+            if (dataCol < row.size()) {
+                row.set(dataCol, null);
                 changed = true;
             }
         }
         if (changed) {
-            grid.refresh();
-            refreshRowStyles();
-            markDirtyState();
+            table.refresh();
+            notifyDirty();
         }
     }
 
     private Set<ObservableList<String>> selectedRows() {
         Set<ObservableList<String>> rows = new HashSet<>();
-        for (TablePosition<?, ?> position : grid.getSelectionModel().getSelectedCells()) {
+        for (TablePosition<?, ?> position : table.getSelectionModel().getSelectedCells()) {
             int rowIndex = position.getRow();
-            if (rowIndex >= 0 && rowIndex < grid.getItems().size()) {
-                rows.add(grid.getItems().get(rowIndex));
+            if (rowIndex >= 0 && rowIndex < table.getItems().size()) {
+                rows.add(table.getItems().get(rowIndex));
             }
         }
-        for (ObservableList<String> row : grid.getSelectionModel().getSelectedItems()) {
+        for (ObservableList<String> row : table.getSelectionModel().getSelectedItems()) {
             if (row != null) {
                 rows.add(row);
             }
         }
         return rows;
-    }
-
-    private void markDirtyState() {
-        boolean dirty = isDirty();
-        submitButton.setDisable(!editable || !dirty);
-        revertButton.setDisable(!dirty);
-        refreshRowStyles();
-        onDirtyChanged.run();
-    }
-
-    private void updateStatusLine() {
-        String mode = editable
-                ? "Editable \u00B7 PK: " + String.join(", ", primaryKeyColumns)
-                : table.type() == NodeType.VIEW
-                ? "View \u00B7 read-only"
-                : "Read-only \u00B7 no primary key detected";
-        int visible = grid.getItems().size();
-        status.setText(visible + " rows \u00B7 " + mode
-                + (truncated ? " \u00B7 truncated" : "")
-                + (editable ? " \u00B7 Alt+N = NULL" : ""));
     }
 
     private List<String> pendingStatements() {
@@ -450,94 +467,31 @@ public final class TableDataEditorPane extends BorderPane {
         return statements;
     }
 
-    /**
-     * @param blocking when {@code true}, waits for the JDBC round-trip (used by close confirm)
-     * @return {@code true} when submit succeeded (or nothing to do)
-     */
-    private boolean submitChanges(boolean blocking) {
-        List<String> statements = pendingStatements();
-        if (statements.isEmpty()) {
-            return true;
-        }
-        status.setText("Submitting " + statements.size() + " change(s)\u2026");
-        submitButton.setDisable(true);
-        if (blocking) {
-            try {
-                ScriptResult script = scriptRunner.apply(statements).get(60, TimeUnit.SECONDS);
-                if (script.errorCount() > 0) {
-                    status.setText("Submit failed: " + script.summary());
-                    markDirtyState();
-                    return false;
-                }
-                status.setText("Submitted " + statements.size() + " change(s)");
-                reload();
-                return true;
-            } catch (Exception error) {
-                status.setText("Submit failed: " + error.getMessage());
-                markDirtyState();
-                return false;
-            }
-        }
-        Task<ScriptResult> task = new Task<>() {
-            @Override
-            protected ScriptResult call() throws Exception {
-                return scriptRunner.apply(statements).get();
-            }
-        };
-        task.setOnSucceeded(event -> {
-            ScriptResult script = task.getValue();
-            if (script.errorCount() > 0) {
-                status.setText("Submit failed: " + script.summary());
-                markDirtyState();
-                return;
-            }
-            status.setText("Submitted " + statements.size() + " change(s)");
-            Platform.runLater(this::reload);
-        });
-        task.setOnFailed(event -> {
-            status.setText("Submit failed: " + task.getException().getMessage());
-            markDirtyState();
-        });
-        background.execute(task);
-        return true;
+    private void notifyDirty() {
+        onDirtyChanged.run();
     }
 
-    private void revertChanges() {
-        List<ObservableList<String>> keep = new ArrayList<>();
-        for (ObservableList<String> row : List.copyOf(grid.getItems())) {
-            RowState state = rowStates.get(row);
-            if (state == null) {
-                continue;
-            }
-            if (state.kind() == RowKind.INSERTED) {
-                rowStates.remove(row);
-                continue;
-            }
-            if (state.kind() == RowKind.DELETED) {
-                rowStates.put(row, new RowState(RowKind.EXISTING, state.original()));
-            }
-            List<String> original = state.original();
-            for (int i = 0; i < original.size() && i < row.size(); i++) {
-                row.set(i, original.get(i));
-            }
-            keep.add(row);
-        }
-        grid.getItems().setAll(keep);
-        grid.refresh();
-        refreshRowStyles();
-        markDirtyState();
-        updateStatusLine();
-        status.setText("Reverted local edits");
+    private void updateStatusLine() {
+        String mode = editable
+                ? "Editable \u00B7 PK: " + String.join(", ", primaryKeyColumns)
+                : schemaTable.type() == NodeType.VIEW
+                ? "View \u00B7 read-only"
+                : "Read-only \u00B7 no primary key detected";
+        int visible = table.backingRows().size();
+        setStatus(visible + " rows \u00B7 " + mode
+                + (truncated ? " \u00B7 truncated" : "")
+                + (editable ? " \u00B7 Alt+N = NULL" : ""));
     }
 
-    private void refreshRowStyles() {
-        grid.lookupAll(".table-row-cell").forEach(node -> {
-            if (node instanceof TableRow<?> row) {
-                row.requestLayout();
-            }
-        });
-        // Force row factories to re-apply style classes.
-        grid.refresh();
+    private void setStatus(String text) {
+        statusText = Objects.requireNonNullElse(text, "");
+        onStatusChanged.run();
+    }
+
+    private void initOwner(Alert alert) {
+        if (table.getScene() != null) {
+            alert.initOwner(table.getScene().getWindow());
+        }
     }
 
     private boolean isInserted(ObservableList<String> row) {
@@ -621,8 +575,8 @@ public final class TableDataEditorPane extends BorderPane {
                     row.set(columnIndex, null);
                 }
                 updateItem(null, false);
-                refreshRowStyles();
-                markDirtyState();
+                table.refresh();
+                notifyDirty();
             });
             setContextMenu(new ContextMenu(setNull));
         }
@@ -656,11 +610,6 @@ public final class TableDataEditorPane extends BorderPane {
         public void cancelEdit() {
             super.cancelEdit();
             updateItem(getItem(), false);
-        }
-
-        @Override
-        public void commitEdit(String newValue) {
-            super.commitEdit(newValue);
         }
 
         @Override
