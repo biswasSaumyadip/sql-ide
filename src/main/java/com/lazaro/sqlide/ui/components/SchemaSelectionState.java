@@ -1,6 +1,7 @@
 package com.lazaro.sqlide.ui.components;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -14,6 +15,27 @@ final class SchemaSelectionState {
     private final List<String> available = new ArrayList<>();
     private final LinkedHashSet<String> selected = new LinkedHashSet<>();
     private boolean initialized;
+
+    /**
+     * Applies a previously persisted selection before catalogs are loaded.
+     * Marks the state initialized so the next {@link #setAvailableSchemas}
+     * keeps these names (pruned to whatever is available) instead of preferred.
+     */
+    void applyRestoredSelection(Collection<String> names) {
+        selected.clear();
+        if (names != null) {
+            for (String name : names) {
+                if (name != null && !name.isBlank()) {
+                    selected.add(name.strip());
+                }
+            }
+        }
+        initialized = true;
+    }
+
+    boolean isInitialized() {
+        return initialized;
+    }
 
     void setAvailableSchemas(List<String> schemas, String preferredActive) {
         available.clear();

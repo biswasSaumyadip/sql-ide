@@ -1,5 +1,6 @@
 package com.lazaro.sqlide.ui.components;
 
+import com.lazaro.sqlide.core.config.SchemaSelectionStore;
 import javafx.geometry.Insets;
 import javafx.geometry.Point2D;
 import javafx.geometry.Pos;
@@ -16,16 +17,20 @@ import javafx.scene.layout.VBox;
 import javafx.stage.Popup;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.function.Consumer;
 
 /**
  * Per-connection schema filter: owns selection state and a shared checklist popup
- * anchored under the clicked connection badge.
+ * anchored under the clicked connection badge. Selections are persisted per
+ * connection id under {@code ~/.sql-ide-config/schema-selections.json}.
  */
 public final class SchemaSelectionControl {
 
+    private static final String SESSION_ID = "__session__";
+
+    private final SchemaSelectionStore store;
     private final SchemaSelectionRegistry registry = new SchemaSelectionRegistry();
     private final Popup popup = new Popup();
     private final TextField searchField = new TextField();
@@ -37,10 +42,25 @@ public final class SchemaSelectionControl {
     private Consumer<String> onSelectionChanged = connectionId -> { };
 
     public SchemaSelectionControl() {
+        this(new SchemaSelectionStore());
+    }
+
+    SchemaSelectionControl(SchemaSelectionStore store) {
+        this.store = Objects.requireNonNull(store, "store");
+        restoreFromDisk();
         popup.setAutoHide(true);
         popup.setHideOnEscape(true);
         popup.getContent().add(buildPopupContent());
         popup.setOnHidden(event -> popupConnectionId = null);
+    }
+
+    private void restoreFromDisk() {
+        for (Map.Entry<String, List<String>> entry : store.loadAll().entrySet()) {
+            if (SESSION_ID.equals(entry.getKey())) {
+                continue;
+            }
+            registry.forConnection(entry.getKey()).applyRestoredSelection(entry.getValue());
+        }
     }
 
     /**
@@ -77,6 +97,9 @@ public final class SchemaSelectionControl {
 
     public void forgetConnection(String connectionId) {
         registry.remove(connectionId);
+        if (!SESSION_ID.equals(connectionId)) {
+            store.remove(connectionId);
+        }
         if (Objects.equals(popupConnectionId, connectionId)) {
             hidePopup();
         }
@@ -209,7 +232,18 @@ public final class SchemaSelectionControl {
 
     private void fireChanged() {
         updateSummary();
+        persistSelection(popupConnectionId);
         onSelectionChanged.accept(popupConnectionId);
+    }
+
+    private void persistSelection(String connectionId) {
+        if (connectionId == null || connectionId.isBlank() || SESSION_ID.equals(connectionId)) {
+            return;
+        }
+        SchemaSelectionState target = registry.hasConnection(connectionId)
+                ? registry.forConnection(connectionId)
+                : state;
+        store.saveSelection(connectionId, target.selected());
     }
 
     private void updateSummary() {

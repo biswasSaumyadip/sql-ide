@@ -48,4 +48,24 @@ class SchemaSelectionStateTest {
         assertEquals(0, state.selectedCount());
         assertFalse(state.isSchemaVisible("a"));
     }
+
+    @Test
+    void restoredSelectionBeatsPreferredOnLoad() {
+        SchemaSelectionState state = new SchemaSelectionState();
+        state.applyRestoredSelection(List.of("shop", "test"));
+        state.setAvailableSchemas(List.of("mysql", "app", "shop", "sys", "test"), "app");
+        assertEquals(2, state.selectedCount());
+        assertTrue(state.isSchemaVisible("shop"));
+        assertTrue(state.isSchemaVisible("test"));
+        assertFalse(state.isSchemaVisible("app"));
+    }
+
+    @Test
+    void restoredEmptyMeansNoneSelected() {
+        SchemaSelectionState state = new SchemaSelectionState();
+        state.applyRestoredSelection(List.of());
+        state.setAvailableSchemas(List.of("a", "b"), "a");
+        assertEquals(0, state.selectedCount());
+        assertFalse(state.isSchemaVisible("a"));
+    }
 }
