@@ -49,6 +49,7 @@ public final class SchemaTreeView extends VBox {
 
     private final TreeView<SchemaNode> tree = new TreeView<>();
     private final TextField filterField = new TextField();
+    private final SchemaSelectionControl schemaSelection = new SchemaSelectionControl();
     private final Label headerLabel = new Label("DATABASE");
     private final StackPane body = new StackPane();
     private final VBox loadingState = new VBox(10);
@@ -92,7 +93,14 @@ public final class SchemaTreeView extends VBox {
                 filterField.clear();
             }
         });
-        VBox filterBar = new VBox(filterField);
+
+        schemaSelection.setOnSelectionChanged(selection -> applyFilter());
+        HBox.setHgrow(schemaSelection, Priority.NEVER);
+        schemaSelection.setMinWidth(72);
+        schemaSelection.setPrefWidth(88);
+        HBox.setHgrow(filterField, Priority.ALWAYS);
+        HBox filterBar = new HBox(6, schemaSelection, filterField);
+        filterBar.setAlignment(Pos.CENTER_LEFT);
         filterBar.setPadding(new Insets(0, 8, 6, 8));
 
         tree.setShowRoot(false);
@@ -282,7 +290,9 @@ public final class SchemaTreeView extends VBox {
             }
             if (nodes == null || nodes.isEmpty()) {
                 dataSourceItem.replaceChildren(List.of(placeholderItem("No databases visible")));
+                schemaSelection.clear();
             } else {
+                rememberAvailableSchemas(nodes);
                 List<TreeItem<SchemaNode>> children = new ArrayList<>();
                 for (SchemaNode node : nodes) {
                     children.add(schemaItem(node));
@@ -322,6 +332,9 @@ public final class SchemaTreeView extends VBox {
 
         allDataSources.clear();
         allDataSources.addAll(roots);
+        if (config.isEmpty()) {
+            schemaSelection.clear();
+        }
         publishDataSources();
         updateEmptyHint();
         showLoadingOverlay(false);
@@ -384,7 +397,9 @@ public final class SchemaTreeView extends VBox {
                 item.replaceChildren(List.of(placeholderItem(rootCauseMessage(error))));
             } else if (nodes == null || nodes.isEmpty()) {
                 item.replaceChildren(List.of(placeholderItem("empty")));
+                schemaSelection.clear();
             } else {
+                rememberAvailableSchemas(nodes);
                 List<TreeItem<SchemaNode>> children = new ArrayList<>();
                 for (SchemaNode child : nodes) {
                     children.add(schemaItem(child));
@@ -393,6 +408,20 @@ public final class SchemaTreeView extends VBox {
             }
             applyFilter();
         }));
+    }
+
+    private void rememberAvailableSchemas(List<SchemaNode> nodes) {
+        List<String> names = new ArrayList<>();
+        for (SchemaNode node : nodes) {
+            if (node.type() == NodeType.DATABASE || node.type() == NodeType.SCHEMA) {
+                names.add(node.name());
+            }
+        }
+        String preferred = driver == null ? null : driver.activeCatalog().orElse(null);
+        if ((preferred == null || preferred.isBlank()) && driver != null) {
+            preferred = driver.currentConfig().map(ConnectionConfig::database).orElse(null);
+        }
+        schemaSelection.setAvailableSchemas(names, preferred);
     }
 
     private LazyItem schemaItem(SchemaNode node) {
@@ -636,40 +665,52 @@ public final class SchemaTreeView extends VBox {
 
         @Override
         void applyFilter(String needle) {
-            if (needle == null || needle.isBlank()) {
-                visibleUnderFilter = true;
-                if (!fullChildren.isEmpty()) {
-                    getChildren().setAll(fullChildren);
-                }
-                for (TreeItem<SchemaNode> child : fullChildren) {
-                    if (child instanceof FilterableItem filterable) {
-                        filterable.applyFilter("");
-                    }
-                }
-                return;
-            }
-            boolean selfMatch = matchesNeedle(getValue(), needle);
+            String text = needle == null ? "" : needle;
+            boolean filteringText = !text.isBlank();
+            boolean selfMatch = matchesNeedle(getValue(), text);
             boolean anyChild = false;
             List<TreeItem<SchemaNode>> shown = new ArrayList<>();
             for (TreeItem<SchemaNode> child : fullChildren) {
+                if (!passesSchemaSelection(child)) {
+                    continue;
+                }
+                if (!filteringText) {
+                    if (child instanceof FilterableItem filterable) {
+                        filterable.applyFilter("");
+                    }
+                    shown.add(child);
+                    anyChild = true;
+                    continue;
+                }
                 if (child instanceof FilterableItem filterable) {
-                    filterable.applyFilter(needle);
+                    filterable.applyFilter(text);
                     if (filterable.isVisibleUnderFilter()) {
                         shown.add(child);
                         anyChild = true;
                     }
-                } else if (child.getValue() != null && matchesNeedle(child.getValue(), needle)) {
+                } else if (child.getValue() != null && matchesNeedle(child.getValue(), text)) {
                     shown.add(child);
                     anyChild = true;
                 }
             }
-            visibleUnderFilter = selfMatch || anyChild;
+            visibleUnderFilter = !filteringText || selfMatch || anyChild;
             if (loaded || !fullChildren.isEmpty()) {
                 getChildren().setAll(shown);
             }
-            if (anyChild) {
+            if (filteringText && anyChild) {
                 setExpanded(true);
             }
+        }
+
+        private boolean passesSchemaSelection(TreeItem<SchemaNode> child) {
+            SchemaNode node = child.getValue();
+            if (node == null || isPlaceholder(node)) {
+                return true;
+            }
+            if (node.type() != NodeType.DATABASE && node.type() != NodeType.SCHEMA) {
+                return true;
+            }
+            return schemaSelection.isSchemaVisible(node.name());
         }
     }
 

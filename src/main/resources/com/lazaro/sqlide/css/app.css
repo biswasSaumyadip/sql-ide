@@ -298,6 +298,65 @@
     -fx-padding: 5px 8px;
 }
 
+.schema-picker-button {
+    -fx-background-color: #17181b;
+    -fx-text-fill: #d6d9de;
+    -fx-background-radius: 4px;
+    -fx-border-color: #303237;
+    -fx-border-radius: 4px;
+    -fx-padding: 5px 8px;
+    -fx-font-size: 11px;
+    -fx-cursor: hand;
+}
+
+.schema-picker-button:hover {
+    -fx-background-color: #262a32;
+    -fx-border-color: #4fa6ee;
+}
+
+.schema-picker-button:disabled {
+    -fx-opacity: 0.45;
+}
+
+.schema-picker-popup {
+    -fx-background-color: #2b2d31;
+    -fx-border-color: #454951;
+    -fx-border-radius: 6px;
+    -fx-background-radius: 6px;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.45), 12, 0.2, 0, 4);
+}
+
+.schema-picker-title {
+    -fx-text-fill: #eceff4;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+}
+
+.schema-picker-summary {
+    -fx-text-fill: #7f848e;
+    -fx-font-size: 11px;
+}
+
+.schema-picker-list .check-box {
+    -fx-text-fill: #d6d9de;
+    -fx-padding: 3px 4px;
+}
+
+.schema-picker-list .check-box:hover {
+    -fx-background-color: #262a32;
+}
+
+.schema-picker-scroll {
+    -fx-background-color: #1e1f22;
+    -fx-background: #1e1f22;
+    -fx-border-color: #303237;
+    -fx-border-radius: 4px;
+}
+
+.schema-picker-scroll .viewport {
+    -fx-background-color: #1e1f22;
+}
+
 .schema-data-source .schema-node-name {
     -fx-font-weight: bold;
 }
