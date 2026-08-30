@@ -44,12 +44,31 @@
 
 .sql-fold-slot {
     -fx-background-color: #1e1f22;
-    -fx-padding: 0 0 0 2;
+    -fx-padding: 0 2 0 2;
+    -fx-alignment: center;
 }
 
 .sql-fold-chevron {
-    -fx-padding: 0;
+    -fx-padding: 0 4 0 4;
     -fx-background-color: transparent;
+    -fx-text-fill: #c5cad3;
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-font-family: "Segoe UI Symbol", "JetBrains Mono", "Consolas", monospace;
+    -fx-cursor: hand;
+    -fx-min-width: 18px;
+    -fx-alignment: center;
+}
+
+.sql-fold-chevron-collapsed,
+.sql-fold-chevron:hover {
+    -fx-text-fill: #f0f2f5;
+}
+
+/* RichTextFX paragraph fold leftovers — unused with text-replacement folding. */
+.sql-editor .paragraph-text.collapse,
+.styled-text-area .collapse {
+    visibility: collapse;
 }
 
 .sql-editor-stack {
@@ -57,8 +76,8 @@
 }
 
 .inlay-layer {
-    -fx-background-color: transparent;
     -fx-padding: 0;
+    -fx-background-color: null;
 }
 
 .inlay-hint {
@@ -72,6 +91,14 @@
     -fx-padding: 0 4px;
     -fx-cursor: default;
     -fx-opacity: 0.92;
+}
+
+/* Fold summary string in the text flow (styled via lexer, not a Label overlay). */
+.sql-editor .text.fold-placeholder {
+    -rtfx-background-color: -color-bg-subtle;
+    -fx-fill: -color-fg-muted;
+    -rtfx-border-color: -color-border-subtle;
+    -rtfx-border-width: 1px;
 }
 
 /* Token rules must outrank the `.sql-editor .text` base colour above, so they

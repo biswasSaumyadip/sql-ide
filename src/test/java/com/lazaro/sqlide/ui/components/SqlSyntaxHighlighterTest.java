@@ -175,6 +175,26 @@ class SqlSyntaxHighlighterTest {
         assertEquals(json, found.get().json());
     }
 
+    @Test
+    @DisplayName("fold summary strings are styled as fold-placeholder")
+    void stylesFoldPlaceholders() {
+        String sql = "VALUES { 3 keys } AND [ 2 items ] AND ( 'Thrall'... )";
+        var spans = SqlSyntaxHighlighter.computeHighlighting(sql);
+        assertTrue(hasStyleAt(sql, spans, "{ 3 keys }", SqlSyntaxHighlighter.FOLD_PLACEHOLDER));
+        assertTrue(hasStyleAt(sql, spans, "[ 2 items ]", SqlSyntaxHighlighter.FOLD_PLACEHOLDER));
+        assertTrue(hasStyleAt(sql, spans, "( 'Thrall'... )", SqlSyntaxHighlighter.FOLD_PLACEHOLDER));
+    }
+
+    @Test
+    @DisplayName("explicit fold ranges style summaries the lexer may miss")
+    void stylesExplicitFoldRanges() {
+        String summary = "( 1, 2 )";
+        String sql = "VALUES " + summary;
+        int start = sql.indexOf(summary);
+        var spans = SqlSyntaxHighlighter.computeHighlighting(sql, List.of(new int[]{start, start + summary.length()}));
+        assertTrue(hasStyleAt(sql, spans, summary, SqlSyntaxHighlighter.FOLD_PLACEHOLDER));
+    }
+
     private static boolean hasStyleAt(
             String sql,
             org.fxmisc.richtext.model.StyleSpans<java.util.Collection<String>> spans,

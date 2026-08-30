@@ -64,7 +64,18 @@ class SqlFoldRegionsTest {
     }
 
     @Test
-    void singleLineGroupsAreNotFoldable() {
-        assertTrue(SqlFoldRegions.find("SELECT (1) FROM t").isEmpty());
+    void detectsTypicalInsertValuesFold() {
+        String sql = """
+                INSERT INTO characters (name, level)
+                VALUES (
+                  'Thrall',
+                  99
+                );
+                """;
+        var regions = SqlFoldRegions.find(sql);
+        assertFalse(regions.isEmpty());
+        assertTrue(regions.stream().anyMatch(r -> r.open() == '(' && r.spansMultipleLines()));
+        var byLine = SqlFoldRegions.byStartLine(sql);
+        assertTrue(byLine.values().stream().anyMatch(SqlFoldRegions.Region::spansMultipleLines));
     }
 }
