@@ -41,6 +41,7 @@ public final class QueryOutcomePane extends VBox {
     private final StackPane body = new StackPane(resultTabs);
 
     private Consumer<QueryResult> onExportToFile = result -> { };
+    private Consumer<QueryResult> onExportJsonArray = result -> { };
     private Runnable onRefresh = () -> { };
     private Runnable onActionsChanged = () -> { };
     private Function<List<String>, CompletableFuture<ScriptResult>> scriptRunner = statements ->
@@ -59,6 +60,7 @@ public final class QueryOutcomePane extends VBox {
 
         toolbar.setTableSupplier(this::results);
         toolbar.setOnExportToFile(result -> onExportToFile.accept(result));
+        toolbar.setOnExportJsonArray(result -> onExportJsonArray.accept(result));
         toolbar.setOnRefresh(this::refreshActive);
         toolbar.setOnClear(this::clearUnpinned);
         toolbar.setOnTogglePin(this::togglePinSelected);
@@ -125,6 +127,11 @@ public final class QueryOutcomePane extends VBox {
     public void setOnExportToFile(Consumer<QueryResult> action) {
         this.onExportToFile = action == null ? result -> { } : action;
         toolbar.setOnExportToFile(this.onExportToFile);
+    }
+
+    public void setOnExportJsonArray(Consumer<QueryResult> action) {
+        this.onExportJsonArray = action == null ? result -> { } : action;
+        toolbar.setOnExportJsonArray(this.onExportJsonArray);
     }
 
     public void setOnRefresh(Runnable action) {
@@ -217,7 +224,8 @@ public final class QueryOutcomePane extends VBox {
         }
 
         ResultPage page = ResultPage.forTableData(
-                node, qualifiedName, primaryKeyColumns, scriptRunner, background, onExportToFile, output);
+                node, qualifiedName, primaryKeyColumns, scriptRunner, background,
+                onExportToFile, onExportJsonArray, output);
         Tab tab = wrap(node.name() + " data", page, false, false);
         tab.getStyleClass().add(DATA_TAB_STYLE);
         page.editSession().setOnDirtyChanged(() -> {
@@ -318,7 +326,7 @@ public final class QueryOutcomePane extends VBox {
                 hasResultSet = true;
             }
             String title = results.size() == 1 ? tabTitle(result) : "Result " + (i + 1);
-            ResultPage page = ResultPage.from(result, preferPlan && results.size() == 1, onExportToFile);
+            ResultPage page = ResultPage.from(result, preferPlan && results.size() == 1, onExportToFile, onExportJsonArray);
             String sql = i < statements.size() ? statements.get(i) : null;
             maybeEnableEditing(page, result, sql);
             Tab tab = wrap(title, page, result.isError(), false);
@@ -667,10 +675,15 @@ public final class QueryOutcomePane extends VBox {
             return page;
         }
 
-        static ResultPage from(QueryResult result, boolean preferPlan, Consumer<QueryResult> onExportToFile) {
+        static ResultPage from(
+                QueryResult result,
+                boolean preferPlan,
+                Consumer<QueryResult> onExportToFile,
+                Consumer<QueryResult> onExportJsonArray) {
             ResultPage page = new ResultPage();
             page.result = result;
             page.table.setOnExportToFile(onExportToFile);
+            page.table.setOnExportJsonArray(onExportJsonArray);
             page.applyTruncationBanner(result);
             if (result.isError()) {
                 page.table.showMessage("Fix the statement above and run again.");
@@ -717,9 +730,11 @@ public final class QueryOutcomePane extends VBox {
                 Function<List<String>, CompletableFuture<ScriptResult>> scriptRunner,
                 Executor background,
                 Consumer<QueryResult> onExportToFile,
+                Consumer<QueryResult> onExportJsonArray,
                 OutputConsoleView output) {
             ResultPage page = new ResultPage();
             page.table.setOnExportToFile(onExportToFile);
+            page.table.setOnExportJsonArray(onExportJsonArray);
             TableDataEditSession session = new TableDataEditSession(
                     page.table, node, qualifiedName, primaryKeyColumns, scriptRunner, background);
             session.setOutputHooks(output::appendRunning, output::appendScript);

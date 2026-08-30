@@ -126,6 +126,7 @@ public final class ResultToolbar extends HBox {
     private Runnable onSubmitEdits = () -> { };
     private Runnable onRevertEdits = () -> { };
     private Consumer<QueryResult> onExportToFile = result -> { };
+    private Consumer<QueryResult> onExportJsonArray = result -> { };
     private IntConsumer onMaxRowsChanged = rows -> { };
     private Consumer<Boolean> onStopOnErrorChanged = stop -> { };
     private Supplier<DynamicResultTable> tableSupplier = () -> null;
@@ -277,6 +278,10 @@ public final class ResultToolbar extends HBox {
 
     public void setOnExportToFile(Consumer<QueryResult> action) {
         this.onExportToFile = action == null ? result -> { } : action;
+    }
+
+    public void setOnExportJsonArray(Consumer<QueryResult> action) {
+        this.onExportJsonArray = action == null ? result -> { } : action;
     }
 
     public void setOnRefresh(Runnable action) {
@@ -593,7 +598,11 @@ public final class ResultToolbar extends HBox {
         MenuItem exportSelection = new MenuItem("Export selection to File\u2026");
         exportSelection.setOnAction(event -> exportSlice(true));
 
-        exportButton.getItems().setAll(copyTsv, copyCsv, new SeparatorMenuItem(), exportAll, exportSelection);
+        MenuItem exportJson = new MenuItem("Export as JSON Array\u2026");
+        exportJson.setOnAction(event -> exportJsonArray());
+
+        exportButton.getItems().setAll(
+                copyTsv, copyCsv, new SeparatorMenuItem(), exportAll, exportSelection, exportJson);
         exportButton.setOnShowing(event -> {
             DynamicResultTable table = tableSupplier.get();
             boolean ready = table != null && table.hasExportableResult() && !table.getItems().isEmpty();
@@ -602,6 +611,7 @@ public final class ResultToolbar extends HBox {
             copyCsv.setDisable(!ready);
             exportAll.setDisable(!ready);
             exportSelection.setDisable(!ready || !selection);
+            exportJson.setDisable(!ready);
             copyTsv.setText(selection ? "Copy selection as TSV" : "Copy as TSV");
             copyCsv.setText(selection ? "Copy selection as CSV" : "Copy as CSV");
         });
@@ -659,6 +669,17 @@ public final class ResultToolbar extends HBox {
         QueryResult slice = table.exportableResult(selectionOnly);
         if (slice != null) {
             onExportToFile.accept(slice);
+        }
+    }
+
+    private void exportJsonArray() {
+        DynamicResultTable table = tableSupplier.get();
+        if (table == null) {
+            return;
+        }
+        QueryResult slice = table.exportableResult(false);
+        if (slice != null) {
+            onExportJsonArray.accept(slice);
         }
     }
 

@@ -333,7 +333,8 @@
 .icon-copy,
 .icon-fit,
 .icon-grid,
-.icon-plan {
+.icon-plan,
+.icon-eye {
     -fx-stroke: #a4acb9;
 }
 

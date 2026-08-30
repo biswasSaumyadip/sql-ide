@@ -25,8 +25,16 @@ class ResultExporterTest {
         assertTrue(csv.contains("1,Ada"));
 
         String json = ResultExporter.toJson(result);
-        assertTrue(json.contains("\"id\": \"1\""));
+        assertTrue(json.trim().startsWith("["));
+        assertTrue(json.contains("\"id\""));
+        assertTrue(json.contains("\"Ada\""));
         assertTrue(json.contains("null"));
+
+        var maps = ResultExporter.toRowMaps(result);
+        assertEquals(2, maps.size());
+        assertEquals(1L, maps.get(0).get("id"));
+        assertEquals("Ada", maps.get(0).get("name"));
+        assertEquals(null, maps.get(1).get("name"));
 
         String inserts = ResultExporter.toInserts(result, "people");
         assertEquals(

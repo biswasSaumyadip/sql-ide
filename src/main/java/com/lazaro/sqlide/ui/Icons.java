@@ -337,6 +337,13 @@ public final class Icons {
         return group(funnel);
     }
 
+    /** Eye glyph for previewing JSON cell payloads. */
+    public static Node eye() {
+        Ellipse lid = outlined(new Ellipse(7, 7, 5.5, 3.2), "icon-eye");
+        Circle pupil = outlined(new Circle(7, 7, 1.8), "icon-eye");
+        return group(lid, pupil);
+    }
+
     /** Magnifying glass for find-in-results. */
     public static Node find() {
         Circle lens = outlined(new Circle(6.0, 6.0, 3.8), "icon-find");

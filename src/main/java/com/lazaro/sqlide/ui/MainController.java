@@ -211,6 +211,7 @@ public final class MainController {
         runConfigsPane.setOnOpen(this::openRunConfiguration);
         runConfigsPane.setOnRun(this::runConfiguration);
         outcome.setOnExportToFile(this::exportResultToFile);
+        outcome.setOnExportJsonArray(this::exportResultAsJsonArray);
         outcome.setOnRefresh(this::rerunLastQuery);
         outcome.setOnActionsChanged(this::updateActionStates);
         outcome.setScriptRunner(statements -> {
@@ -1465,6 +1466,38 @@ public final class MainController {
         } catch (Exception e) {
             statusBar.setScriptSummary("Export failed: " + rootCauseMessage(e), true);
         }
+    }
+
+    private void exportResultAsJsonArray(QueryResult result) {
+        if (result == null || result.isError() || !result.isResultSet()) {
+            return;
+        }
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Export as JSON Array");
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("JSON", "*.json"));
+        chooser.setInitialFileName("results.json");
+        var file = chooser.showSaveDialog(owner());
+        if (file == null) {
+            return;
+        }
+        statusBar.setScriptSummary("Exporting JSON\u2026", false);
+        Task<Void> task = new Task<>() {
+            @Override
+            protected Void call() throws Exception {
+                String body = ResultExporter.toJson(result);
+                Files.writeString(file.toPath(), body, StandardCharsets.UTF_8);
+                return null;
+            }
+        };
+        task.setOnSucceeded(event ->
+                statusBar.setScriptSummary(
+                        "Exported JSON array (" + result.rowCount()
+                                + (result.rowCount() == 1 ? " row" : " rows")
+                                + ") to " + file.getName(),
+                        false));
+        task.setOnFailed(event -> statusBar.setScriptSummary(
+                "Export failed: " + rootCauseMessage(task.getException()), true));
+        backgroundTasks.execute(task);
     }
 
     private void cancelQuery() {

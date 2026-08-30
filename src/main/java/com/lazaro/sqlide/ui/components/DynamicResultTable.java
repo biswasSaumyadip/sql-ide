@@ -4,6 +4,9 @@ import com.lazaro.sqlide.core.db.JdbcSqlDriver;
 import com.lazaro.sqlide.core.db.QueryResult;
 import com.lazaro.sqlide.core.db.ResultSetMapper;
 import com.lazaro.sqlide.core.export.ResultExporter;
+import com.lazaro.sqlide.core.json.JsonPayloads;
+import com.lazaro.sqlide.ui.Icons;
+import com.lazaro.sqlide.ui.dialogs.JsonViewerDialog;
 import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.collections.FXCollections;
@@ -11,6 +14,7 @@ import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
 import javafx.css.PseudoClass;
 import javafx.geometry.Pos;
+import javafx.scene.control.Button;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
@@ -19,9 +23,14 @@ import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TablePosition;
 import javafx.scene.control.TableView;
+import javafx.scene.control.Tooltip;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.MouseButton;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
 import javafx.scene.text.TextAlignment;
+import javafx.stage.Window;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -51,6 +60,7 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
     private QueryResult currentResult;
     private String rowFilter = "";
     private Consumer<QueryResult> onExportToFile = result -> { };
+    private Consumer<QueryResult> onExportJsonArray = result -> { };
     private TableDataEditSession editSession;
 
     public DynamicResultTable() {
@@ -108,6 +118,11 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
     /** Opens a save dialog for the given slice (selection or full result). */
     public void setOnExportToFile(Consumer<QueryResult> action) {
         this.onExportToFile = action == null ? result -> { } : action;
+    }
+
+    /** Exports the given slice as a pretty-printed JSON array of objects. */
+    public void setOnExportJsonArray(Consumer<QueryResult> action) {
+        this.onExportJsonArray = action == null ? result -> { } : action;
     }
 
     public QueryResult currentResult() {
@@ -348,7 +363,16 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
             }
         });
 
-        ContextMenu menu = new ContextMenu(copyTsv, copyCsv, new SeparatorMenuItem(), exportAll, exportSelection);
+        MenuItem exportJson = new MenuItem("Export as JSON Array\u2026");
+        exportJson.setOnAction(event -> {
+            QueryResult slice = exportableResult(false);
+            if (slice != null) {
+                onExportJsonArray.accept(slice);
+            }
+        });
+
+        ContextMenu menu = new ContextMenu(
+                copyTsv, copyCsv, new SeparatorMenuItem(), exportAll, exportSelection, exportJson);
         menu.setOnShowing(event -> {
             boolean ready = hasExportableResult();
             boolean selection = hasRowSelection();
@@ -356,6 +380,7 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
             copyCsv.setDisable(!ready);
             exportAll.setDisable(!ready);
             exportSelection.setDisable(!ready || !selection);
+            exportJson.setDisable(!ready);
             copyTsv.setText(selection ? "Copy selection as TSV" : "Copy as TSV");
             copyCsv.setText(selection ? "Copy selection as CSV" : "Copy as CSV");
         });
@@ -440,20 +465,74 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
     private static final class ValueCell extends TableCell<ObservableList<String>, String> {
 
         private static final String NULL_STYLE_CLASS = "null-value";
+        private static final int PREVIEW_CHARS = 72;
+
+        private final Label preview = new Label();
+        private final Button eye = new Button();
+        private final HBox jsonRoot = new HBox(4);
+
+        ValueCell() {
+            preview.getStyleClass().add("json-cell-preview");
+            preview.setMaxWidth(Double.MAX_VALUE);
+            HBox.setHgrow(preview, Priority.ALWAYS);
+
+            eye.setGraphic(Icons.eye());
+            eye.getStyleClass().addAll("json-eye-button");
+            eye.setFocusTraversable(false);
+            eye.setTooltip(new Tooltip("View JSON"));
+            eye.setOnAction(event -> {
+                event.consume();
+                openJsonViewer(getItem());
+            });
+
+            jsonRoot.setAlignment(Pos.CENTER_LEFT);
+            jsonRoot.getChildren().setAll(preview, eye);
+            jsonRoot.getStyleClass().add("json-cell-root");
+
+            setOnMouseClicked(event -> {
+                if (event.getButton() == MouseButton.PRIMARY
+                        && event.getClickCount() == 2
+                        && JsonPayloads.looksLikeJson(getItem())) {
+                    event.consume();
+                    openJsonViewer(getItem());
+                }
+            });
+        }
 
         @Override
         protected void updateItem(String item, boolean empty) {
             super.updateItem(item, empty);
             getStyleClass().remove(NULL_STYLE_CLASS);
+            setGraphic(null);
 
             if (empty) {
                 setText(null);
             } else if (item == null) {
                 setText("NULL");
                 getStyleClass().add(NULL_STYLE_CLASS);
+            } else if (JsonPayloads.looksLikeJson(item)) {
+                setText(null);
+                preview.setText(truncate(item, PREVIEW_CHARS));
+                setGraphic(jsonRoot);
             } else {
                 setText(item);
             }
+        }
+
+        private void openJsonViewer(String raw) {
+            if (raw == null || getScene() == null) {
+                return;
+            }
+            Window owner = getScene().getWindow();
+            new JsonViewerDialog(owner, raw).showAndWait();
+        }
+
+        private static String truncate(String text, int maxChars) {
+            String compact = text.replace('\n', ' ').replace('\r', ' ').strip();
+            if (compact.length() <= maxChars) {
+                return compact;
+            }
+            return compact.substring(0, Math.max(0, maxChars - 1)) + "\u2026";
         }
     }
 }

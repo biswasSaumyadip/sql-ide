@@ -1,10 +1,13 @@
 package com.lazaro.sqlide.core.export;
 
 import com.lazaro.sqlide.core.db.QueryResult;
+import com.lazaro.sqlide.core.json.JsonPayloads;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
@@ -70,27 +73,28 @@ public final class ResultExporter {
         return out.toString();
     }
 
+    /**
+     * Serializes the result set as a pretty-printed JSON array of objects
+     * (column names as keys). Values are coerced to JSON types when possible.
+     */
     public static String toJson(QueryResult result) {
-        StringBuilder out = new StringBuilder();
-        out.append("[\n");
+        return JsonPayloads.writePretty(toRowMaps(result)) + "\n";
+    }
+
+    /** Builds row maps suitable for JSON array export (frontend-friendly). */
+    public static List<Map<String, Object>> toRowMaps(QueryResult result) {
+        Objects.requireNonNull(result, "result");
         List<String> columns = result.columnNames();
-        for (int r = 0; r < result.rows().size(); r++) {
-            if (r > 0) {
-                out.append(",\n");
-            }
-            List<String> row = result.rows().get(r);
-            out.append("  {");
+        List<Map<String, Object>> rows = new ArrayList<>(result.rows().size());
+        for (List<String> row : result.rows()) {
+            Map<String, Object> map = new LinkedHashMap<>(columns.size());
             for (int c = 0; c < columns.size(); c++) {
-                if (c > 0) {
-                    out.append(", ");
-                }
                 String value = c < row.size() ? row.get(c) : null;
-                out.append(jsonString(columns.get(c))).append(": ").append(jsonValue(value));
+                map.put(columns.get(c), JsonPayloads.coerceValue(value));
             }
-            out.append('}');
+            rows.add(map);
         }
-        out.append("\n]\n");
-        return out.toString();
+        return rows;
     }
 
     public static String toInserts(QueryResult result, String tableName) {
@@ -130,32 +134,6 @@ public final class ResultExporter {
                 || value.contains("\r");
         String escaped = value.replace("\"", "\"\"");
         return quote ? "\"" + escaped + "\"" : escaped;
-    }
-
-    private static String jsonValue(String value) {
-        return value == null ? "null" : jsonString(value);
-    }
-
-    private static String jsonString(String text) {
-        StringBuilder out = new StringBuilder("\"");
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            switch (c) {
-                case '"' -> out.append("\\\"");
-                case '\\' -> out.append("\\\\");
-                case '\n' -> out.append("\\n");
-                case '\r' -> out.append("\\r");
-                case '\t' -> out.append("\\t");
-                default -> {
-                    if (c < 0x20) {
-                        out.append("\\u%04x".formatted((int) c));
-                    } else {
-                        out.append(c);
-                    }
-                }
-            }
-        }
-        return out.append('"').toString();
     }
 
     private static String sqlLiteral(String value) {
