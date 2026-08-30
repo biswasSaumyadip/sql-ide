@@ -58,6 +58,7 @@ com.lazaro.sqlide
 │   └── ExplainPlanNode             one node in a plan tree
 ├── core.history / core.snippets    JSON stores under ~/.sql-ide
 ├── core.export.ResultExporter      CSV / JSON / SQL INSERT
+├── core.inspection                 JSqlParser AST inspections (errors / warnings)
 └── ui.components
     ├── SqlEditorPane               RichTextFX editor, line numbers
     ├── SqlSyntaxHighlighter        pure regex tokeniser (no JavaFX types)

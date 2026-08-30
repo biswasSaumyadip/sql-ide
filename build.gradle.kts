@@ -26,6 +26,7 @@ dependencies {
     implementation(libs.atlantafx.base)
     implementation(libs.richtextfx)
     implementation(libs.hikaricp)
+    implementation(libs.jsqlparser)
 
     runtimeOnly(libs.mysql.connector)
     runtimeOnly(libs.slf4j.simple)

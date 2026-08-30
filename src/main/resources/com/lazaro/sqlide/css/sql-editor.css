@@ -70,6 +70,42 @@
     -fx-fill: #9aa2ad;
 }
 
+/* IntelliJ-like wavy inspection underlines. RichTextFX paints -rtfx-underline-*
+   under the glyph run while keeping the token fill colour from syntax highlighting. */
+.sql-editor .text.sql-error-underline {
+    -rtfx-underline-color: #ff5263;
+    -rtfx-underline-width: 1;
+    -rtfx-underline-wave-radius: 1.5;
+    -rtfx-underline-offset: 1;
+}
+
+.sql-editor .text.sql-warning-underline {
+    -rtfx-underline-color: #e2a53a;
+    -rtfx-underline-width: 1;
+    -rtfx-underline-wave-radius: 1.5;
+    -rtfx-underline-offset: 1;
+}
+
+.sql-editor .text.sql-weak-warning-underline {
+    -rtfx-underline-color: #9aa2ad;
+    -rtfx-underline-width: 1;
+    -rtfx-underline-wave-radius: 1.25;
+    -rtfx-underline-offset: 1;
+}
+
+.sql-inspection-tooltip {
+    -fx-background-color: #3c3f41;
+    -fx-text-fill: #bbbbbb;
+    -fx-font-size: 12px;
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+    -fx-background-radius: 3px;
+    -fx-border-color: #595b5e;
+    -fx-border-radius: 3px;
+    -fx-border-width: 1;
+    -fx-padding: 6px 10px;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.45), 8, 0.2, 0, 2);
+}
+
 /* ---------------------------------------------------------------- autocomplete popup */
 
 .sql-completion-list {
