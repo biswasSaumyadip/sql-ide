@@ -81,7 +81,7 @@ public final class SchemaIntrospectionService {
             case DATABASE, SCHEMA -> fetchTablesAsync(parent.name());
             case TABLE, VIEW -> fetchColumnsAsync(
                     Objects.requireNonNullElse(parent.metadata(SchemaNode.META_CATALOG), ""), parent.name());
-            case COLUMN -> CompletableFuture.completedFuture(List.of());
+            case COLUMN, DATA_SOURCE -> CompletableFuture.completedFuture(List.of());
         };
     }
 

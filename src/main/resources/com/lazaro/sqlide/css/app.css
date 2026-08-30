@@ -295,6 +295,21 @@
     -fx-background-radius: 4px;
     -fx-border-color: #303237;
     -fx-border-radius: 4px;
+    -fx-padding: 5px 8px;
+}
+
+.schema-data-source .schema-node-name {
+    -fx-font-weight: bold;
+}
+
+.schema-data-source-active .schema-node-name {
+    -fx-text-fill: #eceff4;
+}
+
+.schema-active-badge {
+    -fx-text-fill: #5fb56a;
+    -fx-font-size: 9px;
+    -fx-padding: 0 0 0 2;
 }
 
 .panel-header-action {

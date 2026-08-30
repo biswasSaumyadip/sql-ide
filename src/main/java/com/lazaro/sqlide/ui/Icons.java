@@ -31,7 +31,7 @@ public final class Icons {
 
     public static Node forNode(SchemaNode node) {
         return switch (node.type()) {
-            case DATABASE, SCHEMA -> database();
+            case DATA_SOURCE, DATABASE, SCHEMA -> database();
             case TABLE -> table();
             case VIEW -> view();
             case COLUMN -> node.metadataFlag(SchemaNode.META_PRIMARY_KEY) ? primaryKeyColumn() : column();

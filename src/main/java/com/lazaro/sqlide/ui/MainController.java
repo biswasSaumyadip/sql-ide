@@ -137,6 +137,7 @@ public final class MainController {
         schemaTree.setOnActivate(this::insertNodeReference);
         schemaTree.setOnViewObject(this::openObjectViewer);
         schemaTree.setOnUseDatabase(this::useDatabase);
+        schemaTree.setOnInsertSql(sql -> editors.insertIntoActiveEditor(sql));
         historyPane.setOnRerun(entry -> rerunHistory(entry.sql()));
         historyPane.setOnInsert(entry -> editors.insertIntoActiveEditor(entry.sql()));
         snippetsPane.setOnInsert(snippet -> editors.insertIntoActiveEditor(snippet.sql()));
@@ -462,6 +463,7 @@ public final class MainController {
                 String meta = node.metadata(SchemaNode.META_CATALOG);
                 yield meta == null || meta.isBlank() ? null : meta;
             }
+            case DATA_SOURCE -> null;
         };
         if (catalog == null || catalog.isBlank()) {
             return;
@@ -846,6 +848,7 @@ public final class MainController {
     private void insertNodeReference(SchemaNode node) {
         String text = switch (node.type()) {
             case TABLE, VIEW -> node.qualifiedName();
+            case DATA_SOURCE -> node.name();
             default -> node.name();
         };
         editors.insertIntoActiveEditor(text);

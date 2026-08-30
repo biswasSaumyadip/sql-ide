@@ -45,8 +45,16 @@ public record SchemaNode(String name, NodeType type, List<SchemaNode> children, 
     public static final String META_INDEXES = "indexes";
     /** Generated {@code CREATE TABLE}/{@code CREATE VIEW} DDL for the object viewer. */
     public static final String META_DDL = "ddl";
+    /** Metadata key holding a {@link ConnectionProfile} id on a {@link NodeType#DATA_SOURCE}. */
+    public static final String META_PROFILE_ID = "profileId";
+    /** Metadata key, {@code "true"} when this data source is the live session. */
+    public static final String META_ACTIVE = "active";
+    /** Metadata key, {@code "true"} for an unsaved ephemeral session root. */
+    public static final String META_SESSION = "session";
 
     public enum NodeType {
+        /** Saved / session data source root in the Database pane. */
+        DATA_SOURCE,
         DATABASE,
         SCHEMA,
         TABLE,

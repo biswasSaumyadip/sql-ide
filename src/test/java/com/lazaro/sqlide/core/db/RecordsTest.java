@@ -123,6 +123,8 @@ class RecordsTest {
         assertTrue(SchemaNode.of("id", NodeType.COLUMN).isLeaf());
         assertFalse(NodeType.COLUMN.isContainer());
         assertTrue(NodeType.DATABASE.isContainer());
+        assertTrue(NodeType.DATA_SOURCE.isContainer());
+        assertFalse(SchemaNode.of("Local", NodeType.DATA_SOURCE).isLeaf());
     }
 
     @Test
