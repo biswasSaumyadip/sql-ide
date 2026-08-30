@@ -63,7 +63,15 @@ public final class EditorTabPane extends TabPane {
 
     /** Opens a new empty tab and selects it. */
     public void newTab() {
+        newTab(null);
+    }
+
+    /** Opens a new query tab bound to {@code sessionId} (nullable). */
+    public void newTab(String sessionId) {
         QueryTab tab = new QueryTab("query-" + (++untitledCounter) + ".sql", schemaCache, activeCatalog);
+        if (sessionId != null) {
+            tab.editor().setBoundSessionId(sessionId);
+        }
         getTabs().add(tab);
         getSelectionModel().select(tab);
         tab.editor().requestFocus();
@@ -74,8 +82,12 @@ public final class EditorTabPane extends TabPane {
      * placeholder so the user can overwrite it immediately.
      */
     public void openGeneratedSql(SqlTemplateGenerator.Template template) {
+        openGeneratedSql(template, null);
+    }
+
+    public void openGeneratedSql(SqlTemplateGenerator.Template template, String sessionId) {
         if (template == null || template.sql().isBlank()) {
-            newTab();
+            newTab(sessionId);
             return;
         }
         String title = template.tabTitle();
@@ -89,10 +101,27 @@ public final class EditorTabPane extends TabPane {
             untitledCounter++;
         }
         QueryTab tab = new QueryTab(title, schemaCache, activeCatalog);
+        if (sessionId != null) {
+            tab.editor().setBoundSessionId(sessionId);
+        }
         getTabs().add(tab);
         getSelectionModel().select(tab);
         tab.editor().setSqlSelecting(template.sql(), template.placeholder());
         tab.editor().requestFocus();
+    }
+
+    /** Pushes live session choices into every open query console. */
+    public void refreshSessionChoices(List<SqlEditorPane.SessionChoice> choices, String fallbackSessionId) {
+        getTabs().stream()
+                .filter(QueryTab.class::isInstance)
+                .map(QueryTab.class::cast)
+                .forEach(tab -> {
+                    String preferred = tab.editor().getBoundSessionId();
+                    if (preferred == null || preferred.isBlank()) {
+                        preferred = fallbackSessionId;
+                    }
+                    tab.editor().setSessionChoices(choices, preferred);
+                });
     }
 
     /** Supplies the live schema snapshot to every editor for autocomplete. */

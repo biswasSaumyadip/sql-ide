@@ -11,6 +11,8 @@ import com.lazaro.sqlide.ui.autocomplete.SqlAutocompleteEngine.Suggestion;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
+import javafx.beans.property.SimpleStringProperty;
+import javafx.beans.property.StringProperty;
 import javafx.beans.value.ObservableValue;
 import javafx.collections.FXCollections;
 import javafx.concurrent.Task;
@@ -19,6 +21,7 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.geometry.Rectangle2D;
 import javafx.scene.Node;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
@@ -34,6 +37,7 @@ import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.scene.layout.VBox;
 import javafx.stage.Popup;
 import javafx.stage.Screen;
 import javafx.util.Duration;
@@ -98,9 +102,22 @@ public final class SqlEditorPane extends BorderPane {
     private boolean suppressNextDotTyped;
     private Runnable onSelectInDatabase = () -> { };
 
+    private final StringProperty boundSessionId = new SimpleStringProperty();
+    private final ComboBox<SessionChoice> sessionBox = new ComboBox<>();
+    private final HBox sessionBar = new HBox(8);
+    private boolean updatingSessionBox;
+
     private volatile StyleSpans<Collection<String>> lastHighlighting =
             StyleSpans.singleton(Collections.emptyList(), 0);
     private volatile List<InspectionIssue> lastIssues = List.of();
+
+    /** One entry in the per-console session picker. */
+    public record SessionChoice(String id, String label) {
+        @Override
+        public String toString() {
+            return label == null ? "" : label;
+        }
+    }
 
     public SqlEditorPane() {
         this("");
@@ -145,7 +162,27 @@ public final class SqlEditorPane extends BorderPane {
         getStylesheets().add(stylesheet());
         EditorFindBar findBar = new EditorFindBar(codeArea);
         this.findBar = findBar;
-        setTop(findBar);
+
+        Label sessionLabel = new Label("Data source");
+        sessionLabel.getStyleClass().add("console-session-label");
+        sessionBox.setPromptText("Not connected");
+        sessionBox.getStyleClass().add("console-session-box");
+        sessionBox.setOnAction(event -> {
+            if (updatingSessionBox) {
+                return;
+            }
+            SessionChoice choice = sessionBox.getValue();
+            boundSessionId.set(choice == null ? null : choice.id());
+        });
+        Region sessionSpacer = new Region();
+        HBox.setHgrow(sessionSpacer, Priority.ALWAYS);
+        sessionBar.getChildren().setAll(sessionSpacer, sessionLabel, sessionBox);
+        sessionBar.getStyleClass().add("console-session-bar");
+        sessionBar.setAlignment(Pos.CENTER_RIGHT);
+        sessionBar.setPadding(new Insets(2, 8, 2, 8));
+
+        VBox top = new VBox(sessionBar, findBar);
+        setTop(top);
         setCenter(new VirtualizedScrollPane<>(codeArea));
         installEditorContextMenu();
 
@@ -155,6 +192,52 @@ public final class SqlEditorPane extends BorderPane {
     }
 
     // ---------------------------------------------------------------- public API
+
+    public StringProperty boundSessionIdProperty() {
+        return boundSessionId;
+    }
+
+    public String getBoundSessionId() {
+        return boundSessionId.get();
+    }
+
+    public void setBoundSessionId(String sessionId) {
+        boundSessionId.set(sessionId);
+        selectSessionInBox(sessionId);
+    }
+
+    /** Refreshes the console data-source picker from live sessions. */
+    public void setSessionChoices(List<SessionChoice> choices, String preferredId) {
+        updatingSessionBox = true;
+        try {
+            String current = preferredId != null ? preferredId : boundSessionId.get();
+            sessionBox.setItems(FXCollections.observableArrayList(
+                    choices == null ? List.of() : choices));
+            selectSessionInBox(current);
+            if (sessionBox.getValue() != null) {
+                boundSessionId.set(sessionBox.getValue().id());
+            } else if (choices != null && !choices.isEmpty()) {
+                sessionBox.getSelectionModel().selectFirst();
+                boundSessionId.set(sessionBox.getValue().id());
+            } else {
+                boundSessionId.set(null);
+            }
+        } finally {
+            updatingSessionBox = false;
+        }
+    }
+
+    private void selectSessionInBox(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return;
+        }
+        for (SessionChoice choice : sessionBox.getItems()) {
+            if (sessionId.equals(choice.id())) {
+                sessionBox.setValue(choice);
+                return;
+            }
+        }
+    }
 
     /** Shows the find strip; pass {@code true} for replace mode (Ctrl+H). */
     public void showFind(boolean replaceMode) {

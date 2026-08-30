@@ -6,6 +6,8 @@ import com.lazaro.sqlide.core.db.ConnectionConfig;
 import com.lazaro.sqlide.core.db.DataSourceDriver;
 import com.lazaro.sqlide.core.db.SchemaNode;
 import com.lazaro.sqlide.core.db.SchemaNode.NodeType;
+import com.lazaro.sqlide.core.session.ConnectionSession;
+import com.lazaro.sqlide.core.session.SessionManager;
 import com.lazaro.sqlide.ui.Icons;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -38,12 +40,11 @@ import java.util.function.Consumer;
 
 /**
  * IntelliJ-style Database pane: saved data sources as persistent roots, live
- * schema under the active source, filter box, and generate/copy actions.
+ * schema under each connected session, filter box, and generate/copy actions.
  */
 public final class SchemaTreeView extends VBox {
 
     private static final String META_PLACEHOLDER = "__placeholder";
-    private static final String SESSION_ID = "__session__";
 
     private final TreeView<SchemaNode> tree = new TreeView<>();
     private final TextField filterField = new TextField();
@@ -55,7 +56,7 @@ public final class SchemaTreeView extends VBox {
     private final ProgressIndicator loadingSpinner = new ProgressIndicator();
 
     private ConnectionProfileManager profileManager = new ConnectionProfileManager();
-    private DataSourceDriver driver;
+    private SessionManager sessionManager;
     private String filterQuery = "";
     private final List<TreeItem<SchemaNode>> allDataSources = new ArrayList<>();
 
@@ -70,9 +71,10 @@ public final class SchemaTreeView extends VBox {
     private Consumer<ConnectionProfile> onDeleteProfile = profile -> { };
     private Consumer<String> onInsertSql = sql -> { };
     private Consumer<SqlTemplateGenerator.Template> onOpenTemplate = template -> { };
-    private Runnable onNewQuery = () -> { };
-    private Runnable onDisconnect = () -> { };
+    private Consumer<String> onNewQuery = sessionId -> { };
+    private Consumer<String> onDisconnect = sessionId -> { };
     private Runnable onRefreshSchema = () -> { };
+    private Consumer<String> onSessionFocused = sessionId -> { };
 
     public SchemaTreeView() {
         getStyleClass().add("schema-tree-pane");
@@ -131,7 +133,7 @@ public final class SchemaTreeView extends VBox {
         SchemaTreeContextMenus contextMenus = new SchemaTreeContextMenus(
                 tree.getSelectionModel()::getSelectedItem,
                 new SchemaTreeContextMenus.Actions(
-                        () -> onNewQuery.run(),
+                        () -> onNewQuery.accept(sessionIdOfSelection()),
                         () -> onConnectRequested.run(),
                         sql -> onInsertSql.accept(sql),
                         template -> onOpenTemplate.accept(template),
@@ -158,7 +160,7 @@ public final class SchemaTreeView extends VBox {
                         this::refreshTreeItem,
                         () -> onRefreshSchema.run(),
                         this::editConnectionFromItem,
-                        () -> onDisconnect.run(),
+                        () -> onDisconnect.accept(sessionIdOfSelection()),
                         this::connectSelectedDataSource,
                         this::removeConnectionFromItem,
                         this::dumpSqlToFile));
@@ -166,6 +168,12 @@ public final class SchemaTreeView extends VBox {
         // Populate before show — mutating items in onShowing cancels the popup.
         tree.addEventFilter(ContextMenuEvent.CONTEXT_MENU_REQUESTED, event -> {
             contextMenus.prepare();
+        });
+        tree.getSelectionModel().selectedItemProperty().addListener((obs, prev, selected) -> {
+            String sessionId = sessionIdOf(selected);
+            if (sessionId != null) {
+                onSessionFocused.accept(sessionId);
+            }
         });
 
         emptyHint.getStyleClass().add("empty-state-detail");
@@ -216,7 +224,7 @@ public final class SchemaTreeView extends VBox {
             return;
         }
         String profileId = connectionIdOf(item.getValue());
-        if (profileId == null || SESSION_ID.equals(profileId)) {
+        if (profileId == null || item.getValue().metadataFlag(SchemaNode.META_SESSION)) {
             onConnectRequested.run();
             return;
         }
@@ -230,8 +238,8 @@ public final class SchemaTreeView extends VBox {
         if (item == null || item.getValue() == null) {
             return;
         }
-        String profileId = connectionIdOf(item.getValue());
-        if (profileId == null || SESSION_ID.equals(profileId)) {
+        String profileId = item.getValue().metadata(SchemaNode.META_PROFILE_ID);
+        if (profileId == null || item.getValue().metadataFlag(SchemaNode.META_SESSION)) {
             return;
         }
         profileManager.loadProfiles().stream()
@@ -266,8 +274,9 @@ public final class SchemaTreeView extends VBox {
 
     // ---------------------------------------------------------------- public API
 
-    public void setDriver(DataSourceDriver driver) {
-        this.driver = driver;
+    public void setSessionManager(SessionManager sessionManager) {
+        this.sessionManager = sessionManager;
+        rebuildDataSources();
     }
 
     public void setProfileManager(ConnectionProfileManager profileManager) {
@@ -321,58 +330,44 @@ public final class SchemaTreeView extends VBox {
         this.onOpenTemplate = onOpenTemplate == null ? template -> { } : onOpenTemplate;
     }
 
-    public void setOnNewQuery(Runnable onNewQuery) {
-        this.onNewQuery = onNewQuery == null ? () -> { } : onNewQuery;
+    /** Opens a new query console; argument is the preferred session id (may be null). */
+    public void setOnNewQuery(Consumer<String> onNewQuery) {
+        this.onNewQuery = onNewQuery == null ? sessionId -> { } : onNewQuery;
     }
 
-    public void setOnDisconnect(Runnable onDisconnect) {
-        this.onDisconnect = onDisconnect == null ? () -> { } : onDisconnect;
+    /** Disconnects the session identified by id (session id or profile-backed session). */
+    public void setOnDisconnect(Consumer<String> onDisconnect) {
+        this.onDisconnect = onDisconnect == null ? sessionId -> { } : onDisconnect;
     }
 
     public void setOnRefreshSchema(Runnable onRefreshSchema) {
         this.onRefreshSchema = onRefreshSchema == null ? this::reload : onRefreshSchema;
     }
 
+    public void setOnSessionFocused(Consumer<String> onSessionFocused) {
+        this.onSessionFocused = onSessionFocused == null ? sessionId -> { } : onSessionFocused;
+    }
+
     public void refreshSavedConnections() {
         rebuildDataSources();
     }
 
-    /** Reloads live schema under the active data source. */
+    /** Reloads live schema under every connected data source. */
     public void reload() {
         rebuildDataSources();
-        if (driver == null || !driver.isConnected()) {
+        if (sessionManager == null) {
             return;
         }
-        TreeItem<SchemaNode> active = findActiveDataSourceItem();
-        if (active == null) {
-            return;
+        for (TreeItem<SchemaNode> rootItem : allDataSources) {
+            if (!(rootItem instanceof DataSourceItem dataSourceItem)) {
+                continue;
+            }
+            SchemaNode node = dataSourceItem.getValue();
+            if (node == null || !node.metadataFlag(SchemaNode.META_ACTIVE)) {
+                continue;
+            }
+            loadDataSourceChildren(dataSourceItem);
         }
-        showLoadingOverlay(true);
-        driver.getSchemaTree().whenComplete((nodes, error) -> Platform.runLater(() -> {
-            showLoadingOverlay(false);
-            if (!(active instanceof DataSourceItem dataSourceItem)) {
-                return;
-            }
-            if (error != null) {
-                dataSourceItem.replaceChildren(List.of(placeholderItem("Could not load: " + rootCauseMessage(error))));
-                dataSourceItem.setExpanded(true);
-                return;
-            }
-            if (nodes == null || nodes.isEmpty()) {
-                dataSourceItem.replaceChildren(List.of(placeholderItem("No databases visible")));
-                schemaSelection.clearActive();
-            } else {
-                rememberAvailableSchemas(nodes, connectionIdOf(dataSourceItem.getValue()));
-                List<TreeItem<SchemaNode>> children = new ArrayList<>();
-                for (SchemaNode node : nodes) {
-                    children.add(schemaItem(node));
-                }
-                dataSourceItem.replaceChildren(children);
-            }
-            dataSourceItem.setExpanded(true);
-            applyFilter();
-            updateEmptyHint();
-        }));
     }
 
     public void clear() {
@@ -572,26 +567,35 @@ public final class SchemaTreeView extends VBox {
 
     private void rebuildDataSources() {
         List<ConnectionProfile> profiles = profileManager.loadProfiles();
-        Optional<ConnectionConfig> config = driver == null
-                ? Optional.empty()
-                : driver.currentConfig().filter(ignored -> driver.isConnected());
+        List<ConnectionSession> live = sessionManager == null
+                ? List.of()
+                : sessionManager.connectedSessions();
 
         List<TreeItem<SchemaNode>> roots = new ArrayList<>();
-        String matchedId = null;
+        java.util.HashSet<String> matchedSessionIds = new java.util.HashSet<>();
+
         for (ConnectionProfile profile : profiles) {
-            boolean active = config.isPresent() && matches(profile, config.get());
-            if (active) {
-                matchedId = profile.id();
-            }
-            roots.add(new DataSourceItem(dataSourceNode(profile, active), this::loadDataSourceChildren));
+            Optional<ConnectionSession> session = sessionManager == null
+                    ? Optional.empty()
+                    : sessionManager.findByProfileId(profile.id()).filter(ConnectionSession::isConnected);
+            session.map(ConnectionSession::id).ifPresent(matchedSessionIds::add);
+            boolean active = session.isPresent();
+            SchemaNode node = dataSourceNode(profile, active, session.map(ConnectionSession::id).orElse(null));
+            roots.add(new DataSourceItem(node, this::loadDataSourceChildren));
         }
-        if (config.isPresent() && matchedId == null) {
-            roots.add(0, new DataSourceItem(sessionNode(config.get()), this::loadDataSourceChildren));
+        for (ConnectionSession session : live) {
+            if (matchedSessionIds.contains(session.id())) {
+                continue;
+            }
+            if (session.profileId().isPresent()) {
+                // Profile was deleted but session still live — show as ephemeral.
+            }
+            roots.add(0, new DataSourceItem(sessionNode(session), this::loadDataSourceChildren));
         }
 
         allDataSources.clear();
         allDataSources.addAll(roots);
-        if (config.isEmpty()) {
+        if (live.isEmpty()) {
             schemaSelection.clearActive();
         }
         publishDataSources();
@@ -645,8 +649,8 @@ public final class SchemaTreeView extends VBox {
 
     private void loadDataSourceChildren(DataSourceItem item) {
         SchemaNode node = item.getValue();
-        if (node == null || !node.metadataFlag(SchemaNode.META_ACTIVE)
-                || driver == null || !driver.isConnected()) {
+        DataSourceDriver driver = driverFor(item);
+        if (node == null || !node.metadataFlag(SchemaNode.META_ACTIVE) || driver == null || !driver.isConnected()) {
             item.replaceChildren(List.of(placeholderItem("Connect to browse schemas")));
             return;
         }
@@ -656,20 +660,20 @@ public final class SchemaTreeView extends VBox {
                 item.replaceChildren(List.of(placeholderItem(rootCauseMessage(error))));
             } else if (nodes == null || nodes.isEmpty()) {
                 item.replaceChildren(List.of(placeholderItem("empty")));
-                schemaSelection.clearActive();
             } else {
-                rememberAvailableSchemas(nodes, connectionIdOf(item.getValue()));
+                rememberAvailableSchemas(nodes, connectionIdOf(item.getValue()), driver);
                 List<TreeItem<SchemaNode>> children = new ArrayList<>();
                 for (SchemaNode child : nodes) {
                     children.add(schemaItem(child));
                 }
                 item.replaceChildren(children);
             }
+            item.setExpanded(true);
             applyFilter();
         }));
     }
 
-    private void rememberAvailableSchemas(List<SchemaNode> nodes, String connectionId) {
+    private void rememberAvailableSchemas(List<SchemaNode> nodes, String connectionId, DataSourceDriver driver) {
         List<String> names = new ArrayList<>();
         for (SchemaNode node : nodes) {
             if (node.type() == NodeType.DATABASE || node.type() == NodeType.SCHEMA) {
@@ -688,7 +692,43 @@ public final class SchemaTreeView extends VBox {
         if (node == null) {
             return null;
         }
-        return node.metadata(SchemaNode.META_PROFILE_ID);
+        String profile = node.metadata(SchemaNode.META_PROFILE_ID);
+        if (profile != null && !profile.isBlank()) {
+            return profile;
+        }
+        return node.metadata("sessionId");
+    }
+
+    private String sessionIdOfSelection() {
+        return sessionIdOf(tree.getSelectionModel().getSelectedItem());
+    }
+
+    private String sessionIdOf(TreeItem<SchemaNode> item) {
+        TreeItem<SchemaNode> current = item;
+        while (current != null) {
+            SchemaNode node = current.getValue();
+            if (node != null && node.type() == NodeType.DATA_SOURCE) {
+                String sessionId = node.metadata("sessionId");
+                if (sessionId != null && !sessionId.isBlank()) {
+                    return sessionId;
+                }
+                String profileId = node.metadata(SchemaNode.META_PROFILE_ID);
+                if (sessionManager != null && profileId != null) {
+                    return sessionManager.findByProfileId(profileId).map(ConnectionSession::id).orElse(null);
+                }
+                return null;
+            }
+            current = current.getParent();
+        }
+        return null;
+    }
+
+    private DataSourceDriver driverFor(TreeItem<SchemaNode> item) {
+        String sessionId = sessionIdOf(item);
+        if (sessionManager == null || sessionId == null) {
+            return null;
+        }
+        return sessionManager.find(sessionId).map(ConnectionSession::driver).orElse(null);
     }
 
     private LazyItem schemaItem(SchemaNode node) {
@@ -697,6 +737,7 @@ public final class SchemaTreeView extends VBox {
 
     private void loadSchemaChildren(LazyItem item) {
         SchemaNode node = item.getValue();
+        DataSourceDriver driver = driverFor(item);
         if (driver == null || !driver.isConnected()) {
             item.replaceChildren(List.of(placeholderItem("Not connected")));
             return;
@@ -762,7 +803,7 @@ public final class SchemaTreeView extends VBox {
             return;
         }
         String profileId = node.metadata(SchemaNode.META_PROFILE_ID);
-        if (profileId == null || SESSION_ID.equals(profileId)) {
+        if (profileId == null || node.metadataFlag(SchemaNode.META_SESSION)) {
             onConnectRequested.run();
             return;
         }
@@ -773,6 +814,17 @@ public final class SchemaTreeView extends VBox {
     }
 
     private TreeItem<SchemaNode> findActiveDataSourceItem() {
+        if (sessionManager != null) {
+            Optional<ConnectionSession> focused = sessionManager.focused();
+            if (focused.isPresent()) {
+                String id = focused.get().id();
+                for (TreeItem<SchemaNode> child : tree.getRoot().getChildren()) {
+                    if (child.getValue() != null && id.equals(child.getValue().metadata("sessionId"))) {
+                        return child;
+                    }
+                }
+            }
+        }
         for (TreeItem<SchemaNode> child : tree.getRoot().getChildren()) {
             if (child.getValue() != null && child.getValue().metadataFlag(SchemaNode.META_ACTIVE)) {
                 return child;
@@ -783,48 +835,27 @@ public final class SchemaTreeView extends VBox {
 
     // ---------------------------------------------------------------- node factories
 
-    private static SchemaNode dataSourceNode(ConnectionProfile profile, boolean active) {
+    private static SchemaNode dataSourceNode(ConnectionProfile profile, boolean active, String sessionId) {
         Map<String, String> meta = new LinkedHashMap<>();
         meta.put(SchemaNode.META_PROFILE_ID, profile.id());
         meta.put(SchemaNode.META_ACTIVE, Boolean.toString(active));
+        if (sessionId != null) {
+            meta.put("sessionId", sessionId);
+        }
         String user = profile.username().isBlank() ? "<anonymous>" : profile.username();
         String schema = profile.database().isBlank() ? "" : "/" + profile.database();
         meta.put("endpoint", "%s@%s:%d%s".formatted(user, profile.host(), profile.port(), schema));
         return SchemaNode.of(profile.displayName(), NodeType.DATA_SOURCE, meta);
     }
 
-    private static SchemaNode sessionNode(ConnectionConfig config) {
+    private static SchemaNode sessionNode(ConnectionSession session) {
         Map<String, String> meta = new LinkedHashMap<>();
-        meta.put(SchemaNode.META_PROFILE_ID, SESSION_ID);
+        meta.put("sessionId", session.id());
+        session.profileId().ifPresent(id -> meta.put(SchemaNode.META_PROFILE_ID, id));
         meta.put(SchemaNode.META_SESSION, "true");
         meta.put(SchemaNode.META_ACTIVE, "true");
-        meta.put("endpoint", config.displayLabel());
-        return SchemaNode.of("Current session", NodeType.DATA_SOURCE, meta);
-    }
-
-    private static boolean matches(ConnectionProfile profile, ConnectionConfig config) {
-        if (config == null) {
-            return false;
-        }
-        if (!profile.host().equalsIgnoreCase(config.host())) {
-            return false;
-        }
-        if (profile.port() != config.port()) {
-            return false;
-        }
-        if (!profile.username().equals(config.user())) {
-            return false;
-        }
-        if (!profile.driver().equalsIgnoreCase(config.driver().name())
-                && !profile.driver().equalsIgnoreCase(config.driver().displayName())) {
-            return false;
-        }
-        // Database is optional on profiles; when both set, require equality.
-        if (!profile.database().isBlank() && !config.database().isBlank()
-                && !profile.database().equalsIgnoreCase(config.database())) {
-            return false;
-        }
-        return true;
+        meta.put("endpoint", session.config().displayLabel());
+        return SchemaNode.of(session.displayName(), NodeType.DATA_SOURCE, meta);
     }
 
     private static TreeItem<SchemaNode> placeholderItem(String text) {
