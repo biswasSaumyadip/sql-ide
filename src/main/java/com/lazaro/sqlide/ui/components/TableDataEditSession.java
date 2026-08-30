@@ -46,7 +46,6 @@ import java.util.function.Function;
  */
 public final class TableDataEditSession {
 
-    private static final int DEFAULT_LIMIT = 1000;
     private static final String NULL_DISPLAY = "NULL";
 
     private enum RowKind {
@@ -73,6 +72,7 @@ public final class TableDataEditSession {
     private Runnable onStatusChanged = () -> { };
     private Consumer<ScriptResult> onScriptLogged = script -> { };
     private Consumer<List<String>> onRunLogged = statements -> { };
+    private Consumer<QueryResult> onPresented = result -> { };
     private String statusText = "";
 
     public TableDataEditSession(
@@ -133,6 +133,10 @@ public final class TableDataEditSession {
         this.onScriptLogged = onResult == null ? script -> { } : onResult;
     }
 
+    public void setOnPresented(Consumer<QueryResult> onPresented) {
+        this.onPresented = onPresented == null ? result -> { } : onPresented;
+    }
+
     /** Binds an already-fetched result set for in-grid editing (simple SELECT path). */
     public void bindLoadedResult(QueryResult result) {
         Objects.requireNonNull(result, "result");
@@ -145,7 +149,7 @@ public final class TableDataEditSession {
 
     public void reload() {
         setStatus("Loading\u2026");
-        String sql = "SELECT * FROM " + qualifiedName + " LIMIT " + DEFAULT_LIMIT + ";";
+        String sql = "SELECT * FROM " + qualifiedName;
         onRunLogged.accept(List.of(sql));
         Task<ScriptResult> task = new Task<>() {
             @Override
@@ -408,6 +412,33 @@ public final class TableDataEditSession {
         table.applyRowFilter("");
         updateStatusLine();
         notifyDirty();
+        onPresented.accept(result);
+    }
+
+    /**
+     * Appends another fetched page of existing rows. No-op when the session is dirty.
+     */
+    public QueryResult appendLoaded(QueryResult page) {
+        Objects.requireNonNull(page, "page");
+        if (page.isError() || !page.isResultSet() || isDirty()) {
+            return page;
+        }
+        QueryResult current = table.currentResult();
+        QueryResult combined = current == null ? page : current.appended(page);
+        if (combined.isError()) {
+            return combined;
+        }
+        truncated = combined.truncated();
+        table.beginEditPresent(combined);
+        for (List<String> row : page.rows()) {
+            ObservableList<String> live = FXCollections.observableArrayList(row);
+            rowStates.put(live, new RowState(RowKind.EXISTING, copyRow(row)));
+            table.backingRows().add(live);
+        }
+        table.applyRowFilter(table.rowFilter());
+        updateStatusLine();
+        onPresented.accept(combined);
+        return combined;
     }
 
     private void onKeyPressed(KeyEvent event) {

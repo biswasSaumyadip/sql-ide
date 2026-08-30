@@ -44,6 +44,23 @@ public record QueryResult(
         return new QueryResult(columnNames, rows, rows.size(), executionTimeMs, true, null, truncated);
     }
 
+    /**
+     * Concatenates {@code next} onto this result. Timing is summed; truncation
+     * follows the later page. Column labels must match.
+     */
+    public QueryResult appended(QueryResult next) {
+        if (next == null || next.isError() || !next.isResultSet() || isError() || !isResultSet()) {
+            return this;
+        }
+        if (!columnNames.equals(next.columnNames())) {
+            return QueryResult.ofError("Load more returned different columns than the current grid.", 0);
+        }
+        List<List<String>> combined = new ArrayList<>(rows.size() + next.rows().size());
+        combined.addAll(rows);
+        combined.addAll(next.rows());
+        return ofRows(columnNames, combined, executionTimeMs + next.executionTimeMs(), next.truncated());
+    }
+
     public static QueryResult ofUpdate(int updateCount, long executionTimeMs) {
         return new QueryResult(List.of(), List.of(), Math.max(updateCount, 0), executionTimeMs, false, null, false);
     }
@@ -69,8 +86,7 @@ public record QueryResult(
         if (!truncated || !isResultSet || isError()) {
             return null;
         }
-        return "Showing first %,d rows \u2014 result truncated. Add a LIMIT or refine the query to see the rest."
-                .formatted(rowCount);
+        return "Showing %,d rows \u2014 more available.".formatted(rowCount);
     }
 
     /** Single-line status suitable for a footer or log line. */
@@ -94,7 +110,7 @@ public record QueryResult(
         }
         if (isResultSet) {
             if (truncated) {
-                return "Query OK \u2014 first %,d rows shown, more available (%d ms)".formatted(
+                return "Query OK \u2014 %,d rows shown, more available (%d ms)".formatted(
                         rowCount, executionTimeMs);
             }
             return "Query OK \u2014 %d %s returned (%d ms)".formatted(

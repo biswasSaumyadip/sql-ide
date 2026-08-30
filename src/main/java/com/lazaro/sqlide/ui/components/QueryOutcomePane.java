@@ -5,12 +5,19 @@ import com.lazaro.sqlide.core.db.SchemaNode;
 import com.lazaro.sqlide.core.db.ScriptResult;
 import com.lazaro.sqlide.core.explain.ExplainPlanNode;
 import com.lazaro.sqlide.core.explain.ExplainPlanParser;
+import com.lazaro.sqlide.core.sql.ResultPager;
 import com.lazaro.sqlide.ui.dialogs.CompareDataDialog;
+import javafx.application.Platform;
 import javafx.geometry.Insets;
+import javafx.geometry.Pos;
+import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
+import javafx.scene.control.Tooltip;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 
@@ -20,6 +27,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * Everything below the editor: results toolbar, error strip, and one or more
@@ -160,9 +168,26 @@ public final class QueryOutcomePane extends VBox {
         this.editableResolver = resolver == null ? sql -> java.util.Optional.empty() : resolver;
     }
 
+    public void setPageLoader(Function<PageRequest, CompletableFuture<QueryResult>> loader) {
+        this.pageLoader = loader == null
+                ? request -> CompletableFuture.completedFuture(QueryResult.ofError("Not connected", 0))
+                : loader;
+    }
+
+    public void setPageSizeSupplier(Supplier<Integer> pageSizeSupplier) {
+        this.pageSizeSupplier = pageSizeSupplier == null ? () -> 1_000 : pageSizeSupplier;
+    }
+
     /** Target metadata for enabling edit mode on a query result tab. */
     public record EditableResultTarget(SchemaNode table, String qualifiedName, List<String> primaryKeyColumns) {
     }
+
+    public record PageRequest(String sql, int offset, int limit) {
+    }
+
+    private Function<PageRequest, CompletableFuture<QueryResult>> pageLoader = request ->
+            CompletableFuture.completedFuture(QueryResult.ofError("Not connected", 0));
+    private Supplier<Integer> pageSizeSupplier = () -> 1_000;
 
     public void setRefreshEnabled(boolean enabled) {
         toolbar.setRefreshEnabled(enabled);
@@ -226,6 +251,7 @@ public final class QueryOutcomePane extends VBox {
         ResultPage page = ResultPage.forTableData(
                 node, qualifiedName, primaryKeyColumns, scriptRunner, background,
                 onExportToFile, onExportJsonArray, output);
+        page.enablePaging("SELECT * FROM " + qualifiedName, pageSizeSupplier, this::loadNextPage, this::onPageUpdated);
         Tab tab = wrap(node.name() + " data", page, false, false);
         tab.getStyleClass().add(DATA_TAB_STYLE);
         page.editSession().setOnDirtyChanged(() -> {
@@ -233,6 +259,12 @@ public final class QueryOutcomePane extends VBox {
             syncToolbarState();
         });
         page.editSession().setOnStatusChanged(() -> {
+            if (resultTabs.getSelectionModel().getSelectedItem() == tab) {
+                toolbar.setSummary(page.editSession().statusText());
+            }
+        });
+        page.editSession().setOnPresented(result -> {
+            page.syncFromResult(result);
             if (resultTabs.getSelectionModel().getSelectedItem() == tab) {
                 toolbar.setSummary(page.editSession().statusText());
             }
@@ -245,6 +277,7 @@ public final class QueryOutcomePane extends VBox {
         tab.setOnClosed(event -> page.disposeEditSession());
         resultTabs.getTabs().add(tab);
         resultTabs.getSelectionModel().select(tab);
+        page.editSession().reload();
         syncToolbarState();
         onActionsChanged.run();
     }
@@ -329,6 +362,9 @@ public final class QueryOutcomePane extends VBox {
             ResultPage page = ResultPage.from(result, preferPlan && results.size() == 1, onExportToFile, onExportJsonArray);
             String sql = i < statements.size() ? statements.get(i) : null;
             maybeEnableEditing(page, result, sql);
+            if (!preferPlan) {
+                page.enablePaging(sql, pageSizeSupplier, this::loadNextPage, this::onPageUpdated);
+            }
             Tab tab = wrap(title, page, result.isError(), false);
             if (page.editSession() != null) {
                 tab.getStyleClass().add(DATA_TAB_STYLE);
@@ -618,6 +654,34 @@ public final class QueryOutcomePane extends VBox {
         tab.setText(session.isDirty() ? DIRTY_MARK + base : base);
     }
 
+    private CompletableFuture<QueryResult> loadNextPage(PageRequest request) {
+        return pageLoader.apply(request);
+    }
+
+    private void onPageUpdated(ResultPage page) {
+        for (Tab tab : resultTabs.getTabs()) {
+            if (tab.getContent() == page) {
+                QueryResult result = page.result();
+                if (result != null && page.editSession() == null) {
+                    tab.setText(tabTitle(result));
+                }
+                break;
+            }
+        }
+        QueryResult result = page.result();
+        if (result != null && resultTabs.getSelectionModel().getSelectedItem() != null
+                && resultTabs.getSelectionModel().getSelectedItem().getContent() == page) {
+            if (page.editSession() == null) {
+                toolbar.setSummary(result.summary());
+            }
+        }
+        if (result != null && !result.isError()) {
+            output.appendInfo("Loaded more \u2014 " + result.summary());
+        }
+        syncToolbarState();
+        onActionsChanged.run();
+    }
+
     private static Tab wrap(String title, ResultPage page, boolean error, boolean pinned) {
         Tab tab = new Tab(title, page);
         tab.setClosable(!pinned);
@@ -644,7 +708,10 @@ public final class QueryOutcomePane extends VBox {
     }
 
     private static final class ResultPage extends VBox {
+        private final HBox truncationBar = new HBox(8);
         private final Label truncationBanner = new Label();
+        private final Button loadMoreButton = new Button("Load more");
+        private final Button loadRemainingButton = new Button("Load remaining");
         private final StackPane content = new StackPane();
         private final DynamicResultTable table = new DynamicResultTable();
         private final ExplainPlanTreeView planTree = new ExplainPlanTreeView();
@@ -652,21 +719,40 @@ public final class QueryOutcomePane extends VBox {
         private ExplainPlanNode plan;
         private boolean showingPlan;
         private TableDataEditSession editSession;
+        private String sourceSql;
+        private Supplier<Integer> pageSize = () -> 1_000;
+        private Function<PageRequest, CompletableFuture<QueryResult>> pageLoader;
+        private Consumer<ResultPage> onPageUpdated = page -> { };
+        private boolean pagingBusy;
 
         private ResultPage() {
-            truncationBanner.getStyleClass().add("result-truncation-banner");
+            truncationBanner.getStyleClass().add("result-truncation-text");
             truncationBanner.setWrapText(true);
             truncationBanner.setMaxWidth(Double.MAX_VALUE);
-            truncationBanner.setPadding(new Insets(6, 10, 6, 10));
-            truncationBanner.setVisible(false);
-            truncationBanner.setManaged(false);
+            HBox.setHgrow(truncationBanner, Priority.ALWAYS);
+
+            loadMoreButton.getStyleClass().add("result-load-more");
+            loadMoreButton.setOnAction(event -> loadMore(false));
+            loadRemainingButton.getStyleClass().add("result-load-more");
+            loadRemainingButton.setTooltip(new Tooltip(
+                    "Fetch up to " + ResultPager.REMAINING_CAP + " more rows in one request"));
+            loadRemainingButton.setOnAction(event -> loadMore(true));
+
+            truncationBar.getStyleClass().add("result-truncation-banner");
+            truncationBar.setAlignment(Pos.CENTER_LEFT);
+            truncationBar.setPadding(new Insets(6, 10, 6, 10));
+            Region spacer = new Region();
+            HBox.setHgrow(spacer, Priority.ALWAYS);
+            truncationBar.getChildren().addAll(truncationBanner, spacer, loadMoreButton, loadRemainingButton);
+            truncationBar.setVisible(false);
+            truncationBar.setManaged(false);
 
             content.getChildren().addAll(table, planTree);
             planTree.setVisible(false);
             planTree.setManaged(false);
             VBox.setVgrow(content, Priority.ALWAYS);
 
-            getChildren().addAll(truncationBanner, content);
+            getChildren().addAll(truncationBar, content);
         }
 
         static ResultPage message(String text) {
@@ -702,6 +788,18 @@ public final class QueryOutcomePane extends VBox {
             }
             page.table.setResult(result);
             return page;
+        }
+
+        void enablePaging(
+                String sql,
+                Supplier<Integer> pageSize,
+                Function<PageRequest, CompletableFuture<QueryResult>> loader,
+                Consumer<ResultPage> onUpdated) {
+            this.sourceSql = sql == null || sql.isBlank() ? null : sql;
+            this.pageSize = pageSize == null ? () -> 1_000 : pageSize;
+            this.pageLoader = loader;
+            this.onPageUpdated = onUpdated == null ? page -> { } : onUpdated;
+            applyTruncationBanner(result());
         }
 
         void enableEditing(
@@ -740,7 +838,6 @@ public final class QueryOutcomePane extends VBox {
             session.setOutputHooks(output::appendRunning, output::appendScript);
             page.table.attachEditSession(session);
             page.editSession = session;
-            session.reload();
             return page;
         }
 
@@ -750,6 +847,11 @@ public final class QueryOutcomePane extends VBox {
 
         QueryResult result() {
             return result != null ? result : table.currentResult();
+        }
+
+        void syncFromResult(QueryResult next) {
+            this.result = next;
+            applyTruncationBanner(next);
         }
 
         TableDataEditSession editSession() {
@@ -780,17 +882,84 @@ public final class QueryOutcomePane extends VBox {
             }
         }
 
+        private void loadMore(boolean remaining) {
+            QueryResult current = result();
+            if (pagingBusy || pageLoader == null || sourceSql == null || current == null
+                    || !current.truncated() || current.isError() || !current.isResultSet()) {
+                return;
+            }
+            if (editSession != null && editSession.isDirty()) {
+                truncationBanner.setText("Submit or revert edits before loading more rows.");
+                return;
+            }
+            int offset = current.rowCount();
+            int limit = remaining ? ResultPager.REMAINING_CAP : Math.max(1, pageSize.get());
+            pagingBusy = true;
+            loadMoreButton.setDisable(true);
+            loadRemainingButton.setDisable(true);
+            loadMoreButton.setText("Loading\u2026");
+            pageLoader.apply(new PageRequest(sourceSql, offset, limit)).whenComplete((pageResult, error) ->
+                    Platform.runLater(() -> finishLoadMore(current, pageResult, error)));
+        }
+
+        private void finishLoadMore(QueryResult previous, QueryResult pageResult, Throwable error) {
+            pagingBusy = false;
+            loadMoreButton.setText("Load more");
+            if (error != null) {
+                truncationBanner.setText("Load more failed: " + error.getMessage());
+                applyTruncationBanner(previous);
+                return;
+            }
+            if (pageResult == null || pageResult.isError()) {
+                String message = pageResult == null ? "Load more failed" : pageResult.errorMessage();
+                truncationBanner.setText(message);
+                applyTruncationBanner(previous);
+                truncationBar.setVisible(true);
+                truncationBar.setManaged(true);
+                return;
+            }
+            QueryResult combined;
+            int firstNew = previous.rowCount();
+            if (editSession != null) {
+                combined = editSession.appendLoaded(pageResult);
+            } else {
+                combined = table.appendResult(pageResult);
+            }
+            if (combined == null || combined.isError()) {
+                truncationBanner.setText(combined == null ? "Load more failed" : combined.errorMessage());
+                applyTruncationBanner(previous);
+                truncationBar.setVisible(true);
+                truncationBar.setManaged(true);
+                return;
+            }
+            result = combined;
+            applyTruncationBanner(combined);
+            if (firstNew < table.getItems().size()) {
+                table.scrollTo(firstNew);
+            }
+            onPageUpdated.accept(this);
+        }
+
         private void applyTruncationBanner(QueryResult result) {
             String banner = result == null ? null : result.truncationBanner();
+            boolean canPage = sourceSql != null && pageLoader != null
+                    && result != null && result.truncated()
+                    && (editSession == null || !editSession.isDirty());
             if (banner == null || banner.isBlank()) {
-                truncationBanner.setVisible(false);
-                truncationBanner.setManaged(false);
+                truncationBar.setVisible(false);
+                truncationBar.setManaged(false);
                 truncationBanner.setText("");
                 return;
             }
             truncationBanner.setText(banner);
-            truncationBanner.setVisible(true);
-            truncationBanner.setManaged(true);
+            loadMoreButton.setVisible(canPage);
+            loadMoreButton.setManaged(canPage);
+            loadRemainingButton.setVisible(canPage);
+            loadRemainingButton.setManaged(canPage);
+            loadMoreButton.setDisable(pagingBusy);
+            loadRemainingButton.setDisable(pagingBusy);
+            truncationBar.setVisible(true);
+            truncationBar.setManaged(true);
         }
 
         private void showPlan(ExplainPlanNode plan) {

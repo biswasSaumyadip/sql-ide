@@ -50,6 +50,18 @@ class ResultSetMapperTest {
     }
 
     @Test
+    void skipsAlreadyLoadedRowsThenMarksTruncation() throws Exception {
+        try (Statement statement = connection.createStatement();
+             ResultSet resultSet = statement.executeQuery("SELECT n FROM numbers ORDER BY n")) {
+            QueryResult result = ResultSetMapper.drain(resultSet, 10, 5, System.nanoTime());
+            assertEquals(5, result.rowCount());
+            assertEquals("11", result.rows().getFirst().getFirst());
+            assertEquals("15", result.rows().getLast().getFirst());
+            assertTrue(result.truncated());
+        }
+    }
+
+    @Test
     void notTruncatedWhenAllRowsFit() throws Exception {
         try (Statement statement = connection.createStatement();
              ResultSet resultSet = statement.executeQuery("SELECT n FROM numbers ORDER BY n")) {

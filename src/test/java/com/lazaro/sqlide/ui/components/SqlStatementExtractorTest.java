@@ -4,6 +4,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SqlStatementExtractorTest {
 
@@ -73,5 +75,105 @@ class SqlStatementExtractorTest {
         int caret = sql.indexOf("SELECT");
         SqlStatementExtractor.Span span = SqlStatementExtractor.rangeAt(sql, caret);
         assertEquals("SELECT 1;", sql.substring(span.start(), span.end()));
+    }
+
+    @Test
+    @DisplayName("custom DELIMITER keeps procedure body as one statement")
+    void procedureBodyNotSplitOnInternalSemicolons() {
+        String sql = """
+                DELIMITER $$
+                CREATE PROCEDURE foo()
+                BEGIN
+                  SELECT 1;
+                  INSERT INTO t VALUES ('a;b');
+                END$$
+                DELIMITER ;
+                SELECT 2;
+                """;
+        int caret = sql.indexOf("CREATE PROCEDURE");
+        assertEquals(
+                """
+                CREATE PROCEDURE foo()
+                BEGIN
+                  SELECT 1;
+                  INSERT INTO t VALUES ('a;b');
+                END""".strip(),
+                SqlStatementExtractor.statementAt(sql, caret));
+
+        SqlStatementExtractor.Span span = SqlStatementExtractor.rangeAt(sql, caret);
+        String highlighted = sql.substring(span.start(), span.end());
+        assertEquals(
+                """
+                CREATE PROCEDURE foo()
+                BEGIN
+                  SELECT 1;
+                  INSERT INTO t VALUES ('a;b');
+                END$$""".strip(),
+                highlighted);
+
+        assertEquals(
+                java.util.List.of(
+                        """
+                        CREATE PROCEDURE foo()
+                        BEGIN
+                          SELECT 1;
+                          INSERT INTO t VALUES ('a;b');
+                        END""".strip(),
+                        "SELECT 2"),
+                SqlStatementExtractor.statements(sql));
+    }
+
+    @Test
+    @DisplayName("DELIMITER command is not sent as SQL")
+    void delimiterLineIsMeta() {
+        String sql = "DELIMITER $$\nSELECT 1$$\nDELIMITER ;\n";
+        int caret = sql.indexOf("DELIMITER");
+        assertEquals("", SqlStatementExtractor.statementAt(sql, caret));
+        assertEquals(java.util.List.of("SELECT 1"), SqlStatementExtractor.statements(sql));
+    }
+
+    @Test
+    @DisplayName("slash delimiter and quoted delimiter text")
+    void slashDelimiterAndQuotedFalsePositive() {
+        String sql = """
+                DELIMITER //
+                CREATE FUNCTION bar() RETURNS INT
+                BEGIN
+                  RETURN 1;
+                END//
+                DELIMITER ;
+                INSERT INTO t VALUES ('END//');
+                """;
+        int caret = sql.indexOf("CREATE FUNCTION");
+        assertTrue(SqlStatementExtractor.statementAt(sql, caret).startsWith("CREATE FUNCTION"));
+        assertTrue(SqlStatementExtractor.statementAt(sql, caret).endsWith("END"));
+        assertFalse(SqlStatementExtractor.statementAt(sql, caret).endsWith("//"));
+
+        SqlStatementExtractor.Span span = SqlStatementExtractor.rangeAt(sql, caret);
+        assertTrue(sql.substring(span.start(), span.end()).endsWith("END//"));
+
+        assertEquals(
+                java.util.List.of(
+                        """
+                        CREATE FUNCTION bar() RETURNS INT
+                        BEGIN
+                          RETURN 1;
+                        END""".strip(),
+                        "INSERT INTO t VALUES ('END//')"),
+                SqlStatementExtractor.statements(sql));
+    }
+
+    @Test
+    @DisplayName("DELIMITER inside a comment does not change the terminator")
+    void delimiterInCommentIsIgnored() {
+        String sql = """
+                -- DELIMITER $$
+                SELECT 1;
+                SELECT 2;
+                """;
+        java.util.List<String> parts = SqlStatementExtractor.statements(sql);
+        assertEquals(2, parts.size());
+        assertTrue(parts.getFirst().contains("SELECT 1"));
+        assertEquals("SELECT 2", parts.get(1));
     }
 }

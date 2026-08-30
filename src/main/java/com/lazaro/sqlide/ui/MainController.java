@@ -30,6 +30,8 @@ import com.lazaro.sqlide.ui.components.SqlTemplateGenerator;
 import com.lazaro.sqlide.ui.components.StatusBar;
 import com.lazaro.sqlide.core.transfer.TransferRequest;
 import com.lazaro.sqlide.core.transfer.TransferResult;
+import com.lazaro.sqlide.core.sql.PageSql;
+import com.lazaro.sqlide.core.sql.ResultPager;
 import com.lazaro.sqlide.core.sql.SimpleSelectAnalyzer;
 import com.lazaro.sqlide.core.sql.SqlParameterParser;
 import com.lazaro.sqlide.ui.dialogs.CompareDataDialog;
@@ -232,6 +234,8 @@ public final class MainController {
         });
         outcome.setBackgroundExecutor(backgroundTasks);
         outcome.setEditableResultResolver(this::resolveEditableResult);
+        outcome.setPageSizeSupplier(() -> outcome.toolbar().maxRows());
+        outcome.setPageLoader(this::loadResultPage);
         outcome.setRefreshEnabled(false);
         outcome.toolbar().setStopAutoRefreshOnError(state.stopAutoRefreshOnError());
         outcome.toolbar().setOnStopOnErrorChanged(state::saveStopAutoRefreshOnError);
@@ -1371,6 +1375,29 @@ public final class MainController {
             syncTransactionStatus(session);
         });
         backgroundTasks.execute(task);
+    }
+
+    private CompletableFuture<QueryResult> loadResultPage(QueryOutcomePane.PageRequest request) {
+        if (request == null || request.sql() == null || request.sql().isBlank()) {
+            return CompletableFuture.completedFuture(QueryResult.ofError("Nothing to load", 0));
+        }
+        Optional<ConnectionSession> sessionOpt = Optional.ofNullable(lastRunSessionId)
+                .flatMap(sessions::find)
+                .filter(ConnectionSession::isConnected)
+                .or(() -> sessions.focused().filter(ConnectionSession::isConnected));
+        if (sessionOpt.isEmpty()) {
+            return CompletableFuture.completedFuture(QueryResult.ofError("Not connected", 0));
+        }
+        DataSourceDriver driver = sessionOpt.get().driver();
+        ResultPager.Plan plan = ResultPager.plan(request.sql(), request.offset(), request.limit());
+        return driver.executeQueryAsync(plan.sql(), plan.skipRows(), plan.maxRows())
+                .thenCompose(result -> {
+                    if (result.isError() && PageSql.canWrap(request.sql()) && plan.skipRows() == 0
+                            && request.offset() > 0) {
+                        return driver.executeQueryAsync(request.sql(), request.offset(), request.limit());
+                    }
+                    return CompletableFuture.completedFuture(result);
+                });
     }
 
     private java.util.Optional<QueryOutcomePane.EditableResultTarget> resolveEditableResult(String sql) {

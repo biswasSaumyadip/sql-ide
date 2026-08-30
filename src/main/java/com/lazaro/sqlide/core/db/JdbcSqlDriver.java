@@ -237,7 +237,19 @@ public final class JdbcSqlDriver implements DataSourceDriver {
         }
     }
 
-    private QueryResult execute(String sql) {
+    @Override
+    public CompletableFuture<QueryResult> executeQueryAsync(String sql, int skipRows, int maxRows) {
+        String statement = sql == null ? "" : sql.trim();
+        if (statement.isEmpty()) {
+            return CompletableFuture.completedFuture(
+                    QueryResult.ofError("Nothing to execute: the statement is empty.", 0L));
+        }
+        int skip = Math.max(0, skipRows);
+        int cap = Math.max(1, maxRows);
+        return CompletableFuture.supplyAsync(() -> execute(statement, skip, cap), executor);
+    }
+
+    private QueryResult execute(String sql, int skipRows, int maxRows) {
         Connection connection = null;
         boolean releaseToPool = false;
         try {
@@ -250,7 +262,7 @@ public final class JdbcSqlDriver implements DataSourceDriver {
                 }
                 applyActiveCatalog(connection);
             }
-            return executeOn(connection, sql);
+            return executeOn(connection, sql, skipRows, maxRows);
         } catch (SQLException e) {
             return QueryResult.ofError(describe(e), 0L);
         } finally {
@@ -264,7 +276,15 @@ public final class JdbcSqlDriver implements DataSourceDriver {
         }
     }
 
+    private QueryResult execute(String sql) {
+        return execute(sql, 0, queryMaxRows);
+    }
+
     private QueryResult executeOn(Connection connection, String sql) {
+        return executeOn(connection, sql, 0, queryMaxRows);
+    }
+
+    private QueryResult executeOn(Connection connection, String sql, int skipRows, int maxRows) {
         long startNanos = System.nanoTime();
         Statement statement = null;
         try {
@@ -274,14 +294,15 @@ public final class JdbcSqlDriver implements DataSourceDriver {
                 executing = true;
             }
 
-            // Allow one extra row so ResultSetMapper can detect truncation.
-            int maxRows = Math.max(1, queryMaxRows);
-            statement.setMaxRows(maxRows + 1);
+            // Allow skipped rows plus one extra so ResultSetMapper can detect truncation.
+            int cap = Math.max(1, maxRows);
+            int skip = Math.max(0, skipRows);
+            statement.setMaxRows(skip + cap + 1);
             boolean producedResultSet = statement.execute(sql);
 
             if (producedResultSet) {
                 try (ResultSet resultSet = statement.getResultSet()) {
-                    return ResultSetMapper.drain(resultSet, maxRows, startNanos);
+                    return ResultSetMapper.drain(resultSet, skip, cap, startNanos);
                 }
             }
             return QueryResult.ofUpdate(statement.getUpdateCount(), elapsedMs(startNanos));

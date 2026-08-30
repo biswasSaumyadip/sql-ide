@@ -1188,8 +1188,28 @@
     -fx-background-color: #2a2618;
     -fx-border-color: transparent transparent #5c4e2a transparent;
     -fx-border-width: 0 0 1 0;
+}
+
+.result-truncation-text {
     -fx-text-fill: #e0c06a;
     -fx-font-size: 12px;
+}
+
+.result-load-more {
+    -fx-background-color: #3a3424;
+    -fx-text-fill: #e0c06a;
+    -fx-background-radius: 4px;
+    -fx-padding: 3px 10px;
+    -fx-font-size: 12px;
+    -fx-cursor: hand;
+}
+
+.result-load-more:hover {
+    -fx-background-color: #4a4330;
+}
+
+.result-load-more:disabled {
+    -fx-opacity: 0.55;
 }
 
 /* ---------------------------------------------------------------- split panes */

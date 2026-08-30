@@ -42,6 +42,15 @@ public interface DataSourceDriver extends AutoCloseable {
     CompletableFuture<QueryResult> executeQueryAsync(String sql);
 
     /**
+     * Runs one statement, skipping {@code skipRows} then materialising at most
+     * {@code maxRows}. Used for result paging when the SQL cannot be wrapped with
+     * {@code LIMIT}/{@code OFFSET}.
+     */
+    default CompletableFuture<QueryResult> executeQueryAsync(String sql, int skipRows, int maxRows) {
+        return executeQueryAsync(sql);
+    }
+
+    /**
      * Runs {@code statements} in order on the interactive session. Stops after the
      * first error; earlier successes remain in the returned {@link ScriptResult}.
      */

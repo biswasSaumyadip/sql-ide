@@ -35,9 +35,27 @@ public final class ResultSetMapper {
      * @param startNanos {@link System#nanoTime()} reading taken when execution began
      */
     public static QueryResult drain(ResultSet resultSet, int maxRows, long startNanos) throws SQLException {
+        return drain(resultSet, 0, maxRows, startNanos);
+    }
+
+    /**
+     * Reads the cursor into memory, optionally skipping already-consumed rows.
+     *
+     * @param skipRows   rows to advance past before materialising (client-side offset)
+     * @param maxRows    hard cap on materialised rows
+     * @param startNanos {@link System#nanoTime()} reading taken when execution began
+     */
+    public static QueryResult drain(ResultSet resultSet, int skipRows, int maxRows, long startNanos)
+            throws SQLException {
         ResultSetMetaData metaData = resultSet.getMetaData();
         int columnCount = metaData.getColumnCount();
         List<String> columnNames = columnLabels(metaData, columnCount);
+
+        int skip = Math.max(0, skipRows);
+        int skipped = 0;
+        while (skipped < skip && resultSet.next()) {
+            skipped++;
+        }
 
         int limit = Math.max(0, maxRows);
         List<List<String>> rows = new ArrayList<>();

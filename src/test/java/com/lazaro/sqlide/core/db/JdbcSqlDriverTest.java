@@ -1,5 +1,6 @@
 package com.lazaro.sqlide.core.db;
 
+import com.lazaro.sqlide.core.sql.ResultPager;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -173,6 +174,51 @@ class JdbcSqlDriverTest {
             assertThrows(ExecutionException.class,
                     () -> broken.connect(config).get(TIMEOUT_SECONDS, TIMEOUT_UNIT));
         }
+    }
+
+    @Test
+    @DisplayName("executeQueryAsync skip fetches the next page")
+    void skipFetchesNextPage() throws Exception {
+        driver.setMaxRowsPerQuery(10);
+        run("CREATE TABLE nums (n INT)");
+        for (int i = 1; i <= 25; i++) {
+            run("INSERT INTO nums VALUES (" + i + ")");
+        }
+
+        QueryResult first = run("SELECT n FROM nums ORDER BY n");
+        assertEquals(10, first.rowCount());
+        assertTrue(first.truncated());
+        assertEquals("1", first.rows().getFirst().getFirst());
+
+        QueryResult next = driver.executeQueryAsync("SELECT n FROM nums ORDER BY n", 10, 10)
+                .get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        assertFalse(next.isError(), next.errorMessage());
+        assertEquals(10, next.rowCount());
+        assertEquals("11", next.rows().getFirst().getFirst());
+        assertTrue(next.truncated());
+
+        QueryResult last = driver.executeQueryAsync("SELECT n FROM nums ORDER BY n", 20, 10)
+                .get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        assertEquals(5, last.rowCount());
+        assertFalse(last.truncated());
+        assertEquals("25", last.rows().getLast().getFirst());
+    }
+
+    @Test
+    @DisplayName("LIMIT/OFFSET wrap fetches the next page without re-reading prior rows")
+    void wrapFetchesNextPage() throws Exception {
+        driver.setMaxRowsPerQuery(10);
+        run("CREATE TABLE nums (n INT)");
+        for (int i = 1; i <= 25; i++) {
+            run("INSERT INTO nums VALUES (" + i + ")");
+        }
+        var plan = ResultPager.plan("SELECT n FROM nums ORDER BY n", 10, 10);
+        QueryResult next = driver.executeQueryAsync(plan.sql(), plan.skipRows(), plan.maxRows())
+                .get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        assertFalse(next.isError(), next.errorMessage());
+        assertEquals(10, next.rowCount());
+        assertEquals("11", next.rows().getFirst().getFirst());
+        assertTrue(next.truncated());
     }
 
     private QueryResult run(String sql) throws Exception {

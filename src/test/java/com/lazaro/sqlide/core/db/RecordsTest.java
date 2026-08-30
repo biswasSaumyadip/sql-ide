@@ -97,8 +97,15 @@ class RecordsTest {
                 List.of("id"), List.of(List.of("1"), List.of("2")), 8L, true);
         assertTrue(truncated.truncated());
         assertEquals("2+ rows in 8 ms (truncated)", truncated.summary());
-        assertTrue(truncated.truncationBanner().contains("Showing first 2 rows"));
-        assertTrue(truncated.successMessage().contains("first 2 rows"));
+        assertTrue(truncated.truncationBanner().contains("Showing 2 rows"));
+        assertTrue(truncated.successMessage().contains("2 rows shown, more available"));
+
+        QueryResult more = QueryResult.ofRows(
+                List.of("id"), List.of(List.of("3"), List.of("4")), 4L, false);
+        QueryResult combined = truncated.appended(more);
+        assertEquals(4, combined.rowCount());
+        assertFalse(combined.truncated());
+        assertEquals(12L, combined.executionTimeMs());
     }
 
     @Test

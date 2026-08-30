@@ -233,6 +233,31 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
     }
 
     /**
+     * Appends another page onto the current grid without rebuilding columns.
+     * Returns the combined result, or {@code null} when there is nothing to append.
+     */
+    public QueryResult appendResult(QueryResult next) {
+        Objects.requireNonNull(next, "next must not be null");
+        if (currentResult == null || !currentResult.isResultSet() || currentResult.isError()) {
+            setResult(next);
+            return currentResult;
+        }
+        if (next.isError() || !next.isResultSet() || next.rows().isEmpty()) {
+            return next.isError() ? next : currentResult;
+        }
+        QueryResult combined = currentResult.appended(next);
+        if (combined.isError()) {
+            return combined;
+        }
+        currentResult = combined;
+        for (List<String> row : next.rows()) {
+            allRows.add(FXCollections.observableArrayList(row));
+        }
+        applyRowFilter(rowFilter);
+        return combined;
+    }
+
+    /**
      * Case-insensitive substring filter across all cells. Blank clears the filter.
      */
     public void applyRowFilter(String query) {
