@@ -86,6 +86,46 @@ public final class Icons {
         return group(triangle);
     }
 
+    /** Filled square for Stop / cancel. */
+    public static Node stop() {
+        Rectangle square = new Rectangle(3.5, 3.5, 7, 7);
+        square.getStyleClass().addAll(BASE_CLASS, "icon-stop");
+        return group(square);
+    }
+
+    /** Open bracket / play for Begin transaction. */
+    public static Node begin() {
+        Polygon triangle = new Polygon(4.0, 3.0, 11.0, 7.0, 4.0, 11.0);
+        triangle.getStyleClass().addAll(BASE_CLASS, "icon-begin");
+        Line bar = outlined(new Line(2.5, 3.0, 2.5, 11.0), "icon-begin-bar");
+        return group(triangle, bar);
+    }
+
+    /** Check mark for Commit. */
+    public static Node commit() {
+        Line a = outlined(new Line(2.5, 7.5, 5.5, 11.0), "icon-commit");
+        Line b = outlined(new Line(5.5, 11.0, 11.5, 3.0), "icon-commit");
+        return group(a, b);
+    }
+
+    /** Curved arrow for Rollback. */
+    public static Node rollback() {
+        Arc arc = outlined(new Arc(7, 7.5, 4.5, 4.5, 40, 220), "icon-rollback");
+        arc.setType(ArcType.OPEN);
+        Polygon head = new Polygon(3.2, 4.0, 1.5, 8.2, 5.8, 7.5);
+        head.getStyleClass().addAll(BASE_CLASS, "icon-rollback-head");
+        return group(arc, head);
+    }
+
+    /** Branching tree glyph for Explain. */
+    public static Node explain() {
+        Line trunk = outlined(new Line(7, 2.5, 7, 7), "icon-explain");
+        Line left = outlined(new Line(7, 7, 3, 11.5), "icon-explain");
+        Line right = outlined(new Line(7, 7, 11, 11.5), "icon-explain");
+        Circle node = outlined(new Circle(7, 7, 1.6), "icon-explain");
+        return group(trunk, left, right, node);
+    }
+
     /** Power symbol for Connect. */
     public static Node connect() {
         Arc ring = outlined(new Arc(7, 7.5, 5, 5, -60, 300), "icon-connect");

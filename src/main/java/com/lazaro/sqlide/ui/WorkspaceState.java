@@ -29,6 +29,7 @@ public final class WorkspaceState {
     private static final String LAST_PORT = "connection.port";
     private static final String LAST_DATABASE = "connection.database";
     private static final String LAST_USER = "connection.user";
+    private static final String AUTO_COMMIT = "execution.autoCommit";
 
     private static final double DEFAULT_WIDTH = 1280;
     private static final double DEFAULT_HEIGHT = 800;
@@ -123,5 +124,15 @@ public final class WorkspaceState {
         preferences.putInt(LAST_PORT, config.port());
         preferences.put(LAST_DATABASE, config.database());
         preferences.put(LAST_USER, config.user());
+    }
+
+    // ---------------------------------------------------------------- execution
+
+    public boolean autoCommit() {
+        return preferences.getBoolean(AUTO_COMMIT, true);
+    }
+
+    public void saveAutoCommit(boolean autoCommit) {
+        preferences.putBoolean(AUTO_COMMIT, autoCommit);
     }
 }

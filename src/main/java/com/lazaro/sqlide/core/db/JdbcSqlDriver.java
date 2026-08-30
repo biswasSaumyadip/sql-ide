@@ -28,6 +28,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * graph. Every returned {@link CompletableFuture} is completed on a pooled worker
  * thread, so callers on the JavaFX Application Thread must marshal results back
  * themselves.
+ *
+ * <p>User statements run on a dedicated session connection when auto-commit is off
+ * (so begin/commit/rollback survive across queries). Schema introspection keeps
+ * using the pool so the tree can refresh without blocking the session.
  */
 public final class JdbcSqlDriver implements DataSourceDriver {
 
@@ -50,11 +54,17 @@ public final class JdbcSqlDriver implements DataSourceDriver {
 
     private final ExecutorService executor = Executors.newFixedThreadPool(POOL_SIZE, workerThreadFactory());
     private final SchemaIntrospectionService introspection = new SchemaIntrospectionService(this);
+    private final Object sessionLock = new Object();
 
     private volatile HikariDataSource dataSource;
     private volatile ConnectionConfig config;
     /** Applied to every borrowed connection before statement execution. */
     private volatile String activeCatalog;
+    private volatile boolean autoCommit = true;
+    /** Held only while {@link #autoCommit} is {@code false}. */
+    private volatile Connection sessionConnection;
+    private volatile Statement activeStatement;
+    private volatile boolean executing;
 
     // ---------------------------------------------------------------- lifecycle
 
@@ -110,10 +120,13 @@ public final class JdbcSqlDriver implements DataSourceDriver {
 
     /** Closes the pool. Safe to call when already disconnected. */
     public void disconnect() {
+        cancelQuietly();
+        releaseSessionConnection(true);
         HikariDataSource current = dataSource;
         dataSource = null;
         config = null;
         activeCatalog = null;
+        autoCommit = true;
         if (current != null && !current.isClosed()) {
             current.close();
         }
@@ -165,12 +178,23 @@ public final class JdbcSqlDriver implements DataSourceDriver {
 
     private QueryResult execute(String sql) {
         long startNanos = System.nanoTime();
-        // Both the statement and the connection are released here, before the value
-        // is handed to the future, so no JDBC resource can escape to the UI layer.
-        try (Connection connection = getConnection();
-             Statement statement = connection.createStatement()) {
+        Connection connection = null;
+        Statement statement = null;
+        boolean releaseToPool = false;
+        try {
+            synchronized (sessionLock) {
+                if (autoCommit) {
+                    connection = getConnection();
+                    releaseToPool = true;
+                } else {
+                    connection = ensureSessionConnectionLocked();
+                }
+                applyActiveCatalog(connection);
+                statement = connection.createStatement();
+                activeStatement = statement;
+                executing = true;
+            }
 
-            applyActiveCatalog(connection);
             statement.setMaxRows(MAX_ROWS);
             boolean producedResultSet = statement.execute(sql);
 
@@ -182,8 +206,118 @@ public final class JdbcSqlDriver implements DataSourceDriver {
             return QueryResult.ofUpdate(statement.getUpdateCount(), elapsedMs(startNanos));
 
         } catch (SQLException e) {
+            if (wasCancelled(e)) {
+                return QueryResult.ofError("Query cancelled", elapsedMs(startNanos));
+            }
             return QueryResult.ofError(describe(e), elapsedMs(startNanos));
+        } finally {
+            synchronized (sessionLock) {
+                if (activeStatement == statement) {
+                    activeStatement = null;
+                }
+                executing = false;
+            }
+            if (statement != null) {
+                try {
+                    statement.close();
+                } catch (SQLException ignored) {
+                    // already closing
+                }
+            }
+            if (releaseToPool && connection != null) {
+                try {
+                    connection.close();
+                } catch (SQLException ignored) {
+                    // pool reclaim best-effort
+                }
+            }
         }
+    }
+
+    // ---------------------------------------------------------------- transactions
+
+    @Override
+    public boolean isAutoCommit() {
+        return autoCommit;
+    }
+
+    @Override
+    public CompletableFuture<Void> setAutoCommit(boolean enabled) {
+        return CompletableFuture.runAsync(() -> {
+            synchronized (sessionLock) {
+                if (autoCommit == enabled) {
+                    return;
+                }
+                try {
+                    if (enabled) {
+                        Connection session = sessionConnection;
+                        if (session != null && !session.isClosed()) {
+                            if (!session.getAutoCommit()) {
+                                session.commit();
+                            }
+                            session.setAutoCommit(true);
+                        }
+                        releaseSessionConnectionLocked(false);
+                        autoCommit = true;
+                    } else {
+                        Connection session = ensureSessionConnectionLocked();
+                        session.setAutoCommit(false);
+                        autoCommit = false;
+                    }
+                } catch (SQLException e) {
+                    throw new CompletionException(e);
+                }
+            }
+        }, executor);
+    }
+
+    @Override
+    public CompletableFuture<Void> beginTransaction() {
+        return setAutoCommit(false);
+    }
+
+    @Override
+    public CompletableFuture<Void> commit() {
+        return CompletableFuture.runAsync(() -> {
+            synchronized (sessionLock) {
+                try {
+                    Connection session = sessionConnection;
+                    if (session == null || session.isClosed()) {
+                        return;
+                    }
+                    session.commit();
+                } catch (SQLException e) {
+                    throw new CompletionException(e);
+                }
+            }
+        }, executor);
+    }
+
+    @Override
+    public CompletableFuture<Void> rollback() {
+        return CompletableFuture.runAsync(() -> {
+            synchronized (sessionLock) {
+                try {
+                    Connection session = sessionConnection;
+                    if (session == null || session.isClosed()) {
+                        return;
+                    }
+                    session.rollback();
+                } catch (SQLException e) {
+                    throw new CompletionException(e);
+                }
+            }
+        }, executor);
+    }
+
+    @Override
+    public CompletableFuture<Void> cancelExecution() {
+        return CompletableFuture.runAsync(this::cancelQuietly, executor);
+    }
+
+    @Override
+    public boolean isExecuting() {
+        return executing;
     }
 
     // ---------------------------------------------------------------- schema
@@ -212,6 +346,17 @@ public final class JdbcSqlDriver implements DataSourceDriver {
                 return;
             }
             // Probe once so a bad name fails here instead of on the next query.
+            synchronized (sessionLock) {
+                try {
+                    if (sessionConnection != null && !sessionConnection.isClosed()) {
+                        applyActiveCatalog(sessionConnection);
+                        return;
+                    }
+                } catch (SQLException e) {
+                    activeCatalog = null;
+                    throw new CompletionException(e);
+                }
+            }
             try (Connection connection = getConnection()) {
                 applyActiveCatalog(connection);
             } catch (SQLException e) {
@@ -254,6 +399,62 @@ public final class JdbcSqlDriver implements DataSourceDriver {
         dataSource = created;
         config = newConfig;
         activeCatalog = newConfig.database().isBlank() ? null : newConfig.database();
+        autoCommit = true;
+    }
+
+    /** Caller must hold {@link #sessionLock}. */
+    private Connection ensureSessionConnectionLocked() throws SQLException {
+        Connection current = sessionConnection;
+        if (current != null && !current.isClosed()) {
+            return current;
+        }
+        Connection created = getConnection();
+        created.setAutoCommit(false);
+        applyActiveCatalog(created);
+        sessionConnection = created;
+        return created;
+    }
+
+    private void releaseSessionConnection(boolean rollback) {
+        synchronized (sessionLock) {
+            releaseSessionConnectionLocked(rollback);
+        }
+    }
+
+    /** Caller must hold {@link #sessionLock}. */
+    private void releaseSessionConnectionLocked(boolean rollback) {
+        Connection session = sessionConnection;
+        sessionConnection = null;
+        if (session == null) {
+            return;
+        }
+        try {
+            if (rollback && !session.isClosed() && !session.getAutoCommit()) {
+                session.rollback();
+            }
+        } catch (SQLException ignored) {
+            // best-effort before close
+        }
+        try {
+            session.close();
+        } catch (SQLException ignored) {
+            // returning to pool / discarding
+        }
+    }
+
+    private void cancelQuietly() {
+        Statement statement;
+        synchronized (sessionLock) {
+            statement = activeStatement;
+        }
+        if (statement == null) {
+            return;
+        }
+        try {
+            statement.cancel();
+        } catch (SQLException ignored) {
+            // cancel is best-effort; the execute path reports the outcome
+        }
     }
 
     /** Prefer setCatalog (MySQL); fall back to setSchema (PostgreSQL). */
@@ -271,6 +472,19 @@ public final class JdbcSqlDriver implements DataSourceDriver {
                 throw primary;
             }
         }
+    }
+
+    private static boolean wasCancelled(SQLException e) {
+        String message = e.getMessage();
+        if (message != null) {
+            String lower = message.toLowerCase();
+            if (lower.contains("cancel") || lower.contains("interrupt") || lower.contains("aborted")) {
+                return true;
+            }
+        }
+        // Common SQLStates for statement cancel across vendors.
+        String state = e.getSQLState();
+        return "57014".equals(state) || "HY008".equals(state);
     }
 
     private static long elapsedMs(long startNanos) {

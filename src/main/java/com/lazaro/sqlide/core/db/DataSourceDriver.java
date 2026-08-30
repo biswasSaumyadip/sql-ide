@@ -67,6 +67,41 @@ public interface DataSourceDriver extends AutoCloseable {
     /** Catalog currently applied to new statements, empty when none is selected. */
     Optional<String> activeCatalog();
 
+    /**
+     * Whether subsequent statements auto-commit. Default {@code true}. When
+     * {@code false}, statements share one session connection until
+     * {@link #commit()} or {@link #rollback()}.
+     */
+    boolean isAutoCommit();
+
+    /**
+     * Enables or disables auto-commit on the interactive session. Turning it on
+     * commits any open work and releases the held session connection.
+     */
+    CompletableFuture<Void> setAutoCommit(boolean enabled);
+
+    /**
+     * Starts a manual transaction (turns auto-commit off). Idempotent when already
+     * in manual mode.
+     */
+    CompletableFuture<Void> beginTransaction();
+
+    /** Commits the open session transaction. No-op when auto-commit is on. */
+    CompletableFuture<Void> commit();
+
+    /** Rolls back the open session transaction. No-op when auto-commit is on. */
+    CompletableFuture<Void> rollback();
+
+    /**
+     * Requests cancellation of the statement currently executing on this driver, if
+     * any. Uses {@link java.sql.Statement#cancel()}; completion does not wait for
+     * the cancelled query future.
+     */
+    CompletableFuture<Void> cancelExecution();
+
+    /** {@code true} while a user statement is mid-flight on the session. */
+    boolean isExecuting();
+
     boolean isConnected();
 
     /** The configuration currently in use, empty when disconnected. */

@@ -32,6 +32,7 @@ public final class StatusBar extends HBox {
     private final ProgressIndicator activity = new ProgressIndicator();
     private final Label connectionLabel = new Label("Not connected");
     private final Label databaseLabel = new Label();
+    private final Label transactionLabel = new Label();
     private final Label resultLabel = new Label();
     private final Label caretLabel = new Label("Ln 1, Col 1");
 
@@ -51,18 +52,20 @@ public final class StatusBar extends HBox {
 
         connectionLabel.getStyleClass().add("status-text");
         databaseLabel.getStyleClass().addAll("status-text", "status-database");
+        transactionLabel.getStyleClass().addAll("status-text", "status-transaction");
         resultLabel.getStyleClass().addAll("status-text", "status-result");
         caretLabel.getStyleClass().addAll("status-text", "status-caret");
 
         connectionLabel.setMinWidth(Region.USE_PREF_SIZE);
         databaseLabel.setMinWidth(Region.USE_PREF_SIZE);
+        transactionLabel.setMinWidth(Region.USE_PREF_SIZE);
         caretLabel.setMinWidth(Region.USE_PREF_SIZE);
 
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
         getChildren().addAll(
-                dot, activity, connectionLabel, databaseLabel,
+                dot, activity, connectionLabel, databaseLabel, transactionLabel,
                 spacer,
                 resultLabel, new Separator(Orientation.VERTICAL), caretLabel);
 
@@ -81,6 +84,7 @@ public final class StatusBar extends HBox {
         connectionLabel.pseudoClassStateChanged(ERROR, false);
         connectionLabel.setTooltip(null);
         setActiveDatabase(database);
+        // Transaction readout is owned by MainController via setTransactionState.
     }
 
     /** Updates only the active-database readout (connection stays as-is). */
@@ -99,6 +103,32 @@ public final class StatusBar extends HBox {
         databaseLabel.setManaged(true);
     }
 
+    /**
+     * @param autoCommit {@code true} when each statement commits alone
+     * @param visible    hide the readout while disconnected
+     */
+    public void setTransactionState(boolean autoCommit, boolean visible) {
+        if (!visible) {
+            transactionLabel.setText("");
+            transactionLabel.setVisible(false);
+            transactionLabel.setManaged(false);
+            transactionLabel.getStyleClass().removeAll("status-txn-auto", "status-txn-manual");
+            return;
+        }
+        transactionLabel.setVisible(true);
+        transactionLabel.setManaged(true);
+        transactionLabel.getStyleClass().removeAll("status-txn-auto", "status-txn-manual");
+        if (autoCommit) {
+            transactionLabel.setText("· Auto-commit");
+            transactionLabel.setTooltip(new Tooltip("Each statement commits immediately"));
+            transactionLabel.getStyleClass().add("status-txn-auto");
+        } else {
+            transactionLabel.setText("· Manual txn");
+            transactionLabel.setTooltip(new Tooltip("Commit or Rollback from the toolbar"));
+            transactionLabel.getStyleClass().add("status-txn-manual");
+        }
+    }
+
     public void setDisconnected() {
         setActivity(false);
         applyDotClass(DOT_DISCONNECTED);
@@ -111,6 +141,7 @@ public final class StatusBar extends HBox {
         databaseLabel.setVisible(false);
         databaseLabel.setManaged(false);
         databaseLabel.getStyleClass().remove("status-database-active");
+        setTransactionState(true, false);
         resultLabel.setText("");
         resultLabel.setTooltip(null);
         resultLabel.pseudoClassStateChanged(ERROR, false);
@@ -133,6 +164,7 @@ public final class StatusBar extends HBox {
         databaseLabel.setText("");
         databaseLabel.setVisible(false);
         databaseLabel.setManaged(false);
+        setTransactionState(true, false);
     }
 
     public void setQueryRunning() {

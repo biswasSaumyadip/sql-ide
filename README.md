@@ -46,16 +46,21 @@ com.lazaro.sqlide
 │   ├── DataSourceDriver            the interface the UI talks to
 │   ├── DriverCapabilities          what a driver supports
 │   ├── DriverRegistry              driver id -> factory
-│   ├── JdbcSqlDriver               JDBC/HikariCP implementation
+│   ├── JdbcSqlDriver               JDBC/HikariCP implementation (+ session txn / cancel)
 │   ├── SchemaIntrospectionService  DatabaseMetaData reader
 │   ├── ResultSetMapper             drains a cursor into a QueryResult
 │   ├── ConnectionConfig            endpoint + credentials, builds the JDBC URL
 │   ├── QueryResult                 detached outcome of one statement
 │   └── SchemaNode                  one entry in the structure tree
+├── core.explain
+│   ├── ExplainSql                  dialect-aware EXPLAIN wrapping
+│   ├── ExplainPlanParser           tabular / text plan → tree
+│   └── ExplainPlanNode             one node in a plan tree
 └── ui.components
     ├── SqlEditorPane               RichTextFX editor, line numbers
     ├── SqlSyntaxHighlighter        pure regex tokeniser (no JavaFX types)
-    └── DynamicResultTable          grid built from result metadata
+    ├── DynamicResultTable          grid built from result metadata
+    └── ExplainPlanTreeView         readable EXPLAIN tree
 ```
 
 `core.db` has no JavaFX imports at all and is covered by its own tests, so it can
@@ -122,5 +127,8 @@ delete files the running server holds open.
 - [x] **Phase 2** — Headless engine: driver + `SchemaIntrospectionService`
 - [x] **Phase 3** — `SqlEditorPane` (syntax highlighting), `DynamicResultTable`
 - [x] **Phase 3.5** — `DataSourceDriver` interface, `SchemaNode`, `DriverRegistry`
-- [ ] **Phase 4** — Main layout: schema tree, split panes, toolbar
-- [ ] **Phase 5** — Concurrency bridge wiring UI actions to background services
+- [x] **Phase 4** — Main layout: schema tree, split panes, toolbar
+- [x] **Phase 5** — Concurrency bridge wiring UI actions to background services
+- [x] **Phase 6** — Schema-aware autocomplete, object viewer, active database
+- [x] **Phase 7** — Transactions & execution control: auto-commit / begin / commit / rollback,
+  cancellable queries (`Statement.cancel`), EXPLAIN / EXPLAIN ANALYZE plan tree

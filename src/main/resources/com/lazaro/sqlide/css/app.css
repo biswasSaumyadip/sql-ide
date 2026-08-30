@@ -61,6 +61,32 @@
     -fx-font-weight: bold;
 }
 
+.stop-button {
+    -fx-font-weight: bold;
+}
+
+.toolbar-toggle {
+    -fx-background-color: transparent;
+    -fx-background-radius: 5px;
+    -fx-padding: 5px 10px;
+    -fx-text-fill: #a4acb9;
+    -fx-font-size: 12px;
+}
+
+.toolbar-toggle:hover {
+    -fx-background-color: #2b2d31;
+}
+
+.toolbar-toggle:selected {
+    -fx-background-color: #2f5d8c;
+    -fx-text-fill: #eceff4;
+    -fx-font-weight: bold;
+}
+
+.toolbar-toggle:disabled {
+    -fx-opacity: 0.38;
+}
+
 .toolbar-activity,
 .status-activity,
 .dialog-activity {
@@ -77,6 +103,38 @@
 .icon-run {
     -fx-fill: #5fb56a;
     -fx-stroke: transparent;
+}
+
+.icon-stop {
+    -fx-fill: #e06c75;
+    -fx-stroke: transparent;
+}
+
+.icon-begin {
+    -fx-fill: #6aa9e0;
+    -fx-stroke: transparent;
+}
+
+.icon-begin-bar {
+    -fx-stroke: #6aa9e0;
+}
+
+.icon-commit {
+    -fx-stroke: #5fb56a;
+    -fx-stroke-width: 1.6;
+}
+
+.icon-rollback {
+    -fx-stroke: #d08770;
+}
+
+.icon-rollback-head {
+    -fx-fill: #d08770;
+    -fx-stroke: transparent;
+}
+
+.icon-explain {
+    -fx-stroke: #c8a25e;
 }
 
 .icon-connect {
@@ -273,6 +331,42 @@
     -fx-background-color: #17181b;
 }
 
+.explain-plan-tree {
+    -fx-background-color: #17181b;
+    -fx-border-width: 0;
+    -fx-padding: 4px 6px;
+}
+
+.explain-plan-tree .tree-cell {
+    -fx-background-color: transparent;
+    -fx-background-radius: 4px;
+    -fx-padding: 3px 6px;
+}
+
+.explain-plan-tree .tree-cell:hover {
+    -fx-background-color: #262a32;
+}
+
+.explain-plan-tree .tree-cell:selected {
+    -fx-background-color: #2f5d8c;
+}
+
+.explain-node-label {
+    -fx-text-fill: #d6d9de;
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 12px;
+}
+
+.explain-node-detail {
+    -fx-text-fill: #7f848e;
+    -fx-font-size: 11px;
+}
+
+.explain-plan-tree .tree-cell:selected .explain-node-label,
+.explain-plan-tree .tree-cell:selected .explain-node-detail {
+    -fx-text-fill: #eceff4;
+}
+
 .query-error-panel {
     -fx-background-color: #2a1f22;
     -fx-border-color: #7a2e3a transparent #303237 transparent;
@@ -360,6 +454,15 @@
 
 .status-database-active {
     -fx-text-fill: #8fbf7f;
+    -fx-font-weight: bold;
+}
+
+.status-txn-auto {
+    -fx-text-fill: #7f848e;
+}
+
+.status-txn-manual {
+    -fx-text-fill: #e0c06a;
     -fx-font-weight: bold;
 }
 

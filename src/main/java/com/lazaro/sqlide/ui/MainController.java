@@ -6,6 +6,7 @@ import com.lazaro.sqlide.core.db.DriverRegistry;
 import com.lazaro.sqlide.core.db.QueryResult;
 import com.lazaro.sqlide.core.db.SchemaCache;
 import com.lazaro.sqlide.core.db.SchemaNode;
+import com.lazaro.sqlide.core.explain.ExplainSql;
 import com.lazaro.sqlide.ui.components.EditorTabPane;
 import com.lazaro.sqlide.ui.components.QueryOutcomePane;
 import com.lazaro.sqlide.ui.components.SchemaTreeView;
@@ -22,6 +23,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.Separator;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToolBar;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.KeyCode;
@@ -71,6 +73,13 @@ public final class MainController {
     private final BorderPane root = new BorderPane();
 
     private Button runButton;
+    private Button stopButton;
+    private Button explainButton;
+    private Button explainAnalyzeButton;
+    private ToggleButton autoCommitToggle;
+    private Button beginButton;
+    private Button commitButton;
+    private Button rollbackButton;
     private Button connectButton;
     private Button disconnectButton;
     private Button refreshButton;
@@ -78,6 +87,7 @@ public final class MainController {
 
     private DataSourceDriver driver;
     private Task<?> activeTask;
+    private volatile boolean cancelling;
     private boolean sidebarCollapsed;
     private double expandedMainDivider = DEFAULT_MAIN_DIVIDER;
 
@@ -121,6 +131,22 @@ public final class MainController {
 
         runButton = labelledButton(Icons.run(), "Run", "Execute (Ctrl+Enter)", this::runQuery);
         runButton.getStyleClass().add("run-button");
+        stopButton = labelledButton(Icons.stop(), "Stop", "Cancel running query (Ctrl+Break)", this::cancelQuery);
+        stopButton.getStyleClass().add("stop-button");
+        explainButton = iconButton(Icons.explain(), "EXPLAIN selected statement (Ctrl+Shift+E)",
+                () -> runExplain(false));
+        explainAnalyzeButton = labelledButton(Icons.explain(), "Analyze",
+                "EXPLAIN ANALYZE selected statement (Ctrl+Shift+A)", () -> runExplain(true));
+
+        autoCommitToggle = new ToggleButton("Auto-commit");
+        autoCommitToggle.getStyleClass().add("toolbar-toggle");
+        autoCommitToggle.setSelected(state.autoCommit());
+        autoCommitToggle.setTooltip(new Tooltip("Toggle auto-commit (off = manual transactions)"));
+        autoCommitToggle.setOnAction(event -> toggleAutoCommit());
+        beginButton = labelledButton(Icons.begin(), "Begin", "Begin manual transaction", this::beginTransaction);
+        commitButton = labelledButton(Icons.commit(), "Commit", "Commit current transaction", this::commitTransaction);
+        rollbackButton = labelledButton(Icons.rollback(), "Rollback", "Rollback current transaction",
+                this::rollbackTransaction);
 
         toolbarActivity = new ProgressIndicator();
         toolbarActivity.setMaxSize(16, 16);
@@ -135,7 +161,9 @@ public final class MainController {
                 separator(),
                 connectButton, disconnectButton, refreshButton,
                 separator(),
-                runButton, toolbarActivity);
+                runButton, stopButton, explainButton, explainAnalyzeButton, toolbarActivity,
+                separator(),
+                autoCommitToggle, beginButton, commitButton, rollbackButton);
         toolBar.getStyleClass().add("app-toolbar");
         return toolBar;
     }
@@ -177,6 +205,10 @@ public final class MainController {
     public void installShortcuts(Scene scene) {
         KeyCombination run = new KeyCodeCombination(KeyCode.ENTER, KeyCombination.SHORTCUT_DOWN);
         KeyCombination runAlt = new KeyCodeCombination(KeyCode.F5);
+        KeyCombination stop = new KeyCodeCombination(KeyCode.PAUSE, KeyCombination.SHORTCUT_DOWN);
+        KeyCombination explain = new KeyCodeCombination(KeyCode.E, KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN);
+        KeyCombination explainAnalyze = new KeyCodeCombination(
+                KeyCode.A, KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN);
         KeyCombination toggleSidebar = new KeyCodeCombination(KeyCode.DIGIT1, KeyCombination.SHORTCUT_DOWN);
         KeyCombination newTab = new KeyCodeCombination(KeyCode.T, KeyCombination.SHORTCUT_DOWN);
         KeyCombination closeTab = new KeyCodeCombination(KeyCode.W, KeyCombination.SHORTCUT_DOWN);
@@ -187,6 +219,12 @@ public final class MainController {
         scene.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
             if (run.match(event) || runAlt.match(event)) {
                 consumeAnd(event, this::runQuery);
+            } else if (stop.match(event)) {
+                consumeAnd(event, this::cancelQuery);
+            } else if (explainAnalyze.match(event)) {
+                consumeAnd(event, () -> runExplain(true));
+            } else if (explain.match(event)) {
+                consumeAnd(event, () -> runExplain(false));
             } else if (toggleSidebar.match(event)) {
                 consumeAnd(event, this::toggleSidebar);
             } else if (newTab.match(event)) {
@@ -284,6 +322,7 @@ public final class MainController {
             state.saveLastConnection(config);
             schemaTree.reload();
             refreshSchemaCache();
+            applyPreferredAutoCommit();
             updateActionStates();
         });
         task.setOnFailed(event -> {
@@ -299,6 +338,7 @@ public final class MainController {
     }
 
     private void disconnect() {
+        cancelling = false;
         DataSourceDriver retired = driver;
         driver = registry.create(DriverRegistry.DEFAULT_DRIVER_ID);
 
@@ -307,6 +347,7 @@ public final class MainController {
         schemaCache.clear();
         outcome.clear();
         statusBar.setDisconnected();
+        autoCommitToggle.setSelected(state.autoCommit());
         updateActionStates();
 
         backgroundTasks.execute(retired::close);
@@ -387,6 +428,18 @@ public final class MainController {
     }
 
     private void runQuery() {
+        executeSql(null, false);
+    }
+
+    private void runExplain(boolean analyze) {
+        executeSql(analyze, true);
+    }
+
+    /**
+     * @param analyze {@code null} for a normal run; otherwise explain mode flag
+     * @param preferPlan whether the outcome pane should open the plan tree
+     */
+    private void executeSql(Boolean analyze, boolean preferPlan) {
         if (activeTask != null && activeTask.isRunning()) {
             return;
         }
@@ -408,6 +461,21 @@ public final class MainController {
             return;
         }
 
+        ConnectionConfig.Driver dialect = active.currentConfig()
+                .map(ConnectionConfig::driver)
+                .orElse(ConnectionConfig.Driver.MYSQL);
+        final String toRun;
+        if (analyze == null) {
+            toRun = sql;
+        } else {
+            toRun = ExplainSql.wrap(sql, dialect, analyze);
+            if (toRun.isBlank()) {
+                outcome.present(QueryResult.ofError("Nothing to explain.", 0));
+                return;
+            }
+        }
+
+        cancelling = false;
         setQueryRunning(true);
         outcome.showLoading();
         statusBar.setQueryRunning();
@@ -415,28 +483,172 @@ public final class MainController {
         Task<QueryResult> task = new Task<>() {
             @Override
             protected QueryResult call() throws Exception {
-                return active.executeQueryAsync(sql).get();
+                return active.executeQueryAsync(toRun).get();
             }
         };
         activeTask = task;
         task.setOnSucceeded(event -> {
             activeTask = null;
+            cancelling = false;
             setQueryRunning(false);
             QueryResult result = task.getValue();
-            outcome.present(result);
+            outcome.present(result, preferPlan);
             statusBar.setResult(result);
-            if (!result.isError()) {
+            syncTransactionStatus();
+            if (!result.isError() && analyze == null) {
                 syncActiveCatalogFromSql(sql);
             }
         });
         task.setOnFailed(event -> {
             activeTask = null;
+            cancelling = false;
             setQueryRunning(false);
             QueryResult result = QueryResult.ofError(rootCauseMessage(task.getException()), 0);
             outcome.present(result);
             statusBar.setResult(result);
+            syncTransactionStatus();
+        });
+        task.setOnCancelled(event -> {
+            activeTask = null;
+            cancelling = false;
+            setQueryRunning(false);
+            QueryResult result = QueryResult.ofError("Query cancelled", 0);
+            outcome.present(result);
+            statusBar.setResult(result);
+            syncTransactionStatus();
         });
         backgroundTasks.execute(task);
+    }
+
+    private void cancelQuery() {
+        Task<?> task = activeTask;
+        if (task == null || !task.isRunning() || cancelling) {
+            return;
+        }
+        cancelling = true;
+        outcome.showCancelling();
+        statusBar.setQueryRunning();
+        DataSourceDriver active = driver;
+        active.cancelExecution().whenComplete((ignored, error) -> javafx.application.Platform.runLater(() -> {
+            if (task.isRunning()) {
+                task.cancel(true);
+            }
+            updateActionStates();
+        }));
+        updateActionStates();
+    }
+
+    private void toggleAutoCommit() {
+        if (!driver.isConnected() || !driver.capabilities().supportsTransactions()) {
+            autoCommitToggle.setSelected(true);
+            return;
+        }
+        boolean enabled = autoCommitToggle.isSelected();
+        DataSourceDriver active = driver;
+        statusBar.setBusy(enabled ? "Enabling auto-commit\u2026" : "Starting manual transaction\u2026");
+        active.setAutoCommit(enabled).whenComplete((ignored, error) -> javafx.application.Platform.runLater(() -> {
+            if (error != null) {
+                autoCommitToggle.setSelected(active.isAutoCommit());
+                statusBar.setConnectionError("Auto-commit: " + rootCauseMessage(error));
+                syncTransactionStatus();
+                updateActionStates();
+                return;
+            }
+            state.saveAutoCommit(enabled);
+            active.currentConfig().ifPresent(config ->
+                    statusBar.setConnected(config.endpointLabel(), active.activeCatalog().orElse(null)));
+            syncTransactionStatus();
+            updateActionStates();
+        }));
+    }
+
+    private void beginTransaction() {
+        if (!driver.isConnected()) {
+            return;
+        }
+        DataSourceDriver active = driver;
+        statusBar.setBusy("Beginning transaction\u2026");
+        active.beginTransaction().whenComplete((ignored, error) -> javafx.application.Platform.runLater(() -> {
+            if (error != null) {
+                statusBar.setConnectionError("Begin failed: " + rootCauseMessage(error));
+            } else {
+                autoCommitToggle.setSelected(false);
+                state.saveAutoCommit(false);
+                active.currentConfig().ifPresent(config ->
+                        statusBar.setConnected(config.endpointLabel(), active.activeCatalog().orElse(null)));
+            }
+            syncTransactionStatus();
+            updateActionStates();
+        }));
+    }
+
+    private void commitTransaction() {
+        if (!driver.isConnected() || driver.isAutoCommit()) {
+            return;
+        }
+        DataSourceDriver active = driver;
+        statusBar.setBusy("Committing\u2026");
+        active.commit().whenComplete((ignored, error) -> javafx.application.Platform.runLater(() -> {
+            if (error != null) {
+                statusBar.setConnectionError("Commit failed: " + rootCauseMessage(error));
+            } else {
+                active.currentConfig().ifPresent(config ->
+                        statusBar.setConnected(config.endpointLabel(), active.activeCatalog().orElse(null)));
+                outcome.showIdle();
+                outcome.results().showMessage("Transaction committed.");
+                statusBar.clearResult();
+            }
+            syncTransactionStatus();
+            updateActionStates();
+        }));
+    }
+
+    private void rollbackTransaction() {
+        if (!driver.isConnected() || driver.isAutoCommit()) {
+            return;
+        }
+        DataSourceDriver active = driver;
+        statusBar.setBusy("Rolling back\u2026");
+        active.rollback().whenComplete((ignored, error) -> javafx.application.Platform.runLater(() -> {
+            if (error != null) {
+                statusBar.setConnectionError("Rollback failed: " + rootCauseMessage(error));
+            } else {
+                active.currentConfig().ifPresent(config ->
+                        statusBar.setConnected(config.endpointLabel(), active.activeCatalog().orElse(null)));
+                outcome.showIdle();
+                outcome.results().showMessage("Transaction rolled back.");
+            }
+            syncTransactionStatus();
+            updateActionStates();
+        }));
+    }
+
+    private void applyPreferredAutoCommit() {
+        boolean preferred = state.autoCommit();
+        autoCommitToggle.setSelected(preferred);
+        DataSourceDriver active = driver;
+        if (!active.isConnected() || !active.capabilities().supportsTransactions()) {
+            syncTransactionStatus();
+            return;
+        }
+        if (active.isAutoCommit() == preferred) {
+            syncTransactionStatus();
+            return;
+        }
+        active.setAutoCommit(preferred).whenComplete((ignored, error) -> javafx.application.Platform.runLater(() -> {
+            if (error != null) {
+                autoCommitToggle.setSelected(active.isAutoCommit());
+            }
+            syncTransactionStatus();
+            updateActionStates();
+        }));
+    }
+
+    private void syncTransactionStatus() {
+        boolean connected = driver.isConnected();
+        boolean auto = !connected || driver.isAutoCommit();
+        statusBar.setTransactionState(auto, connected);
+        autoCommitToggle.setSelected(auto);
     }
 
     private void insertNodeReference(SchemaNode node) {
@@ -494,10 +706,21 @@ public final class MainController {
     private void updateActionStates() {
         boolean connected = driver.isConnected();
         boolean busy = activeTask != null && activeTask.isRunning();
+        boolean txn = connected && driver.capabilities().supportsTransactions();
+        boolean manual = txn && !driver.isAutoCommit();
+
         runButton.setDisable(!connected || busy);
+        stopButton.setDisable(!busy || cancelling);
+        explainButton.setDisable(!connected || busy);
+        explainAnalyzeButton.setDisable(!connected || busy);
         connectButton.setDisable(busy);
         disconnectButton.setDisable(!connected || busy);
         refreshButton.setDisable(!connected || busy);
+
+        autoCommitToggle.setDisable(!txn || busy);
+        beginButton.setDisable(!txn || busy || manual);
+        commitButton.setDisable(!manual || busy);
+        rollbackButton.setDisable(!manual || busy);
     }
 
     private void setConnecting(boolean connecting) {
@@ -510,7 +733,6 @@ public final class MainController {
     private void setQueryRunning(boolean running) {
         toolbarActivity.setVisible(running);
         toolbarActivity.setManaged(running);
-        runButton.setDisable(running || !driver.isConnected());
         updateActionStates();
     }
 
