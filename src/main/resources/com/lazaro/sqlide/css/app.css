@@ -799,6 +799,76 @@
     -fx-progress-color: #4fa6ee;
 }
 
+/* ---------------------------------------------------------------- quick documentation */
+
+.sql-doc-popup {
+    -fx-background-color: -color-bg-overlay;
+    -fx-border-color: -color-border-default;
+    -fx-border-width: 1px;
+    -fx-border-radius: 8px;
+    -fx-background-radius: 8px;
+    -fx-padding: 12px;
+    -fx-spacing: 12px;
+    -fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.4), 10, 0, 0, 4);
+}
+
+.sql-doc-meta-key {
+    -fx-font-weight: bold;
+    -fx-text-fill: #c8ccd2;
+    -fx-font-size: 12px;
+}
+
+.sql-doc-meta-value {
+    -fx-text-fill: #eceff4;
+    -fx-font-size: 12px;
+}
+
+.sql-doc-code-block {
+    -fx-background-color: #1e1e1e;
+    -fx-background-radius: 6px;
+    -fx-padding: 10px;
+}
+
+.sql-doc-code-scroll {
+    -fx-background-color: transparent;
+    -fx-background: transparent;
+    -fx-padding: 0;
+}
+
+.sql-doc-code-scroll > .viewport {
+    -fx-background-color: transparent;
+}
+
+.sql-doc-code-text,
+.sql-doc-code-block .text {
+    -fx-font-family: "JetBrains Mono", "Fira Code", "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 12px;
+    -fx-fill: #d6d9de;
+}
+
+.sql-doc-popup .hyperlink,
+.sql-doc-preview-link {
+    -fx-text-fill: -color-accent-emphasis;
+    -fx-padding: 0;
+    -fx-border-width: 0;
+    -fx-underline: false;
+}
+
+.sql-doc-popup .hyperlink:hover,
+.sql-doc-preview-link:hover {
+    -fx-underline: true;
+}
+
+.sql-doc-action {
+    -fx-padding: 2 6 2 6;
+    -fx-background-radius: 4;
+    -fx-cursor: hand;
+}
+
+.sql-doc-action:hover {
+    -fx-background-color: #3a3d44;
+}
+
 /* ---------------------------------------------------------------- editor tabs */
 
 .console-session-bar {

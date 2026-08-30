@@ -9,6 +9,7 @@ import com.lazaro.sqlide.core.db.QueryResult;
 import com.lazaro.sqlide.core.db.SchemaCache;
 import com.lazaro.sqlide.core.db.SchemaNode;
 import com.lazaro.sqlide.core.db.ScriptResult;
+import com.lazaro.sqlide.core.doc.SqlDocResolver;
 import com.lazaro.sqlide.core.explain.ExplainSql;
 import com.lazaro.sqlide.core.export.ResultExporter;
 import com.lazaro.sqlide.core.history.QueryHistoryStore;
@@ -227,6 +228,7 @@ public final class MainController {
             bindCaret(current);
             if (current != null) {
                 current.setOnSelectInDatabase(this::selectInDatabase);
+                current.setOnShowTablePreview(this::openTablePreviewFromDoc);
             }
             onSessionsChanged();
             updateActionStates();
@@ -234,6 +236,7 @@ public final class MainController {
         bindCaret(editors.activeEditor());
         if (editors.activeEditor() != null) {
             editors.activeEditor().setOnSelectInDatabase(this::selectInDatabase);
+            editors.activeEditor().setOnShowTablePreview(this::openTablePreviewFromDoc);
         }
 
         onSessionsChanged();
@@ -709,6 +712,13 @@ public final class MainController {
                 .orElseGet(SchemaCache::new);
         SchemaNode detailed = cache.findTable(node.name()).orElse(node);
         editors.openObjectViewer(detailed);
+    }
+
+    private void openTablePreviewFromDoc(SqlDocResolver.Doc doc) {
+        if (doc == null || doc.tableNode() == null) {
+            return;
+        }
+        openTableData(doc.tableNode());
     }
 
     private void openTableData(SchemaNode node) {

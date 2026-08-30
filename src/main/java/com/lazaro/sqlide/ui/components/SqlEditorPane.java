@@ -1,6 +1,8 @@
 package com.lazaro.sqlide.ui.components;
 
 import com.lazaro.sqlide.core.db.SchemaCache;
+import com.lazaro.sqlide.core.doc.SqlDocResolver;
+import com.lazaro.sqlide.core.doc.SqlDocResolver.Doc;
 import com.lazaro.sqlide.core.inspection.InspectionHighlights;
 import com.lazaro.sqlide.core.inspection.InspectionIssue;
 import com.lazaro.sqlide.core.inspection.Severity;
@@ -44,6 +46,7 @@ import javafx.util.Duration;
 import org.fxmisc.flowless.VirtualizedScrollPane;
 import org.fxmisc.richtext.CodeArea;
 import org.fxmisc.richtext.LineNumberFactory;
+import org.fxmisc.richtext.event.MouseOverTextEvent;
 import org.fxmisc.richtext.model.StyleSpans;
 import org.fxmisc.richtext.model.StyleSpansBuilder;
 import org.reactfx.Subscription;
@@ -58,6 +61,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import java.util.function.IntFunction;
 import java.util.function.Supplier;
 
@@ -86,12 +90,16 @@ public final class SqlEditorPane extends BorderPane {
     private final EditorFindBar findBar;
     private final ExecutorService highlightExecutor;
     private final ExecutorService inspectionExecutor;
+    private final ExecutorService docExecutor;
     private final Subscription highlightSubscription;
     private final PauseTransition inspectionDebounce = new PauseTransition(INSPECTION_DELAY);
+    private final PauseTransition docHideDebounce = new PauseTransition(Duration.millis(220));
     private final Popup completionPopup = new Popup();
     private final ListView<Suggestion> completionList = new ListView<>();
     private final Tooltip inspectionTooltip = new Tooltip();
+    private final SqlDocPopup docPopup = new SqlDocPopup();
     private final AtomicLong inspectionGeneration = new AtomicLong();
+    private final AtomicLong docGeneration = new AtomicLong();
     private Subscription autocompleteSubscription;
     private Task<List<InspectionIssue>> activeInspectionTask;
 
@@ -101,6 +109,7 @@ public final class SqlEditorPane extends BorderPane {
     /** Set when we insert '.' ourselves during chain-completion, so KEY_TYPED does not duplicate it. */
     private boolean suppressNextDotTyped;
     private Runnable onSelectInDatabase = () -> { };
+    private Consumer<Doc> onShowTablePreview = doc -> { };
 
     private final StringProperty boundSessionId = new SimpleStringProperty();
     private final ComboBox<SessionChoice> sessionBox = new ComboBox<>();
@@ -134,6 +143,11 @@ public final class SqlEditorPane extends BorderPane {
             thread.setDaemon(true);
             return thread;
         });
+        docExecutor = Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "sqlide-doc");
+            thread.setDaemon(true);
+            return thread;
+        });
 
         IntFunction<Node> lineNumbers = LineNumberFactory.get(codeArea);
         codeArea.setParagraphGraphicFactory(index -> {
@@ -157,6 +171,7 @@ public final class SqlEditorPane extends BorderPane {
         configureAutocompletePopup();
         wireAutocomplete();
         wireInspectionTooltips();
+        wireQuickDocumentation();
 
         getStyleClass().add("sql-editor-pane");
         getStylesheets().add(stylesheet());
@@ -259,6 +274,12 @@ public final class SqlEditorPane extends BorderPane {
 
     public void setOnSelectInDatabase(Runnable action) {
         this.onSelectInDatabase = action == null ? () -> { } : action;
+    }
+
+    /** Opens table data preview from Quick Documentation (table hover). */
+    public void setOnShowTablePreview(Consumer<Doc> action) {
+        this.onShowTablePreview = action == null ? doc -> { } : action;
+        docPopup.setOnShowPreview(this.onShowTablePreview);
     }
 
     /** Swaps the schema snapshot used for completions. Safe to call at any time. */
@@ -364,14 +385,17 @@ public final class SqlEditorPane extends BorderPane {
 
     public void dispose() {
         hideCompletions();
+        hideQuickDocumentation();
         if (autocompleteSubscription != null) {
             autocompleteSubscription.unsubscribe();
         }
         highlightSubscription.unsubscribe();
         inspectionDebounce.stop();
+        docHideDebounce.stop();
         cancelActiveInspection();
         highlightExecutor.shutdownNow();
         inspectionExecutor.shutdownNow();
+        docExecutor.shutdownNow();
     }
 
     private void installEditorContextMenu() {
@@ -768,6 +792,93 @@ public final class SqlEditorPane extends BorderPane {
             builder.add(List.of(), length);
         }
         return builder.create();
+    }
+
+    private void wireQuickDocumentation() {
+        codeArea.setMouseOverTextDelay(java.time.Duration.ofMillis(500));
+        docHideDebounce.setOnFinished(e -> {
+            if (!isPointerOverDocPopup()) {
+                docPopup.hide();
+            }
+        });
+        docPopup.getContent().forEach(node -> {
+            node.setOnMouseEntered(e -> docHideDebounce.stop());
+            node.setOnMouseExited(e -> docHideDebounce.playFromStart());
+        });
+        docPopup.setOnShowPreview(doc -> onShowTablePreview.accept(doc));
+
+        codeArea.addEventHandler(MouseOverTextEvent.MOUSE_OVER_TEXT_BEGIN, event -> {
+            docHideDebounce.stop();
+            int charIndex = event.getCharacterIndex();
+            if (charIndex < 0) {
+                return;
+            }
+            javafx.geometry.Point2D screen = event.getScreenPosition();
+            if (screen == null) {
+                return;
+            }
+            scheduleQuickDocumentation(charIndex, screen.getX(), screen.getY());
+        });
+        codeArea.addEventHandler(MouseOverTextEvent.MOUSE_OVER_TEXT_END, event ->
+                docHideDebounce.playFromStart());
+        codeArea.addEventFilter(KeyEvent.KEY_TYPED, event -> hideQuickDocumentation());
+        codeArea.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+            if (event.getCode() == KeyCode.ESCAPE) {
+                hideQuickDocumentation();
+            }
+        });
+        codeArea.caretPositionProperty().addListener((obs, prev, next) -> hideQuickDocumentation());
+    }
+
+    private void scheduleQuickDocumentation(int charIndex, double screenX, double screenY) {
+        final long generation = docGeneration.incrementAndGet();
+        final String sql = codeArea.getText();
+        final SchemaCache cache = schemaCache.get();
+        final String catalog = activeCatalog.get();
+        final String dataSource = currentDataSourceLabel();
+        docExecutor.execute(() -> {
+            Optional<Doc> resolved;
+            try {
+                resolved = SqlDocResolver.resolve(sql, charIndex, cache, catalog, dataSource);
+            } catch (RuntimeException ex) {
+                resolved = Optional.empty();
+            }
+            Optional<Doc> doc = resolved;
+            Platform.runLater(() -> {
+                if (generation != docGeneration.get()) {
+                    return;
+                }
+                if (doc.isEmpty()) {
+                    docPopup.hide();
+                    return;
+                }
+                docPopup.showDoc(doc.get(), codeArea, screenX, screenY);
+            });
+        });
+    }
+
+    private String currentDataSourceLabel() {
+        SessionChoice choice = sessionBox.getValue();
+        if (choice == null || choice.label() == null || choice.label().isBlank()) {
+            return "\u2014";
+        }
+        String label = choice.label();
+        int sep = label.indexOf('\u2014');
+        return sep > 0 ? label.substring(0, sep).strip() : label;
+    }
+
+    private boolean isPointerOverDocPopup() {
+        if (!docPopup.isShowing() || docPopup.getContent().isEmpty()) {
+            return false;
+        }
+        Node content = docPopup.getContent().getFirst();
+        return content.isHover();
+    }
+
+    private void hideQuickDocumentation() {
+        docGeneration.incrementAndGet();
+        docHideDebounce.stop();
+        docPopup.hide();
     }
 
     private void wireInspectionTooltips() {
