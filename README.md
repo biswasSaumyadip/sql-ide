@@ -8,6 +8,7 @@ A cross-platform SQL IDE (in the spirit of DataGrip / DBeaver) built with JavaFX
 | ------------------ | ------------------------------------------- |
 | Language           | Java 21 (builds on any JDK 21+)             |
 | Build              | Gradle 9.7.1, Kotlin DSL, version catalog   |
+| Packaging          | Badass Runtime 2.0.1 (`jlink` + `jpackage`) |
 | UI                 | JavaFX 21.0.12 via `org.openjfx.javafxplugin` |
 | Theme              | AtlantaFX 2.0.1 (`CupertinoDark`)           |
 | Editor             | RichTextFX 0.11.5                           |
@@ -35,6 +36,31 @@ Dependency versions live in [`gradle/libs.versions.toml`](gradle/libs.versions.t
 ./gradlew installDist  # runnable distribution under build/install/sql-ide
 ```
 
+## Native installers (jlink + jpackage)
+
+This project is **non-modular** (no `module-info.java`). Packaging uses the
+[Badass Runtime](https://badass-runtime-plugin.beryx.org/) plugin: `jlink` builds a
+stripped custom JRE, then `jpackage` produces a native installer with `--main-jar` /
+`--main-class` (classpath mode).
+
+```bash
+./gradlew jpackage          # Linux / macOS → build/jpackage/
+.\gradlew.bat jpackage      # Windows
+```
+
+| Host OS | Installer | Notes |
+| ------- | --------- | ----- |
+| Windows | `.msi`    | Requires [WiX Toolset](https://wixtoolset.org/) on `PATH` |
+| Linux   | `.deb`    | Requires `fakeroot` / dpkg tooling |
+| macOS   | `.dmg`    | Optional icon: `src/main/resources/assets/sqlide.icns` |
+
+Icons (place under `src/main/resources/assets/`):
+
+- Windows: `sqlide.ico`
+- Linux: `sqlide.png`
+- macOS: `sqlide.icns`
+
+Useful related tasks: `runtime` (custom image only), `suggestModules` (JDK module hints).
 ## Architecture
 
 The codebase is split so that nothing touching JDBC knows about JavaFX:

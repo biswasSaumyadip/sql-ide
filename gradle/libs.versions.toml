@@ -2,6 +2,7 @@
 java = "21"
 javafx = "21.0.12"
 javafxPlugin = "0.1.0"
+beryxRuntime = "2.0.1"
 atlantafx = "2.0.1"
 richtextfx = "0.11.5"
 hikaricp = "6.3.0"
@@ -27,3 +28,4 @@ junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher
 
 [plugins]
 javafx = { id = "org.openjfx.javafxplugin", version.ref = "javafxPlugin" }
+beryx-runtime = { id = "org.beryx.runtime", version.ref = "beryxRuntime" }
