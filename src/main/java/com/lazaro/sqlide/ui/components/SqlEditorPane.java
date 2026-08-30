@@ -9,6 +9,7 @@ import com.lazaro.sqlide.core.inspection.InspectionIssue;
 import com.lazaro.sqlide.core.inspection.Severity;
 import com.lazaro.sqlide.core.inspection.SqlInspector;
 import com.lazaro.sqlide.core.sql.FoldManager;
+import com.lazaro.sqlide.core.sql.SqlCodeFormatter;
 import com.lazaro.sqlide.core.sql.SqlFoldRegions;
 import com.lazaro.sqlide.core.sql.SqlInlayHints;
 import com.lazaro.sqlide.core.sql.SqlParameterParser;
@@ -534,6 +535,75 @@ public final class SqlEditorPane extends BorderPane {
         setSql("");
     }
 
+    /**
+     * Pretty-prints the current selection, or the whole document when nothing is selected.
+     * Preserves scroll position and approximates the caret / selection afterward.
+     */
+    public void formatCode() {
+        purgeInlayHints();
+        expandFoldsIntoDocument();
+
+        double scrollY = codeArea.getEstimatedScrollY();
+        IndexRange selection = codeArea.getSelection();
+        boolean hadSelection = selection.getLength() > 0;
+
+        mutatingDocument = true;
+        ignoreFoldDocumentEvents = true;
+        try {
+            if (hadSelection) {
+                String original = codeArea.getSelectedText();
+                String formatted = SqlCodeFormatter.format(original);
+                if (!formatted.equals(original)) {
+                    int start = selection.getStart();
+                    codeArea.replaceText(start, selection.getEnd(), formatted);
+                    codeArea.selectRange(start, start + formatted.length());
+                }
+            } else {
+                int paragraph = codeArea.getCurrentParagraph();
+                int column = codeArea.getCaretColumn();
+                String original = codeArea.getText();
+                String formatted = SqlCodeFormatter.format(original);
+                if (!formatted.equals(original)) {
+                    codeArea.replaceText(formatted);
+                    int targetPar = Math.min(paragraph, Math.max(0, codeArea.getParagraphs().size() - 1));
+                    int targetCol = Math.min(column, codeArea.getParagraphLength(targetPar));
+                    codeArea.moveTo(targetPar, targetCol);
+                }
+            }
+        } finally {
+            mutatingDocument = false;
+            armFoldEventSuppress();
+        }
+
+        codeArea.scrollYToPixel(scrollY);
+        foldManager.clear();
+        recomputeFoldMap();
+        refreshParagraphGraphics();
+        restyleAfterFoldChange();
+        scheduleInlayRedrawAfterLayout();
+        codeArea.requestFocus();
+    }
+
+    /** Expands any text-replacement folds so formatting sees real SQL. */
+    private void expandFoldsIntoDocument() {
+        if (!foldManager.hasFolds()) {
+            return;
+        }
+        String expanded = foldManager.expandAll(codeArea.getText());
+        foldManager.clear();
+        if (expanded.equals(codeArea.getText())) {
+            return;
+        }
+        mutatingDocument = true;
+        ignoreFoldDocumentEvents = true;
+        try {
+            codeArea.replaceText(expanded);
+        } finally {
+            mutatingDocument = false;
+            armFoldEventSuppress();
+        }
+    }
+
     public CodeArea getCodeArea() {
         return codeArea;
     }
@@ -580,6 +650,10 @@ public final class SqlEditorPane extends BorderPane {
         selectInDatabase.setOnAction(event -> onSelectInDatabase.run());
         MenuItem viewAsJson = new MenuItem("View as JSON\u2026");
         viewAsJson.setOnAction(event -> openJsonViewerAtCaret());
+        MenuItem format = new MenuItem("Format Code");
+        format.setAccelerator(new KeyCodeCombination(
+                KeyCode.L, KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN));
+        format.setOnAction(event -> formatCode());
         MenuItem find = new MenuItem("Find\u2026");
         find.setAccelerator(new KeyCodeCombination(KeyCode.F, KeyCombination.SHORTCUT_DOWN));
         find.setOnAction(event -> showFind(false));
@@ -587,9 +661,17 @@ public final class SqlEditorPane extends BorderPane {
         replace.setAccelerator(new KeyCodeCombination(KeyCode.H, KeyCombination.SHORTCUT_DOWN));
         replace.setOnAction(event -> showFind(true));
 
-        ContextMenu menu = new ContextMenu(selectInDatabase, viewAsJson, find, replace);
+        ContextMenu menu = new ContextMenu(selectInDatabase, viewAsJson, format, find, replace);
         menu.setOnShowing(event -> viewAsJson.setDisable(findJsonAtCaret().isEmpty()));
         codeArea.setContextMenu(menu);
+
+        codeArea.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+            if (new KeyCodeCombination(KeyCode.L, KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN)
+                    .match(event)) {
+                event.consume();
+                formatCode();
+            }
+        });
     }
 
     private Optional<SqlSyntaxHighlighter.JsonStringLiteral> findJsonAtCaret() {

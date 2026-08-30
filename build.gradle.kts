@@ -32,6 +32,7 @@ dependencies {
     implementation(libs.hikaricp)
     implementation(libs.jsqlparser)
     implementation(libs.jackson.databind)
+    implementation(libs.sql.formatter)
 
     runtimeOnly(libs.mysql.connector)
     runtimeOnly(libs.slf4j.simple)

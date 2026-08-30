@@ -391,6 +391,8 @@ public final class MainController {
         KeyCombination findNext = new KeyCodeCombination(KeyCode.F3);
         KeyCombination findPrevious = new KeyCodeCombination(KeyCode.F3, KeyCombination.SHIFT_DOWN);
         KeyCombination selectInDatabase = new KeyCodeCombination(KeyCode.F1, KeyCombination.ALT_DOWN);
+        KeyCombination formatCode = new KeyCodeCombination(
+                KeyCode.L, KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN);
         KeyCombination settings = new KeyCodeCombination(KeyCode.COMMA, KeyCombination.SHORTCUT_DOWN);
 
         scene.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
@@ -416,6 +418,8 @@ public final class MainController {
                 consumeAnd(event, () -> findStep(true));
             } else if (selectInDatabase.match(event)) {
                 consumeAnd(event, this::selectInDatabase);
+            } else if (formatCode.match(event)) {
+                consumeAnd(event, this::formatActiveEditor);
             } else if (settings.match(event)) {
                 consumeAnd(event, this::openSettings);
             } else if (toggleSidebar.match(event)) {
@@ -951,6 +955,13 @@ public final class MainController {
         SqlEditorPane editor = editors.activeEditor();
         if (editor != null) {
             editor.showFind(true);
+        }
+    }
+
+    private void formatActiveEditor() {
+        SqlEditorPane editor = editors.activeEditor();
+        if (editor != null) {
+            editor.formatCode();
         }
     }
 
