@@ -5,7 +5,8 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Builds {@code UPDATE} statements from edited result rows keyed by primary-key columns.
+ * Builds {@code UPDATE} / {@code INSERT} / {@code DELETE} statements from edited
+ * result rows keyed by primary-key columns.
  */
 public final class UpdateSqlGenerator {
 
@@ -47,21 +48,50 @@ public final class UpdateSqlGenerator {
             return null;
         }
 
-        List<String> wheres = new ArrayList<>();
-        for (String pk : primaryKeyColumns) {
-            int index = indexOfIgnoreCase(columnNames, pk);
-            if (index < 0) {
-                return null;
-            }
-            String value = originalRow.get(index);
-            if (value == null) {
-                wheres.add(quoteIdent(pk) + " IS NULL");
-            } else {
-                wheres.add(quoteIdent(pk) + " = " + literal(value));
-            }
+        String where = whereClause(columnNames, primaryKeyColumns, originalRow);
+        if (where == null) {
+            return null;
         }
-        return "UPDATE " + qualifiedTable + " SET " + String.join(", ", sets)
-                + " WHERE " + String.join(" AND ", wheres) + ";";
+        return "UPDATE " + qualifiedTable + " SET " + String.join(", ", sets) + " WHERE " + where + ";";
+    }
+
+    /**
+     * @return INSERT statement, or {@code null} when inputs are invalid
+     */
+    public static String insert(String qualifiedTable, List<String> columnNames, List<String> values) {
+        Objects.requireNonNull(qualifiedTable, "qualifiedTable");
+        if (columnNames == null || values == null || columnNames.isEmpty()
+                || columnNames.size() != values.size()) {
+            return null;
+        }
+        List<String> cols = new ArrayList<>(columnNames.size());
+        List<String> vals = new ArrayList<>(values.size());
+        for (int i = 0; i < columnNames.size(); i++) {
+            cols.add(quoteIdent(columnNames.get(i)));
+            vals.add(literal(values.get(i)));
+        }
+        return "INSERT INTO " + qualifiedTable + " (" + String.join(", ", cols) + ") VALUES ("
+                + String.join(", ", vals) + ");";
+    }
+
+    /**
+     * @return DELETE statement keyed by PK values from {@code originalRow}, or {@code null}
+     */
+    public static String delete(
+            String qualifiedTable,
+            List<String> columnNames,
+            List<String> primaryKeyColumns,
+            List<String> originalRow) {
+        Objects.requireNonNull(qualifiedTable, "qualifiedTable");
+        if (columnNames == null || primaryKeyColumns == null || primaryKeyColumns.isEmpty()
+                || originalRow == null) {
+            return null;
+        }
+        String where = whereClause(columnNames, primaryKeyColumns, originalRow);
+        if (where == null) {
+            return null;
+        }
+        return "DELETE FROM " + qualifiedTable + " WHERE " + where + ";";
     }
 
     public static String literal(String value) {
@@ -76,6 +106,24 @@ public final class UpdateSqlGenerator {
             return name;
         }
         return "`" + name.replace("`", "``") + "`";
+    }
+
+    private static String whereClause(
+            List<String> columnNames, List<String> primaryKeyColumns, List<String> originalRow) {
+        List<String> wheres = new ArrayList<>();
+        for (String pk : primaryKeyColumns) {
+            int index = indexOfIgnoreCase(columnNames, pk);
+            if (index < 0 || index >= originalRow.size()) {
+                return null;
+            }
+            String value = originalRow.get(index);
+            if (value == null) {
+                wheres.add(quoteIdent(pk) + " IS NULL");
+            } else {
+                wheres.add(quoteIdent(pk) + " = " + literal(value));
+            }
+        }
+        return String.join(" AND ", wheres);
     }
 
     private static boolean containsIgnoreCase(List<String> values, String needle) {

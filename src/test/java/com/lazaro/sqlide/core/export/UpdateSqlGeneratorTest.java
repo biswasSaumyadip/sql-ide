@@ -2,6 +2,7 @@ package com.lazaro.sqlide.core.export;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -36,8 +37,27 @@ class UpdateSqlGeneratorTest {
                 "t",
                 List.of("id", "note"),
                 List.of("id"),
-                java.util.Arrays.asList("1", null),
+                Arrays.asList("1", null),
                 List.of("1", "O'Brien"));
         assertEquals("UPDATE t SET `note` = 'O''Brien' WHERE `id` = '1';", sql);
+    }
+
+    @Test
+    void buildsInsert() {
+        String sql = UpdateSqlGenerator.insert(
+                "demo.users",
+                List.of("id", "name"),
+                Arrays.asList("2", null));
+        assertEquals("INSERT INTO demo.users (`id`, `name`) VALUES ('2', NULL);", sql);
+    }
+
+    @Test
+    void buildsDelete() {
+        String sql = UpdateSqlGenerator.delete(
+                "demo.users",
+                List.of("id", "name"),
+                List.of("id"),
+                List.of("1", "Ann"));
+        assertEquals("DELETE FROM demo.users WHERE `id` = '1';", sql);
     }
 }

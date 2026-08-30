@@ -64,6 +64,39 @@
     -fx-font-style: italic;
 }
 
+/* Data editor row state */
+.table-data-grid .table-row-cell.dirty-row {
+    -fx-background-color: #3a3420;
+}
+
+.table-data-grid .table-row-cell.dirty-row:odd {
+    -fx-background-color: #423a24;
+}
+
+.table-data-grid .table-row-cell.inserted-row {
+    -fx-background-color: #1e3328;
+}
+
+.table-data-grid .table-row-cell.inserted-row:odd {
+    -fx-background-color: #243d30;
+}
+
+.table-data-grid .table-row-cell.deleted-row {
+    -fx-background-color: #3a2226;
+    -fx-opacity: 0.72;
+}
+
+.table-data-grid .table-row-cell.deleted-row .table-cell {
+    -fx-strikethrough: true;
+    -fx-text-fill: #c97880;
+}
+
+.table-data-grid .table-row-cell.dirty-row:selected,
+.table-data-grid .table-row-cell.inserted-row:selected,
+.table-data-grid .table-row-cell.deleted-row:selected {
+    -fx-background-color: #2f5d8c;
+}
+
 .result-placeholder {
     -fx-text-fill: #7f848e;
     -fx-opacity: 1;

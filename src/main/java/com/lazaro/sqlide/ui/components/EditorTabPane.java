@@ -170,9 +170,17 @@ public final class EditorTabPane extends TabPane {
     /** Closes the selected tab, honouring the unsaved-changes prompt. */
     public void closeActiveTab() {
         Tab tab = getSelectionModel().getSelectedItem();
-        if (tab instanceof QueryTab queryTab && queryTab.confirmClose()) {
-            getTabs().remove(queryTab);
-            queryTab.dispose();
+        if (tab instanceof QueryTab queryTab) {
+            if (queryTab.confirmClose()) {
+                getTabs().remove(queryTab);
+                queryTab.dispose();
+            }
+        } else if (tab instanceof DataTab dataTab) {
+            if (dataTab.confirmClose()) {
+                getTabs().remove(dataTab);
+            }
+        } else if (tab != null) {
+            getTabs().remove(tab);
         }
     }
 
@@ -203,6 +211,11 @@ public final class EditorTabPane extends TabPane {
             if (tab instanceof QueryTab queryTab) {
                 getSelectionModel().select(queryTab);
                 if (!queryTab.confirmClose()) {
+                    return false;
+                }
+            } else if (tab instanceof DataTab dataTab) {
+                getSelectionModel().select(dataTab);
+                if (!dataTab.confirmClose()) {
                     return false;
                 }
             }
@@ -349,6 +362,7 @@ public final class EditorTabPane extends TabPane {
     private static final class DataTab extends Tab {
 
         private final TableDataEditorPane editor;
+        private final String baseTitle;
 
         DataTab(
                 SchemaNode node,
@@ -357,13 +371,31 @@ public final class EditorTabPane extends TabPane {
                 Function<List<String>, CompletableFuture<ScriptResult>> scriptRunner,
                 Executor background) {
             this.editor = new TableDataEditorPane(node, qualifiedName, primaryKeyColumns, scriptRunner, background);
-            setText(node.name() + " data");
+            this.baseTitle = node.name() + " data";
+            setText(baseTitle);
             setContent(editor);
             getStyleClass().add("table-data-tab");
+            setOnCloseRequest(event -> {
+                if (!confirmClose()) {
+                    event.consume();
+                }
+            });
+            editor.setOnDirtyChanged(this::refreshTitle);
+            refreshTitle();
         }
 
         boolean matches(SchemaNode node) {
             return editor.matches(node);
+        }
+
+        boolean confirmClose() {
+            boolean ok = editor.confirmClose();
+            refreshTitle();
+            return ok;
+        }
+
+        private void refreshTitle() {
+            setText(editor.isDirty() ? DIRTY_MARK + baseTitle : baseTitle);
         }
     }
 }
