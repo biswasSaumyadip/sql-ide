@@ -785,11 +785,17 @@ public final class MainController {
             catalog = session.driver().activeCatalog().orElse(null);
         }
 
+        String layoutKey = SchemaDiagramDialog.layoutKey(
+                session.config().host() + "_" + session.config().port(),
+                catalog,
+                focusTable);
         SchemaDiagramDialog dialog = new SchemaDiagramDialog(
                 owner(),
                 cache,
                 catalog,
                 focusTable,
+                layoutKey,
+                state,
                 this::openObjectViewer);
         dialog.showAndWait();
     }

@@ -3,9 +3,12 @@ package com.lazaro.sqlide.core.diagram;
 import com.lazaro.sqlide.core.db.SchemaCache;
 import com.lazaro.sqlide.core.db.SchemaMetadataCodec;
 import com.lazaro.sqlide.core.db.SchemaMetadataCodec.ForeignKey;
+import com.lazaro.sqlide.core.db.SchemaMetadataCodec.IndexInfo;
 import com.lazaro.sqlide.core.db.SchemaNode;
 import com.lazaro.sqlide.core.db.SchemaNode.NodeType;
+import com.lazaro.sqlide.core.diagram.SchemaDiagramModel.Cardinality;
 import com.lazaro.sqlide.core.diagram.SchemaDiagramModel.Column;
+import com.lazaro.sqlide.core.diagram.SchemaDiagramModel.ColumnPair;
 import com.lazaro.sqlide.core.diagram.SchemaDiagramModel.Edge;
 import com.lazaro.sqlide.core.diagram.SchemaDiagramModel.Table;
 
@@ -35,10 +38,9 @@ public final class SchemaDiagramBuilder {
     public static SchemaDiagramModel buildCatalog(SchemaCache cache, String catalog) {
         Objects.requireNonNull(cache, "cache");
         List<SchemaNode> source = cache.tables(blankToNull(catalog));
-        if (source.size() > MAX_TABLES) {
-            source = source.subList(0, MAX_TABLES);
-        }
-        return buildFromNodes(source, catalog, null);
+        int available = source.size();
+        List<SchemaNode> selected = capTables(source, MAX_TABLES);
+        return buildFromNodes(selected, catalog, null, available);
     }
 
     /**
@@ -78,11 +80,59 @@ public final class SchemaDiagramBuilder {
                 selected.add(table);
             }
         }
-        return buildFromNodes(selected, catalogOf(focus, catalog), tableId(focus));
+        int available = selected.size();
+        selected = capTables(selected, MAX_TABLES);
+        return buildFromNodes(selected, catalogOf(focus, catalog), tableId(focus), available);
+    }
+
+    static List<SchemaNode> capTables(List<SchemaNode> source, int max) {
+        if (source == null || source.size() <= max) {
+            return source == null ? List.of() : source;
+        }
+        Set<String> owners = new HashSet<>();
+        Set<String> targets = new HashSet<>();
+        Set<String> names = new HashSet<>();
+        for (SchemaNode table : source) {
+            names.add(table.name().toLowerCase(Locale.ROOT));
+        }
+        for (SchemaNode table : source) {
+            for (ForeignKey fk : foreignKeysOf(table)) {
+                String from = table.name().toLowerCase(Locale.ROOT);
+                String to = fk.pkTable() == null ? "" : fk.pkTable().toLowerCase(Locale.ROOT);
+                if (!to.isEmpty() && names.contains(to)) {
+                    owners.add(from);
+                    targets.add(to);
+                }
+            }
+        }
+        List<SchemaNode> related = new ArrayList<>();
+        List<SchemaNode> isolated = new ArrayList<>();
+        for (SchemaNode table : source) {
+            String name = table.name().toLowerCase(Locale.ROOT);
+            if (owners.contains(name) || targets.contains(name)) {
+                related.add(table);
+            } else {
+                isolated.add(table);
+            }
+        }
+        List<SchemaNode> selected = new ArrayList<>(max);
+        for (SchemaNode table : related) {
+            if (selected.size() >= max) {
+                break;
+            }
+            selected.add(table);
+        }
+        for (SchemaNode table : isolated) {
+            if (selected.size() >= max) {
+                break;
+            }
+            selected.add(table);
+        }
+        return selected;
     }
 
     private static SchemaDiagramModel buildFromNodes(
-            List<SchemaNode> nodes, String catalog, String focusTableId) {
+            List<SchemaNode> nodes, String catalog, String focusTableId, int availableTableCount) {
         Map<String, Table> tables = new LinkedHashMap<>();
         Map<String, String> nameToId = new HashMap<>();
         for (SchemaNode node : nodes) {
@@ -104,22 +154,112 @@ public final class SchemaDiagramBuilder {
             if (fromId == null) {
                 continue;
             }
-            for (ForeignKey fk : foreignKeysOf(node)) {
+            for (List<ForeignKey> group : groupForeignKeys(foreignKeysOf(node))) {
+                ForeignKey first = group.getFirst();
                 String toId = nameToId.get(
-                        fk.pkTable() == null ? "" : fk.pkTable().toLowerCase(Locale.ROOT));
+                        first.pkTable() == null ? "" : first.pkTable().toLowerCase(Locale.ROOT));
                 if (toId == null || toId.equals(fromId)) {
                     continue;
                 }
-                String key = fromId + "->" + toId + ":" + fk.fkColumn() + ":" + fk.pkColumn();
-                if (!edgeKeys.add(key)) {
+                List<ColumnPair> pairs = new ArrayList<>(group.size());
+                StringBuilder key = new StringBuilder(fromId).append("->").append(toId).append(':');
+                for (ForeignKey fk : group) {
+                    pairs.add(new ColumnPair(fk.fkColumn(), fk.pkColumn()));
+                    key.append(fk.fkColumn()).append('>').append(fk.pkColumn()).append(',');
+                }
+                String edgeId = key.toString();
+                if (!edgeKeys.add(edgeId)) {
                     continue;
                 }
-                edges.add(new Edge(key, fromId, toId, fk.fkColumn(), fk.pkColumn(), fk.name()));
+                Cardinality fromCard = childCardinality(node, group);
+                edges.add(new Edge(edgeId, fromId, toId, pairs, first.name(), fromCard, Cardinality.ONE));
             }
         }
 
         return new SchemaDiagramModel(catalog == null ? "" : catalog, focusTableId,
-                List.copyOf(tables.values()), List.copyOf(edges));
+                List.copyOf(tables.values()), List.copyOf(edges), availableTableCount);
+    }
+
+    /**
+     * Groups JDBC FK rows that share a constraint name (and referenced table) into one edge.
+     * Unnamed constraints stay one-column edges so two FKs to the same table are not merged.
+     */
+    static List<List<ForeignKey>> groupForeignKeys(List<ForeignKey> keys) {
+        if (keys == null || keys.isEmpty()) {
+            return List.of();
+        }
+        Map<String, List<ForeignKey>> grouped = new LinkedHashMap<>();
+        int unnamed = 0;
+        for (ForeignKey fk : keys) {
+            String name = fk.name() == null ? "" : fk.name().strip();
+            String pkTable = fk.pkTable() == null ? "" : fk.pkTable();
+            String groupKey;
+            if (name.isEmpty()) {
+                groupKey = "__unnamed_" + unnamed++ + "\0" + pkTable;
+            } else {
+                groupKey = name + "\0" + pkTable;
+            }
+            grouped.computeIfAbsent(groupKey, k -> new ArrayList<>()).add(fk);
+        }
+        return List.copyOf(grouped.values());
+    }
+
+    static Cardinality childCardinality(SchemaNode owner, List<ForeignKey> parts) {
+        List<String> fkColumns = new ArrayList<>(parts.size());
+        for (ForeignKey fk : parts) {
+            if (fk.fkColumn() != null && !fk.fkColumn().isBlank()) {
+                fkColumns.add(fk.fkColumn());
+            }
+        }
+        boolean optional = false;
+        Map<String, SchemaNode> byName = new HashMap<>();
+        for (SchemaNode column : columnNodes(owner)) {
+            byName.put(column.name().toLowerCase(Locale.ROOT), column);
+        }
+        for (String fkColumn : fkColumns) {
+            SchemaNode column = byName.get(fkColumn.toLowerCase(Locale.ROOT));
+            if (column == null || column.metadataFlag(SchemaNode.META_NULLABLE)) {
+                optional = true;
+                break;
+            }
+        }
+        boolean unique = columnsFormUniqueKey(owner, fkColumns);
+        if (unique) {
+            return optional ? Cardinality.ZERO_OR_ONE : Cardinality.ONE;
+        }
+        return optional ? Cardinality.ZERO_OR_MANY : Cardinality.ONE_OR_MANY;
+    }
+
+    static boolean columnsFormUniqueKey(SchemaNode table, List<String> columns) {
+        if (columns == null || columns.isEmpty()) {
+            return false;
+        }
+        Set<String> want = lowerSet(columns);
+        Set<String> pk = new HashSet<>();
+        for (SchemaNode column : columnNodes(table)) {
+            if (column.metadataFlag(SchemaNode.META_PRIMARY_KEY)) {
+                pk.add(column.name().toLowerCase(Locale.ROOT));
+            }
+        }
+        if (!pk.isEmpty() && pk.equals(want)) {
+            return true;
+        }
+        for (IndexInfo index : SchemaMetadataCodec.decodeIndexes(table.metadata(SchemaNode.META_INDEXES))) {
+            if (index.unique() && lowerSet(index.columns()).equals(want)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static Set<String> lowerSet(List<String> values) {
+        Set<String> set = new HashSet<>();
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                set.add(value.toLowerCase(Locale.ROOT));
+            }
+        }
+        return set;
     }
 
     private static Table toTable(SchemaNode node) {
@@ -135,7 +275,8 @@ public final class SchemaDiagramBuilder {
                     columnNode.name(),
                     columnNode.metadata(SchemaNode.META_DATA_TYPE),
                     columnNode.metadataFlag(SchemaNode.META_PRIMARY_KEY),
-                    fkColumns.contains(columnNode.name().toLowerCase(Locale.ROOT))));
+                    fkColumns.contains(columnNode.name().toLowerCase(Locale.ROOT)),
+                    columnNode.metadataFlag(SchemaNode.META_NULLABLE)));
         }
         String catalog = node.metadata(SchemaNode.META_CATALOG);
         return new Table(

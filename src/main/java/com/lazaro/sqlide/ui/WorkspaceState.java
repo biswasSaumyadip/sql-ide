@@ -5,6 +5,9 @@ import javafx.geometry.Rectangle2D;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.prefs.BackingStoreException;
 import java.util.prefs.Preferences;
 
 /**
@@ -181,5 +184,96 @@ public final class WorkspaceState {
 
     public void savePreserveDbCasing(boolean preserve) {
         preferences.putBoolean(PRESERVE_DB_CASING, preserve);
+    }
+
+    // ---------------------------------------------------------------- schema diagram layout
+
+    /**
+     * Saved table positions for one diagram ({@code tableId → [x, y]}).
+     * Empty when the user has not rearranged that diagram yet.
+     */
+    public Map<String, double[]> diagramLayout(String layoutKey) {
+        Map<String, double[]> positions = new LinkedHashMap<>();
+        Preferences node = diagramNode(layoutKey);
+        try {
+            for (String key : node.keys()) {
+                double[] xy = parseXy(node.get(key, null));
+                if (xy != null) {
+                    positions.put(key, xy);
+                }
+            }
+        } catch (BackingStoreException ignored) {
+            return Map.of();
+        }
+        return positions;
+    }
+
+    public void saveDiagramLayout(String layoutKey, Map<String, double[]> positions) {
+        Preferences node = diagramNode(layoutKey);
+        try {
+            node.clear();
+        } catch (BackingStoreException ignored) {
+            return;
+        }
+        if (positions == null || positions.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<String, double[]> entry : positions.entrySet()) {
+            if (entry.getKey() == null || entry.getKey().isBlank() || entry.getValue() == null
+                    || entry.getValue().length < 2) {
+                continue;
+            }
+            String key = clipPrefKey(entry.getKey());
+            node.put(key, formatXy(entry.getValue()[0], entry.getValue()[1]));
+        }
+    }
+
+    public void clearDiagramLayout(String layoutKey) {
+        try {
+            diagramNode(layoutKey).removeNode();
+        } catch (BackingStoreException | IllegalStateException ignored) {
+            // next open falls back to automatic layout
+        }
+    }
+
+    private Preferences diagramNode(String layoutKey) {
+        return preferences.node("diagram").node(clipPrefKey(layoutKey == null ? "default" : layoutKey));
+    }
+
+    static String clipPrefKey(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "default";
+        }
+        String sanitized = raw.replaceAll("[^A-Za-z0-9._-]", "_")
+                .replaceAll("_+", "_")
+                .replaceAll("^[._-]+|[._-]+$", "");
+        if (sanitized.isBlank()) {
+            return "default";
+        }
+        return sanitized.length() <= 80 ? sanitized : sanitized.substring(0, 80);
+    }
+
+    static String formatXy(double x, double y) {
+        return x + "," + y;
+    }
+
+    static double[] parseXy(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        int comma = raw.indexOf(',');
+        if (comma <= 0 || comma == raw.length() - 1) {
+            return null;
+        }
+        try {
+            double x = Double.parseDouble(raw.substring(0, comma).strip());
+            double y = Double.parseDouble(raw.substring(comma + 1).strip());
+            if (!Double.isFinite(x) || !Double.isFinite(y)) {
+                return null;
+            }
+            return new double[] {x, y};
+        } catch (NumberFormatException ex) {
+            return null;
+        }
     }
 }

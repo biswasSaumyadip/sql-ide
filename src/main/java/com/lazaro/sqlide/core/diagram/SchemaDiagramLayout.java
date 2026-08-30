@@ -22,7 +22,7 @@ public final class SchemaDiagramLayout {
     private static final double CHAR_WIDTH = 7.4;
     private static final double HEADER_HEIGHT = 28;
     private static final double ROW_HEIGHT = 18;
-    private static final int MAX_VISIBLE_COLUMNS = 14;
+    public static final int MAX_VISIBLE_COLUMNS = 14;
     private static final double PADDING_X = 40;
     private static final double PADDING_Y = 40;
 
@@ -56,13 +56,6 @@ public final class SchemaDiagramLayout {
         for (int r : sortedRanks) {
             List<Table> layer = layers.get(r);
             layer.sort(Comparator.comparing(Table::name, String.CASE_INSENSITIVE_ORDER));
-            double layerWidth = 0;
-            for (Table table : layer) {
-                layerWidth += table.width() + H_GAP;
-            }
-            if (!layer.isEmpty()) {
-                layerWidth -= H_GAP;
-            }
             double x = PADDING_X;
             double maxHeight = 0;
             for (Table table : layer) {
@@ -70,18 +63,61 @@ public final class SchemaDiagramLayout {
                 x += table.width() + H_GAP;
                 maxHeight = Math.max(maxHeight, table.height());
             }
-            // Center short layers a bit when the previous layer was wider.
-            if (layerWidth > 0 && placed.size() >= layer.size()) {
-                // already left-aligned; fine for v1
-            }
             y += maxHeight + V_GAP;
         }
 
         return model.withTables(placed);
     }
 
-    static Table withMeasuredSize(Table table) {
-        int visible = Math.min(table.columns().size(), MAX_VISIBLE_COLUMNS);
+    /** Overlay previously saved {@code tableId → [x, y]} positions onto an already-laid-out model. */
+    public static SchemaDiagramModel applyPositions(SchemaDiagramModel model, Map<String, double[]> positions) {
+        if (model == null || positions == null || positions.isEmpty()) {
+            return model;
+        }
+        List<Table> next = new ArrayList<>(model.tables().size());
+        boolean any = false;
+        for (Table table : model.tables()) {
+            double[] xy = positions.get(table.id());
+            if (xy != null && xy.length >= 2 && Double.isFinite(xy[0]) && Double.isFinite(xy[1])) {
+                next.add(table.withBounds(xy[0], xy[1], table.width(), table.height()));
+                any = true;
+            } else {
+                next.add(table);
+            }
+        }
+        return any ? model.withTables(next) : model;
+    }
+
+    public static Map<String, double[]> positionsOf(SchemaDiagramModel model) {
+        Map<String, double[]> positions = new LinkedHashMap<>();
+        if (model == null) {
+            return positions;
+        }
+        for (Table table : model.tables()) {
+            positions.put(table.id(), new double[] {table.x(), table.y()});
+        }
+        return positions;
+    }
+
+    /** Re-run layered layout, discarding current coordinates but keeping graph membership. */
+    public static SchemaDiagramModel relayout(SchemaDiagramModel model) {
+        if (model == null) {
+            return new SchemaDiagramModel("", null, List.of(), List.of());
+        }
+        List<Table> reset = new ArrayList<>(model.tables().size());
+        for (Table table : model.tables()) {
+            reset.add(table.withBounds(0, 0, 0, 0));
+        }
+        return layout(model.withTables(reset));
+    }
+
+    public static Table withMeasuredSize(Table table) {
+        return withMeasuredSize(table, MAX_VISIBLE_COLUMNS);
+    }
+
+    public static Table withMeasuredSize(Table table, int maxVisibleColumns) {
+        int cap = maxVisibleColumns < 0 ? table.columns().size() : maxVisibleColumns;
+        int visible = Math.min(table.columns().size(), cap);
         int nameLen = table.name().length();
         int typeLen = 0;
         for (int i = 0; i < visible; i++) {

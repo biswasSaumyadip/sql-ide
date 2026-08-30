@@ -21,6 +21,29 @@
     -fx-font-size: 12px;
 }
 
+.schema-diagram-banner {
+    -fx-background-color: #3d3420;
+    -fx-text-fill: #e2c36b;
+    -fx-padding: 6 12 6 12;
+    -fx-font-size: 12px;
+}
+
+.schema-diagram-cardinal {
+    -fx-text-fill: #c5cbd3;
+    -fx-font-size: 10px;
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+    -fx-background-color: #1a1b1e;
+    -fx-padding: 0 2 0 2;
+}
+
+.schema-diagram-edge-label {
+    -fx-text-fill: #8b919a;
+    -fx-font-size: 10px;
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+    -fx-background-color: #1a1b1e;
+    -fx-padding: 0 3 0 3;
+}
+
 .schema-diagram-host,
 .schema-diagram-viewport {
     -fx-background-color: #1a1b1e;
@@ -95,4 +118,6 @@
 .schema-diagram-more {
     -fx-text-fill: #8b919a;
     -fx-font-size: 10px;
+    -fx-cursor: hand;
+    -fx-underline: true;
 }

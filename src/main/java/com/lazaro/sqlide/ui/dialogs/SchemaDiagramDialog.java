@@ -5,6 +5,7 @@ import com.lazaro.sqlide.core.db.SchemaNode;
 import com.lazaro.sqlide.core.diagram.SchemaDiagramBuilder;
 import com.lazaro.sqlide.core.diagram.SchemaDiagramLayout;
 import com.lazaro.sqlide.core.diagram.SchemaDiagramModel;
+import com.lazaro.sqlide.ui.WorkspaceState;
 import com.lazaro.sqlide.ui.diagram.SchemaDiagramCanvas;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
@@ -25,6 +26,17 @@ public final class SchemaDiagramDialog extends Dialog<Void> {
             String catalog,
             String focusTable,
             Consumer<SchemaNode> onOpenTable) {
+        this(owner, cache, catalog, focusTable, layoutKey(catalog, focusTable), null, onOpenTable);
+    }
+
+    public SchemaDiagramDialog(
+            Window owner,
+            SchemaCache cache,
+            String catalog,
+            String focusTable,
+            String layoutKey,
+            WorkspaceState workspace,
+            Consumer<SchemaNode> onOpenTable) {
         Objects.requireNonNull(cache, "cache");
         setTitle(titleFor(catalog, focusTable));
         setHeaderText(null);
@@ -36,6 +48,9 @@ public final class SchemaDiagramDialog extends Dialog<Void> {
                 ? SchemaDiagramBuilder.buildCatalog(cache, catalog)
                 : SchemaDiagramBuilder.buildNeighborhood(cache, catalog, focusTable);
         model = SchemaDiagramLayout.layout(model);
+        if (workspace != null && layoutKey != null && !layoutKey.isBlank()) {
+            model = SchemaDiagramLayout.applyPositions(model, workspace.diagramLayout(layoutKey));
+        }
 
         SchemaDiagramCanvas canvas = new SchemaDiagramCanvas();
         canvas.setPrefSize(960, 640);
@@ -48,12 +63,28 @@ public final class SchemaDiagramDialog extends Dialog<Void> {
             cache.findTable(table.name(), table.catalog().isBlank() ? catalog : table.catalog())
                     .ifPresent(onOpenTable);
         });
+        if (workspace != null && layoutKey != null && !layoutKey.isBlank()) {
+            canvas.setOnLayoutChanged(next ->
+                    workspace.saveDiagramLayout(layoutKey, SchemaDiagramLayout.positionsOf(next)));
+            canvas.setOnLayoutReset(() -> workspace.clearDiagramLayout(layoutKey));
+        }
 
         getDialogPane().getStyleClass().add("schema-diagram-dialog");
         getDialogPane().setContent(canvas);
         getDialogPane().getButtonTypes().setAll(ButtonType.CLOSE);
         getDialogPane().getStylesheets().add(stylesheet());
         getDialogPane().setPrefSize(1000, 700);
+    }
+
+    public static String layoutKey(String hostPort, String catalog, String focusTable) {
+        String host = hostPort == null || hostPort.isBlank() ? "local" : hostPort;
+        String cat = catalog == null || catalog.isBlank() ? "_" : catalog;
+        String focus = focusTable == null || focusTable.isBlank() ? "*" : focusTable;
+        return host + "__" + cat + "__" + focus;
+    }
+
+    private static String layoutKey(String catalog, String focusTable) {
+        return layoutKey("local", catalog, focusTable);
     }
 
     private static String titleFor(String catalog, String focusTable) {
