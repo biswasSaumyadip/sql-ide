@@ -12,6 +12,7 @@ h2 = "2.3.232"
 jsqlparser = "5.1"
 jackson = "2.17.0"
 sql-formatter = "2.0.5"
+jedis = "5.2.0"
 junit = "5.11.4"
 
 [libraries]
@@ -24,6 +25,7 @@ h2 = { module = "com.h2database:h2", version.ref = "h2" }
 jsqlparser = { module = "com.github.jsqlparser:jsqlparser", version.ref = "jsqlparser" }
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
 sql-formatter = { module = "com.github.vertical-blank:sql-formatter", version.ref = "sql-formatter" }
+jedis = { module = "redis.clients:jedis", version.ref = "jedis" }
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }

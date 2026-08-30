@@ -522,7 +522,7 @@ public final class MainController {
     private void openConnectionDialog(ConnectionProfile profile) {
         DataSourceDriver probe = registry.create(DriverRegistry.DEFAULT_DRIVER_ID);
         ConnectionDialog dialog = new ConnectionDialog(
-                state.lastConnection(), probe, profileManager, profile);
+                state.lastConnection(), probe, registry, profileManager, profile);
         dialog.initOwner(owner());
         dialog.showAndWait().ifPresent(config -> {
             String profileId = dialog.selectedProfileId().orElse(
@@ -1271,8 +1271,17 @@ public final class MainController {
         ConnectionSession session = sessionOpt.get();
         DataSourceDriver active = session.driver();
         lastRunSessionId = session.id();
+        boolean redis = session.config().connectionType().isRedis();
 
-        List<String> statements = editor.getEffectiveStatements();
+        if (analyze != null && redis) {
+            outcome.present(QueryResult.ofError("EXPLAIN is not available for Redis connections.", 0));
+            statusBar.setResult(QueryResult.ofError("EXPLAIN is not available for Redis.", 0));
+            return;
+        }
+
+        List<String> statements = redis
+                ? editor.getEffectiveRedisCommands()
+                : editor.getEffectiveStatements();
         if (statements.isEmpty()) {
             outcome.present(QueryResult.ofError("Nothing to run. Type a statement or select one.", 0));
             statusBar.setResult(QueryResult.ofError("Nothing to run", 0));
@@ -1288,24 +1297,33 @@ public final class MainController {
         final String historySql;
         final List<String> sourceStatements;
         if (analyze == null) {
-            List<String> bound = new ArrayList<>(statements.size());
-            for (String statement : statements) {
-                if (SqlParameterParser.find(statement).isEmpty()) {
-                    bound.add(statement);
-                    continue;
+            if (redis) {
+                toRun = statements;
+                historySql = String.join("\n", statements);
+                lastRerunStatements = List.copyOf(statements);
+                lastRerunHistorySql = historySql;
+                outcome.setRefreshEnabled(true);
+                sourceStatements = List.copyOf(statements);
+            } else {
+                List<String> bound = new ArrayList<>(statements.size());
+                for (String statement : statements) {
+                    if (SqlParameterParser.find(statement).isEmpty()) {
+                        bound.add(statement);
+                        continue;
+                    }
+                    var substituted = ParameterPromptDialog.promptAndSubstitute(owner, statement);
+                    if (substituted.isEmpty()) {
+                        return;
+                    }
+                    bound.add(substituted.get());
                 }
-                var substituted = ParameterPromptDialog.promptAndSubstitute(owner, statement);
-                if (substituted.isEmpty()) {
-                    return;
-                }
-                bound.add(substituted.get());
+                toRun = bound;
+                historySql = String.join(";\n", bound);
+                lastRerunStatements = List.copyOf(bound);
+                lastRerunHistorySql = historySql;
+                outcome.setRefreshEnabled(true);
+                sourceStatements = List.copyOf(bound);
             }
-            toRun = bound;
-            historySql = String.join(";\n", bound);
-            lastRerunStatements = List.copyOf(bound);
-            lastRerunHistorySql = historySql;
-            outcome.setRefreshEnabled(true);
-            sourceStatements = List.copyOf(bound);
         } else {
             String one = editor.getEffectiveSql();
             if (!SqlParameterParser.find(one).isEmpty()) {
@@ -1850,10 +1868,12 @@ public final class MainController {
         boolean txn = connected && active != null && active.capabilities().supportsTransactions();
         boolean manual = txn && !active.isAutoCommit();
 
+        boolean redis = connected && sessionOpt.get().config().connectionType().isRedis();
+
         runButton.setDisable(!connected || busy);
         stopButton.setDisable(!busy || cancelling);
-        explainButton.setDisable(!connected || busy);
-        explainAnalyzeButton.setDisable(!connected || busy);
+        explainButton.setDisable(!connected || busy || redis);
+        explainAnalyzeButton.setDisable(!connected || busy || redis);
         connectButton.setDisable(busy);
         disconnectButton.setDisable(!connected || busy);
         refreshButton.setDisable(!connected || busy);

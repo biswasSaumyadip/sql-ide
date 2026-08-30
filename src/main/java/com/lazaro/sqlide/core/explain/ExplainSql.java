@@ -38,6 +38,7 @@ public final class ExplainSql {
             case H2_MEMORY ->
                 // H2 has EXPLAIN but not ANALYZE; both modes use EXPLAIN.
                     "EXPLAIN " + body;
+            case REDIS -> "";
         };
     }
 

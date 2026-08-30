@@ -20,7 +20,7 @@ public final class TransferSql {
         Driver d = driver == null ? Driver.MYSQL : driver;
         return switch (d) {
             case POSTGRESQL -> "\"" + identifier.replace("\"", "\"\"") + "\"";
-            case MYSQL, MARIADB, H2_MEMORY -> "`" + identifier.replace("`", "``") + "`";
+            case MYSQL, MARIADB, H2_MEMORY, REDIS -> "`" + identifier.replace("`", "``") + "`";
         };
     }
 

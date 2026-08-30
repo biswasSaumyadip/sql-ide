@@ -24,6 +24,7 @@ public final class DriverRegistry {
     public static DriverRegistry withDefaults() {
         DriverRegistry registry = new DriverRegistry();
         registry.register(JdbcSqlDriver.ID, JdbcSqlDriver::new);
+        registry.register(RedisDriver.ID, RedisDriver::new);
         return registry;
     }
 

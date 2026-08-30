@@ -6,8 +6,9 @@ import java.util.concurrent.CompletableFuture;
 
 /**
  * Everything the UI needs from a data source, independent of how it is reached.
- * JDBC is the only implementation today; the interface exists so that adding
- * another backend does not mean rewriting the controller.
+ * JDBC ({@link JdbcSqlDriver}) and Redis ({@link RedisDriver}) ship with the app.
+ * The interface exists so that adding another backend does not mean rewriting
+ * the controller.
  *
  * <p><strong>Threading contract.</strong> No method here may block the caller on
  * network or disk I/O. Every operation returns a {@link CompletableFuture} that is

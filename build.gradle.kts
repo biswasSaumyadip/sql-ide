@@ -33,6 +33,7 @@ dependencies {
     implementation(libs.jsqlparser)
     implementation(libs.jackson.databind)
     implementation(libs.sql.formatter)
+    implementation(libs.jedis)
 
     runtimeOnly(libs.mysql.connector)
     runtimeOnly(libs.slf4j.simple)

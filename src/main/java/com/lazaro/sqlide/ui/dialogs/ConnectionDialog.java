@@ -4,6 +4,8 @@ import com.lazaro.sqlide.core.config.ConnectionProfile;
 import com.lazaro.sqlide.core.config.ConnectionProfileManager;
 import com.lazaro.sqlide.core.db.ConnectionConfig;
 import com.lazaro.sqlide.core.db.DataSourceDriver;
+import com.lazaro.sqlide.core.db.DriverRegistry;
+import com.lazaro.sqlide.core.db.RedisDriver;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -42,12 +44,16 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
     private static final String NEW_CONNECTION = "New connection";
 
     private final ConnectionProfileManager profileManager;
+    private final DriverRegistry registry;
     private final ComboBox<ConnectionProfile> savedBox = new ComboBox<>();
     private final TextField nameField = new TextField();
     private final CheckBox saveProfileCheck = new CheckBox("Save connection");
     private final Button deleteProfileButton = new Button("Delete");
 
+    private final ComboBox<ConnectionConfig.ConnectionType> typeBox = new ComboBox<>();
     private final ComboBox<ConnectionConfig.Driver> driverBox = new ComboBox<>();
+    private final Label driverLabel = new Label("Driver");
+    private final Label databaseLabel = new Label("Database");
     private final TextField hostField = new TextField();
     private final TextField portField = new TextField();
     private final TextField databaseField = new TextField();
@@ -60,7 +66,7 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
     private String editingProfileId;
 
     public ConnectionDialog(ConnectionConfig initial, DataSourceDriver driver) {
-        this(initial, driver, new ConnectionProfileManager(), null);
+        this(initial, driver, null, new ConnectionProfileManager(), null);
     }
 
     public ConnectionDialog(
@@ -68,7 +74,17 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
             DataSourceDriver driver,
             ConnectionProfileManager profileManager,
             ConnectionProfile preselect) {
+        this(initial, driver, null, profileManager, preselect);
+    }
+
+    public ConnectionDialog(
+            ConnectionConfig initial,
+            DataSourceDriver driver,
+            DriverRegistry registry,
+            ConnectionProfileManager profileManager,
+            ConnectionProfile preselect) {
         this.profileManager = profileManager == null ? new ConnectionProfileManager() : profileManager;
+        this.registry = registry;
         setTitle("Connect to database");
         setHeaderText("Data source settings");
         setResizable(true);
@@ -132,7 +148,13 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
     // ---------------------------------------------------------------- form
 
     private VBox buildForm() {
-        driverBox.getItems().setAll(ConnectionConfig.Driver.values());
+        typeBox.getItems().setAll(ConnectionConfig.ConnectionType.values());
+        typeBox.setMaxWidth(Double.MAX_VALUE);
+        for (ConnectionConfig.Driver driver : ConnectionConfig.Driver.values()) {
+            if (driver.isJdbc()) {
+                driverBox.getItems().add(driver);
+            }
+        }
         driverBox.setMaxWidth(Double.MAX_VALUE);
         portField.setPrefColumnCount(6);
         feedback.getStyleClass().add("dialog-feedback");
@@ -171,10 +193,11 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
         detailGrid.setVgap(8);
         detailGrid.getColumnConstraints().addAll(labelColumn(), fieldColumn());
         int row = 0;
-        detailGrid.addRow(row++, new Label("Driver"), driverBox);
+        detailGrid.addRow(row++, new Label("Type"), typeBox);
+        detailGrid.addRow(row++, driverLabel, driverBox);
         detailGrid.addRow(row++, new Label("Host"), hostField);
         detailGrid.addRow(row++, new Label("Port"), portField);
-        detailGrid.addRow(row++, new Label("Database"), databaseField);
+        detailGrid.addRow(row++, databaseLabel, databaseField);
         detailGrid.addRow(row++, new Label("User"), userField);
         detailGrid.addRow(row++, new Label("Password"), passwordField);
 
@@ -216,12 +239,31 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
         nameField.setText(defaultName(source.driver(), source.host(), source.port(), source.database()));
         saveProfileCheck.setSelected(false);
 
+        typeBox.valueProperty().addListener((observable, previous, current) -> {
+            applyTypeVisibility(current);
+            if (previous == null || current == null || previous == current) {
+                return;
+            }
+            int previousDefault = previous.isRedis()
+                    ? ConnectionConfig.Driver.REDIS.defaultPort()
+                    : jdbcDefaultPort();
+            if (portField.getText().equals(Integer.toString(previousDefault))) {
+                int next = current.isRedis()
+                        ? ConnectionConfig.Driver.REDIS.defaultPort()
+                        : jdbcDefaultPort();
+                portField.setText(Integer.toString(next));
+            }
+        });
         driverBox.valueProperty().addListener((observable, previous, current) -> {
+            if (currentType().isRedis()) {
+                return;
+            }
             if (current != null && (previous == null || portField.getText().equals(
                     Integer.toString(previous.defaultPort())))) {
                 portField.setText(Integer.toString(current.defaultPort()));
             }
         });
+        applyTypeVisibility(currentType());
     }
 
     private void wireSavedProfiles() {
@@ -287,11 +329,43 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
 
     private void applyEndpoint(
             ConnectionConfig.Driver driver, String host, int port, String database, String user) {
-        driverBox.setValue(driver);
+        ConnectionConfig.Driver resolved = driver == null ? ConnectionConfig.Driver.MYSQL : driver;
+        typeBox.setValue(resolved.connectionType());
+        if (resolved.isJdbc()) {
+            driverBox.setValue(resolved);
+        } else if (driverBox.getValue() == null) {
+            driverBox.setValue(ConnectionConfig.Driver.MYSQL);
+        }
         hostField.setText(host);
         portField.setText(Integer.toString(port));
-        databaseField.setText(database);
+        databaseField.setText(resolved.isJdbc() ? database : "");
         userField.setText(user);
+        applyTypeVisibility(resolved.connectionType());
+    }
+
+    private void applyTypeVisibility(ConnectionConfig.ConnectionType type) {
+        boolean redis = type != null && type.isRedis();
+        setRowVisible(driverLabel, driverBox, !redis);
+        setRowVisible(databaseLabel, databaseField, !redis);
+        userField.setPromptText(redis ? "ACL username (optional)" : "");
+        passwordField.setPromptText(redis ? "Optional" : "");
+    }
+
+    private static void setRowVisible(Label label, javafx.scene.Node field, boolean visible) {
+        label.setVisible(visible);
+        label.setManaged(visible);
+        field.setVisible(visible);
+        field.setManaged(visible);
+    }
+
+    private ConnectionConfig.ConnectionType currentType() {
+        ConnectionConfig.ConnectionType type = typeBox.getValue();
+        return type == null ? ConnectionConfig.ConnectionType.MYSQL : type;
+    }
+
+    private int jdbcDefaultPort() {
+        ConnectionConfig.Driver driver = driverBox.getValue();
+        return driver == null ? ConnectionConfig.Driver.MYSQL.defaultPort() : driver.defaultPort();
     }
 
     private void deleteSelectedProfile() {
@@ -345,15 +419,31 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
             setTesting(true);
             showFeedback("Testing\u2026", false);
 
-            driver.testConnection(toConfig()).whenComplete((description, error) -> Platform.runLater(() -> {
-                test.setDisable(false);
-                setTesting(false);
-                if (error != null) {
-                    showFeedback(rootCauseMessage(error), true);
-                } else {
-                    showFeedback("Connected to " + description, false);
+            ConnectionConfig config = toConfig();
+            DataSourceDriver tester;
+            boolean owned = false;
+            if (config.connectionType().isRedis()) {
+                tester = registry != null ? registry.create(RedisDriver.ID) : new RedisDriver();
+                owned = true;
+            } else {
+                tester = driver;
+            }
+            DataSourceDriver used = tester;
+            boolean closeAfter = owned;
+            used.testConnection(config).whenComplete((description, error) -> {
+                if (closeAfter) {
+                    used.close();
                 }
-            }));
+                Platform.runLater(() -> {
+                    test.setDisable(false);
+                    setTesting(false);
+                    if (error != null) {
+                        showFeedback(rootCauseMessage(error), true);
+                    } else {
+                        showFeedback("Connected to " + description, false);
+                    }
+                });
+            });
         });
     }
 
@@ -373,19 +463,18 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
     }
 
     private ConnectionConfig toConfig() {
+        ConnectionConfig.Driver driver = selectedDriver();
         return new ConnectionConfig(
                 hostField.getText().trim(),
                 parsePort(),
-                databaseField.getText().trim(),
+                currentType().isRedis() ? "" : databaseField.getText().trim(),
                 userField.getText().trim(),
                 passwordField.getText(),
-                driverBox.getValue());
+                driver);
     }
 
     private ConnectionProfile toProfile() {
-        ConnectionConfig.Driver driver = driverBox.getValue() == null
-                ? ConnectionConfig.Driver.MYSQL
-                : driverBox.getValue();
+        ConnectionConfig.Driver driver = selectedDriver();
         String id = editingProfileId == null || editingProfileId.isBlank()
                 ? UUID.randomUUID().toString()
                 : editingProfileId;
@@ -399,8 +488,16 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
                 driver.name(),
                 hostField.getText().trim(),
                 parsePort(),
-                databaseField.getText().trim(),
+                currentType().isRedis() ? "" : databaseField.getText().trim(),
                 userField.getText().trim());
+    }
+
+    private ConnectionConfig.Driver selectedDriver() {
+        if (currentType().isRedis()) {
+            return ConnectionConfig.Driver.REDIS;
+        }
+        ConnectionConfig.Driver driver = driverBox.getValue();
+        return driver == null || !driver.isJdbc() ? ConnectionConfig.Driver.MYSQL : driver;
     }
 
     private static String defaultName(ConnectionConfig.Driver driver, String host, int port, String database) {

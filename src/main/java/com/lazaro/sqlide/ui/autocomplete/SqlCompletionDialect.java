@@ -2,6 +2,7 @@ package com.lazaro.sqlide.ui.autocomplete;
 
 import com.lazaro.sqlide.core.db.ConnectionConfig;
 import com.lazaro.sqlide.core.doc.SqlKeywordDocs;
+import com.lazaro.sqlide.core.redis.RedisCommands;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -19,17 +20,25 @@ final class SqlCompletionDialect {
     }
 
     static String[] keywords(ConnectionConfig.Driver driver) {
-        List<String> out = new ArrayList<>(List.of(COMMON_KEYWORDS));
         ConnectionConfig.Driver d = driver == null ? ConnectionConfig.Driver.MYSQL : driver;
+        if (d == ConnectionConfig.Driver.REDIS) {
+            return RedisCommands.KEYWORDS;
+        }
+        List<String> out = new ArrayList<>(List.of(COMMON_KEYWORDS));
         switch (d) {
             case POSTGRESQL -> out.addAll(List.of(POSTGRES_KEYWORDS));
             case H2_MEMORY -> out.addAll(List.of(H2_KEYWORDS));
             case MYSQL, MARIADB -> out.addAll(List.of(MYSQL_KEYWORDS));
+            case REDIS -> {
+            }
         }
         return out.toArray(String[]::new);
     }
 
     static String[] keywordPhrases(ConnectionConfig.Driver driver) {
+        if (driver == ConnectionConfig.Driver.REDIS) {
+            return new String[0];
+        }
         List<String> out = new ArrayList<>(List.of(COMMON_PHRASES));
         if (driver == ConnectionConfig.Driver.POSTGRESQL) {
             out.add("ON CONFLICT");
@@ -43,12 +52,17 @@ final class SqlCompletionDialect {
     }
 
     static List<Function> functions(ConnectionConfig.Driver driver) {
-        List<Function> out = new ArrayList<>(COMMON_FUNCTIONS);
         ConnectionConfig.Driver d = driver == null ? ConnectionConfig.Driver.MYSQL : driver;
+        if (d == ConnectionConfig.Driver.REDIS) {
+            return List.of();
+        }
+        List<Function> out = new ArrayList<>(COMMON_FUNCTIONS);
         switch (d) {
             case POSTGRESQL -> out.addAll(POSTGRES_FUNCTIONS);
             case H2_MEMORY -> out.addAll(H2_FUNCTIONS);
             case MYSQL, MARIADB -> out.addAll(MYSQL_FUNCTIONS);
+            case REDIS -> {
+            }
         }
         return List.copyOf(out);
     }

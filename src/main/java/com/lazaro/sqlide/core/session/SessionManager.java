@@ -3,6 +3,7 @@ package com.lazaro.sqlide.core.session;
 import com.lazaro.sqlide.core.db.ConnectionConfig;
 import com.lazaro.sqlide.core.db.DataSourceDriver;
 import com.lazaro.sqlide.core.db.DriverRegistry;
+import com.lazaro.sqlide.core.db.RedisDriver;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -48,14 +49,22 @@ public final class SessionManager implements AutoCloseable {
                 : findByProfileId(profileId).orElse(null);
 
         if (existing != null) {
-            existing.updateConfig(config);
-            existing.driver().setMaxRowsPerQuery(maxRows);
-            focusedId = existing.id();
-            fireChanged();
-            return existing;
+            boolean existingRedis = RedisDriver.ID.equals(existing.driver().capabilities().id());
+            boolean wantRedis = config.connectionType().isRedis();
+            if (existingRedis == wantRedis) {
+                existing.updateConfig(config);
+                existing.driver().setMaxRowsPerQuery(maxRows);
+                focusedId = existing.id();
+                fireChanged();
+                return existing;
+            }
+            closeSession(existing.id());
         }
 
-        DataSourceDriver driver = registry.create(DriverRegistry.DEFAULT_DRIVER_ID);
+        String driverId = config.connectionType().isRedis()
+                ? RedisDriver.ID
+                : DriverRegistry.DEFAULT_DRIVER_ID;
+        DataSourceDriver driver = registry.create(driverId);
         driver.setMaxRowsPerQuery(maxRows);
         String id = UUID.randomUUID().toString();
         ConnectionSession session = new ConnectionSession(id, profileId, name, driver, config);

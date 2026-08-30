@@ -1,5 +1,6 @@
 package com.lazaro.sqlide.ui.components;
 
+import com.lazaro.sqlide.core.db.ConnectionConfig;
 import com.lazaro.sqlide.ui.components.SqlSyntaxHighlighter.Token;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -204,6 +205,27 @@ class SqlSyntaxHighlighterTest {
         assertTrue(hasStyleAt(sql, spans, summary, SqlSyntaxHighlighter.FOLD_PLACEHOLDER));
     }
 
+    @Test
+    @DisplayName("Redis commands are keywords when the Redis dialect is active")
+    void highlightsRedisCommands() {
+        String redis = "SET mykey \"hello world\"\nGET mykey\nHGETALL user\nLRANGE q 0 -1\nDEL mykey\nEXPIRE mykey 60";
+        List<String> keywords = textOf(redis, SqlSyntaxHighlighter.KEYWORD, ConnectionConfig.Driver.REDIS);
+        assertTrue(keywords.containsAll(List.of("SET", "GET", "HGETALL", "LRANGE", "DEL", "EXPIRE")),
+                "got " + keywords);
+        assertEquals(List.of("\"hello world\""), textOf(redis, SqlSyntaxHighlighter.STRING, ConnectionConfig.Driver.REDIS));
+        assertFalse(textOf("JOIN users", SqlSyntaxHighlighter.KEYWORD, ConnectionConfig.Driver.REDIS).contains("JOIN"));
+        assertTrue(textOf("SELECT 1 FROM t JOIN u", SqlSyntaxHighlighter.KEYWORD, ConnectionConfig.Driver.MYSQL)
+                .contains("JOIN"));
+    }
+
+    @Test
+    @DisplayName("hash comments are Redis comments, not SQL line comments")
+    void highlightsRedisHashComments() {
+        String text = "# get the key\nGET foo";
+        assertEquals(List.of("# get the key"), textOf(text, SqlSyntaxHighlighter.COMMENT, ConnectionConfig.Driver.REDIS));
+        assertEquals(List.of("GET"), textOf(text, SqlSyntaxHighlighter.KEYWORD, ConnectionConfig.Driver.REDIS));
+    }
+
     private static boolean hasStyleAt(
             String sql,
             org.fxmisc.richtext.model.StyleSpans<java.util.Collection<String>> spans,
@@ -223,7 +245,11 @@ class SqlSyntaxHighlighterTest {
     }
 
     private static List<String> textOf(String sql, String styleClass) {
-        return SqlSyntaxHighlighter.tokenize(sql).stream()
+        return textOf(sql, styleClass, ConnectionConfig.Driver.MYSQL);
+    }
+
+    private static List<String> textOf(String sql, String styleClass, ConnectionConfig.Driver driver) {
+        return SqlSyntaxHighlighter.tokenize(sql, driver).stream()
                 .filter(token -> token.styleClass().equals(styleClass))
                 .map(token -> sql.substring(token.start(), token.end()))
                 .toList();

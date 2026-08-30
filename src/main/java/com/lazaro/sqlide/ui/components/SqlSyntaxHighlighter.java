@@ -1,6 +1,8 @@
 package com.lazaro.sqlide.ui.components;
 
+import com.lazaro.sqlide.core.db.ConnectionConfig;
 import com.lazaro.sqlide.core.json.JsonPayloads;
+import com.lazaro.sqlide.core.redis.RedisCommands;
 import org.fxmisc.richtext.model.StyleSpans;
 import org.fxmisc.richtext.model.StyleSpansBuilder;
 
@@ -68,6 +70,16 @@ final class SqlSyntaxHighlighter {
                     + "|(?<OPERATOR>[=<>!]+|\\|\\||[+\\-*/%])"
                     + "|(?<PUNCTUATION>[;,()])");
 
+    private static final Pattern REDIS_SYNTAX = Pattern.compile(
+            "(?<FOLD>\\{ \\d+ keys? \\}|\\[ \\d+ items? \\]|\\( [^\\n]{1,60}?\\.\\.\\. \\))"
+                    + "|(?<COMMENT>#[^\\n]*)"
+                    + "|(?<STRING>'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\")"
+                    + "|(?<FUNCTION>(?!x)x)"
+                    + "|(?<KEYWORD>\\b(?i:" + String.join("|", RedisCommands.KEYWORDS) + ")\\b)"
+                    + "|(?<NUMBER>\\b\\d+(?:\\.\\d+)?\\b)"
+                    + "|(?<OPERATOR>[=<>!]+|\\|\\||[+\\-*/%])"
+                    + "|(?<PUNCTUATION>[;,()])");
+
     private SqlSyntaxHighlighter() {
     }
 
@@ -84,10 +96,14 @@ final class SqlSyntaxHighlighter {
 
     /** Pure tokenisation, free of any JavaFX type. */
     static List<Token> tokenize(String text) {
+        return tokenize(text, ConnectionConfig.Driver.MYSQL);
+    }
+
+    static List<Token> tokenize(String text, ConnectionConfig.Driver driver) {
         if (text == null || text.isEmpty()) {
             return List.of();
         }
-        Matcher matcher = SYNTAX.matcher(text);
+        Matcher matcher = syntax(driver).matcher(text);
         List<Token> tokens = new ArrayList<>();
         while (matcher.find()) {
             tokens.add(new Token(styleClassOf(matcher), matcher.start(), matcher.end()));
@@ -96,19 +112,24 @@ final class SqlSyntaxHighlighter {
     }
 
     static StyleSpans<Collection<String>> computeHighlighting(String text) {
-        return computeHighlighting(text, List.of());
+        return computeHighlighting(text, List.of(), ConnectionConfig.Driver.MYSQL);
     }
 
     /**
      * @param foldRanges exact {@code [start,end)} spans for active fold summaries
      */
     static StyleSpans<Collection<String>> computeHighlighting(String text, List<int[]> foldRanges) {
+        return computeHighlighting(text, foldRanges, ConnectionConfig.Driver.MYSQL);
+    }
+
+    static StyleSpans<Collection<String>> computeHighlighting(
+            String text, List<int[]> foldRanges, ConnectionConfig.Driver driver) {
         String source = text == null ? "" : text;
         StyleSpansBuilder<Collection<String>> builder = new StyleSpansBuilder<>();
         int lastEnd = 0;
         List<int[]> folds = normalizeFolds(foldRanges, source.length());
 
-        for (Token token : tokenize(source)) {
+        for (Token token : tokenize(source, driver)) {
             lastEnd = emitFoldsBefore(builder, folds, lastEnd, token.start());
             if (token.end() <= lastEnd) {
                 continue;
@@ -290,5 +311,9 @@ final class SqlSyntaxHighlighter {
             return OPERATOR;
         }
         return PUNCTUATION;
+    }
+
+    private static Pattern syntax(ConnectionConfig.Driver driver) {
+        return driver != null && driver.connectionType().isRedis() ? REDIS_SYNTAX : SYNTAX;
     }
 }

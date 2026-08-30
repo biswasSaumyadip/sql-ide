@@ -81,5 +81,6 @@ class ExplainPlanParserTest {
         assertEquals(
                 "EXPLAIN SELECT 1",
                 ExplainSql.wrap("EXPLAIN SELECT 1", ConnectionConfig.Driver.MYSQL, false));
+        assertEquals("", ExplainSql.wrap("GET foo", ConnectionConfig.Driver.REDIS, false));
     }
 }

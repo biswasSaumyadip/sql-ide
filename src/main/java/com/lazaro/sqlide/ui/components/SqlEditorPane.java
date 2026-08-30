@@ -8,6 +8,7 @@ import com.lazaro.sqlide.core.inspection.InspectionHighlights;
 import com.lazaro.sqlide.core.inspection.InspectionIssue;
 import com.lazaro.sqlide.core.inspection.Severity;
 import com.lazaro.sqlide.core.inspection.SqlInspector;
+import com.lazaro.sqlide.core.redis.RedisCommandParser;
 import com.lazaro.sqlide.core.sql.FoldManager;
 import com.lazaro.sqlide.core.sql.SqlCodeFormatter;
 import com.lazaro.sqlide.core.sql.SqlFoldRegions;
@@ -395,6 +396,8 @@ public final class SqlEditorPane extends BorderPane {
     public void setDialect(Supplier<ConnectionConfig.Driver> dialect) {
         this.dialect = dialect == null ? () -> ConnectionConfig.Driver.MYSQL : dialect;
         refreshAutocompleteEngine();
+        scheduleInspectionNow();
+        refreshHighlightingNow();
     }
 
     /**
@@ -465,6 +468,22 @@ public final class SqlEditorPane extends BorderPane {
         }
         String one = SqlStatementExtractor.statementAt(logicalSql(), logicalCaret());
         return one.isBlank() ? java.util.List.of() : java.util.List.of(one);
+    }
+
+    /**
+     * Redis commands to run: every non-empty line in the selection, or the current
+     * line when nothing is selected. Lines are the statement boundary (not
+     * semicolons); {@code #} comments are skipped.
+     */
+    public java.util.List<String> getEffectiveRedisCommands() {
+        String selection = codeArea.getSelectedText();
+        if (selection != null && !selection.isBlank()) {
+            String cleaned = InlayPadSupport.strip(selection, padsOverlappingSelection());
+            return RedisCommandParser.commandLines(cleaned);
+        }
+        int paragraph = Math.max(0, Math.min(codeArea.getCurrentParagraph(), codeArea.getParagraphs().size() - 1));
+        String line = codeArea.getParagraph(paragraph).getText();
+        return RedisCommandParser.commandLines(line);
     }
 
     public String getSql() {
@@ -1799,7 +1818,30 @@ public final class SqlEditorPane extends BorderPane {
 
     private StyleSpans<Collection<String>> highlightDocument() {
         String text = codeArea.getText();
-        return SqlSyntaxHighlighter.computeHighlighting(text, foldManager.placeholderRanges(text));
+        return SqlSyntaxHighlighter.computeHighlighting(text, foldManager.placeholderRanges(text), currentDriver());
+    }
+
+    private void refreshHighlightingNow() {
+        String snapshot = codeArea.getText();
+        List<int[]> foldRanges = foldManager.placeholderRanges(snapshot);
+        ConnectionConfig.Driver driver = currentDriver();
+        Task<StyleSpans<Collection<String>>> task = new Task<>() {
+            @Override
+            protected StyleSpans<Collection<String>> call() {
+                return SqlSyntaxHighlighter.computeHighlighting(snapshot, foldRanges, driver);
+            }
+        };
+        task.setOnSucceeded(event -> applyHighlighting(task.getValue()));
+        highlightExecutor.execute(task);
+    }
+
+    private ConnectionConfig.Driver currentDriver() {
+        ConnectionConfig.Driver driver = dialect.get();
+        return driver == null ? ConnectionConfig.Driver.MYSQL : driver;
+    }
+
+    private boolean isRedisDialect() {
+        return currentDriver().connectionType().isRedis();
     }
 
     // ---------------------------------------------------------------- highlighting / inspections
@@ -1824,10 +1866,11 @@ public final class SqlEditorPane extends BorderPane {
     private Task<StyleSpans<Collection<String>>> computeHighlightingAsync() {
         String snapshot = codeArea.getText();
         List<int[]> foldRanges = foldManager.placeholderRanges(snapshot);
+        ConnectionConfig.Driver driver = currentDriver();
         Task<StyleSpans<Collection<String>>> task = new Task<>() {
             @Override
             protected StyleSpans<Collection<String>> call() {
-                return SqlSyntaxHighlighter.computeHighlighting(snapshot, foldRanges);
+                return SqlSyntaxHighlighter.computeHighlighting(snapshot, foldRanges, driver);
             }
         };
         highlightExecutor.execute(task);
@@ -1859,6 +1902,11 @@ public final class SqlEditorPane extends BorderPane {
     }
 
     private void runInspection() {
+        if (isRedisDialect()) {
+            cancelActiveInspection();
+            applyInspections(List.of());
+            return;
+        }
         // Invalidate any in-flight task, then mint the generation for this run.
         Task<List<InspectionIssue>> previous = activeInspectionTask;
         activeInspectionTask = null;

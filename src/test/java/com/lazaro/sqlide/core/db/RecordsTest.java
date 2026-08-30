@@ -31,6 +31,13 @@ class RecordsTest {
         var h2 = new ConnectionConfig("localhost", 9092, "scratch", "sa", "",
                 ConnectionConfig.Driver.H2_MEMORY);
         assertEquals("jdbc:h2:mem:scratch;DB_CLOSE_DELAY=-1", h2.jdbcUrl());
+
+        var redis = ConnectionConfig.redis("localhost", 6379, "secret");
+        assertEquals("redis://localhost:6379", redis.jdbcUrl());
+        assertEquals(ConnectionConfig.ConnectionType.REDIS, redis.connectionType());
+        assertEquals("redis://localhost:6379", redis.displayLabel());
+        assertEquals("", redis.user());
+        assertEquals("secret", redis.password());
     }
 
     @Test
@@ -163,14 +170,20 @@ class RecordsTest {
         var registry = DriverRegistry.withDefaults();
 
         assertTrue(registry.isRegistered(JdbcSqlDriver.ID));
+        assertTrue(registry.isRegistered(RedisDriver.ID));
         try (DataSourceDriver driver = registry.create(JdbcSqlDriver.ID)) {
             assertInstanceOf(JdbcSqlDriver.class, driver);
             assertEquals(JdbcSqlDriver.ID, driver.capabilities().id());
             assertFalse(driver.isConnected(), "a freshly created driver must not be connected");
         }
+        try (DataSourceDriver driver = registry.create(RedisDriver.ID)) {
+            assertInstanceOf(RedisDriver.class, driver);
+            assertFalse(driver.isConnected());
+            assertFalse(driver.capabilities().supportsTransactions());
+        }
 
-        var failure = assertThrows(IllegalArgumentException.class, () -> registry.create("redis"));
-        assertTrue(failure.getMessage().contains("redis"));
+        var failure = assertThrows(IllegalArgumentException.class, () -> registry.create("unknown-driver"));
+        assertTrue(failure.getMessage().contains("unknown-driver"));
     }
 
     @Test
