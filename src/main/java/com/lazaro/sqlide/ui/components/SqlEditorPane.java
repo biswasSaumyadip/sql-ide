@@ -398,6 +398,7 @@ public final class SqlEditorPane extends BorderPane {
         refreshAutocompleteEngine();
         scheduleInspectionNow();
         refreshHighlightingNow();
+        scheduleStatementHighlight();
     }
 
     /**
@@ -1561,7 +1562,8 @@ public final class SqlEditorPane extends BorderPane {
         try {
             String text = codeArea.getText();
             int length = text == null ? 0 : text.length();
-            SqlStatementExtractor.Span span = SqlStatementExtractor.rangeAt(text, codeArea.getCaretPosition());
+            SqlStatementExtractor.Span span = SqlStatementExtractor.rangeAt(
+                    text, codeArea.getCaretPosition(), currentDriver());
             if (span.isEmpty() || text == null || text.isBlank() || statementLayer.getWidth() <= 0) {
                 statementFrame.setVisible(false);
                 return;

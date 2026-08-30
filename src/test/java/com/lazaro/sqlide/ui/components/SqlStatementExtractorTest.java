@@ -1,5 +1,6 @@
 package com.lazaro.sqlide.ui.components;
 
+import com.lazaro.sqlide.core.db.ConnectionConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -195,5 +196,39 @@ class SqlStatementExtractorTest {
         assertEquals("SELECT 2;", sql.substring(ranges.get(1).start(), ranges.get(1).end()));
         assertTrue(ranges.stream().noneMatch(span ->
                 sql.substring(span.start(), span.end()).strip().toUpperCase().startsWith("DELIMITER")));
+    }
+
+    @Test
+    @DisplayName("Redis rangeAt wraps only the current line, not the whole buffer")
+    void redisRangeIsCurrentLine() {
+        String redis = "SET a 1\nGET main\nDEL a";
+        int caret = redis.indexOf("GET");
+        SqlStatementExtractor.Span span = SqlStatementExtractor.rangeAt(
+                redis, caret, ConnectionConfig.Driver.REDIS);
+        assertEquals("GET main", redis.substring(span.start(), span.end()));
+
+        SqlStatementExtractor.Span mysql = SqlStatementExtractor.rangeAt(
+                redis, caret, ConnectionConfig.Driver.MYSQL);
+        assertEquals(redis, redis.substring(mysql.start(), mysql.end()),
+                "without semicolons MySQL still treats the buffer as one statement");
+    }
+
+    @Test
+    @DisplayName("Redis rangeAt hugs the line and skips CRLF")
+    void redisRangeHandlesCrlf() {
+        String redis = "PING\r\nGET main\r\nDEL a";
+        int caret = redis.indexOf("GET");
+        SqlStatementExtractor.Span span = SqlStatementExtractor.lineRangeAt(redis, caret);
+        assertEquals("GET main", redis.substring(span.start(), span.end()));
+    }
+
+    @Test
+    @DisplayName("Redis empty line uses the nearest non-empty neighbour")
+    void redisEmptyLinePicksNearest() {
+        String redis = "SET a 1\n\nGET main";
+        int blank = redis.indexOf("\n\n") + 1;
+        SqlStatementExtractor.Span span = SqlStatementExtractor.lineRangeAt(redis, blank);
+        String highlighted = redis.substring(span.start(), span.end());
+        assertTrue(highlighted.equals("SET a 1") || highlighted.equals("GET main"), highlighted);
     }
 }

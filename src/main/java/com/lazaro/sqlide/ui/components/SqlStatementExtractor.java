@@ -1,15 +1,17 @@
 package com.lazaro.sqlide.ui.components;
 
+import com.lazaro.sqlide.core.db.ConnectionConfig;
+
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Splits SQL text into statements the way the MySQL client / DataGrip do: on the
- * <em>active delimiter</em> (default {@code ;}) outside quotes and comments.
+ * Splits editor text into executable regions.
  *
- * <p>{@code DELIMITER} is a client meta-command, not sent to JDBC. It changes
- * the terminator used for subsequent statements so stored procedures with
- * internal semicolons stay one executable block.
+ * <p>MySQL uses the active delimiter (default {@code ;}) outside quotes and
+ * comments. {@code DELIMITER} is a client meta-command that changes the
+ * terminator so procedure bodies with internal semicolons stay one block.
+ * Redis uses a single line (newline-terminated) as the statement boundary.
  */
 public final class SqlStatementExtractor {
 
@@ -67,6 +69,46 @@ public final class SqlStatementExtractor {
             return new Span(0, 0);
         }
         return hug(sql, piece);
+    }
+
+    /**
+     * Statement under {@code caret} for the active connection. MySQL uses delimiter
+     * splitting; Redis is one command per line.
+     */
+    public static Span rangeAt(String sql, int caret, ConnectionConfig.Driver driver) {
+        if (driver != null && driver.connectionType().isRedis()) {
+            return lineRangeAt(sql, caret);
+        }
+        return rangeAt(sql, caret);
+    }
+
+    /**
+     * Redis execution bounds: the current line (paragraph), excluding surrounding
+     * horizontal whitespace. When that line is empty, the nearest non-empty line
+     * above or below is used instead.
+     */
+    public static Span lineRangeAt(String sql, int caret) {
+        if (sql == null || sql.isEmpty()) {
+            return new Span(0, 0);
+        }
+        int pos = Math.max(0, Math.min(caret, sql.length()));
+        int lineStart = startOfLine(sql, pos);
+        int lineEnd = endOfLine(sql, pos);
+        Span current = hugHorizontal(sql, lineStart, lineEnd);
+        if (!current.isEmpty()) {
+            return current;
+        }
+        Span up = nearestNonEmptyLine(sql, lineStart, -1);
+        Span down = nearestNonEmptyLine(sql, lineEnd, 1);
+        if (up.isEmpty()) {
+            return down;
+        }
+        if (down.isEmpty()) {
+            return up;
+        }
+        int upDist = Math.max(0, pos - up.end());
+        int downDist = Math.max(0, down.start() - pos);
+        return upDist <= downDist ? up : down;
     }
 
     /**
@@ -194,6 +236,72 @@ public final class SqlStatementExtractor {
             return new Span(0, 0);
         }
         return new Span(start, end);
+    }
+
+    private static Span hugHorizontal(String sql, int from, int to) {
+        int start = Math.max(0, from);
+        int end = Math.min(sql.length(), to);
+        while (start < end && isHorizontalWs(sql.charAt(start))) {
+            start++;
+        }
+        while (end > start && isHorizontalWs(sql.charAt(end - 1))) {
+            end--;
+        }
+        if (end <= start) {
+            return new Span(0, 0);
+        }
+        return new Span(start, end);
+    }
+
+    private static int startOfLine(String sql, int pos) {
+        int i = Math.max(0, Math.min(pos, sql.length()));
+        while (i > 0 && !isNewline(sql.charAt(i - 1))) {
+            i--;
+        }
+        return i;
+    }
+
+    private static int endOfLine(String sql, int pos) {
+        int i = Math.max(0, Math.min(pos, sql.length()));
+        while (i < sql.length() && !isNewline(sql.charAt(i))) {
+            i++;
+        }
+        return i;
+    }
+
+    private static Span nearestNonEmptyLine(String sql, int from, int direction) {
+        if (direction < 0) {
+            int i = Math.max(0, from);
+            while (i > 0) {
+                i--;
+                if (isNewline(sql.charAt(i))) {
+                    continue;
+                }
+                int start = startOfLine(sql, i);
+                int end = endOfLine(sql, i);
+                Span hugged = hugHorizontal(sql, start, end);
+                if (!hugged.isEmpty()) {
+                    return hugged;
+                }
+                i = start;
+            }
+            return new Span(0, 0);
+        }
+        int i = Math.min(sql.length(), Math.max(0, from));
+        while (i < sql.length()) {
+            if (isNewline(sql.charAt(i))) {
+                i++;
+                continue;
+            }
+            int start = startOfLine(sql, i);
+            int end = endOfLine(sql, i);
+            Span hugged = hugHorizontal(sql, start, end);
+            if (!hugged.isEmpty()) {
+                return hugged;
+            }
+            i = end == i ? i + 1 : end;
+        }
+        return new Span(0, 0);
     }
 
     private static String trimStatement(String fragment) {
