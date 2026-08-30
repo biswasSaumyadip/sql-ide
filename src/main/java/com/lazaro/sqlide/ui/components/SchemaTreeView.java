@@ -11,18 +11,14 @@ import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
-import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
-import javafx.scene.control.MenuItem;
 import javafx.scene.control.ProgressIndicator;
-import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.TextField;
 import javafx.scene.control.Tooltip;
 import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeView;
-import javafx.scene.input.Clipboard;
-import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.ContextMenuEvent;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.BorderPane;
@@ -72,6 +68,9 @@ public final class SchemaTreeView extends VBox {
     private Consumer<ConnectionProfile> onConnectProfile = profile -> { };
     private Consumer<ConnectionProfile> onDeleteProfile = profile -> { };
     private Consumer<String> onInsertSql = sql -> { };
+    private Runnable onNewQuery = () -> { };
+    private Runnable onDisconnect = () -> { };
+    private Runnable onRefreshSchema = () -> { };
 
     public SchemaTreeView() {
         getStyleClass().add("schema-tree-pane");
@@ -120,7 +119,29 @@ public final class SchemaTreeView extends VBox {
             }
             handleDoubleClick(selected);
         });
-        tree.setContextMenu(buildContextMenu());
+        SchemaTreeContextMenus contextMenus = new SchemaTreeContextMenus(
+                tree.getSelectionModel()::getSelectedItem,
+                new SchemaTreeContextMenus.Actions(
+                        () -> onNewQuery.run(),
+                        () -> onConnectRequested.run(),
+                        sql -> onInsertSql.accept(sql),
+                        item -> {
+                            if (item != null && item.getValue() != null) {
+                                onViewObject.accept(item.getValue());
+                            }
+                        },
+                        this::refreshTreeItem,
+                        () -> onRefreshSchema.run(),
+                        this::editConnectionFromItem,
+                        () -> onDisconnect.run(),
+                        this::connectSelectedDataSource,
+                        this::removeConnectionFromItem,
+                        this::dumpSqlToFile));
+        tree.setContextMenu(contextMenus.menu());
+        // Populate before show — mutating items in onShowing cancels the popup.
+        tree.addEventFilter(ContextMenuEvent.CONTEXT_MENU_REQUESTED, event -> {
+            contextMenus.prepare();
+        });
 
         emptyHint.getStyleClass().add("empty-state-detail");
         emptyHint.setWrapText(true);
@@ -154,76 +175,74 @@ public final class SchemaTreeView extends VBox {
         loadingState.setManaged(false);
     }
 
-    private ContextMenu buildContextMenu() {
-        MenuItem connect = new MenuItem("Connect\u2026");
-        connect.setOnAction(event -> connectSelectedDataSource());
+    private void refreshTreeItem(TreeItem<SchemaNode> item) {
+        if (item == null || item.getValue() == null) {
+            onRefreshSchema.run();
+            return;
+        }
+        if (item.getValue().type() == NodeType.DATA_SOURCE) {
+            onRefreshSchema.run();
+            return;
+        }
+        if (item instanceof LazyItem lazy) {
+            lazy.forceReload(this::loadSchemaChildren);
+            return;
+        }
+        onRefreshSchema.run();
+    }
 
-        MenuItem delete = new MenuItem("Delete");
-        delete.setOnAction(event -> deleteSelectedDataSource());
+    private void editConnectionFromItem(TreeItem<SchemaNode> item) {
+        if (item == null || item.getValue() == null) {
+            onConnectRequested.run();
+            return;
+        }
+        String profileId = connectionIdOf(item.getValue());
+        if (profileId == null || SESSION_ID.equals(profileId)) {
+            onConnectRequested.run();
+            return;
+        }
+        profileManager.loadProfiles().stream()
+                .filter(profile -> profileId.equals(profile.id()))
+                .findFirst()
+                .ifPresentOrElse(onConnectProfile, onConnectRequested);
+    }
 
-        MenuItem newConnection = new MenuItem("New Connection\u2026");
-        newConnection.setOnAction(event -> onConnectRequested.run());
+    private void removeConnectionFromItem(TreeItem<SchemaNode> item) {
+        if (item == null || item.getValue() == null) {
+            return;
+        }
+        String profileId = connectionIdOf(item.getValue());
+        if (profileId == null || SESSION_ID.equals(profileId)) {
+            return;
+        }
+        profileManager.loadProfiles().stream()
+                .filter(profile -> profileId.equals(profile.id()))
+                .findFirst()
+                .ifPresent(profile -> {
+                    onDeleteProfile.accept(profile);
+                    schemaSelection.forgetConnection(profileId);
+                    rebuildDataSources();
+                });
+    }
 
-        MenuItem useDatabase = new MenuItem("Use database");
-        useDatabase.setOnAction(event -> useSelectedDatabase());
-
-        MenuItem insertName = new MenuItem("Insert name");
-        insertName.setOnAction(event -> activateSelection());
-
-        MenuItem copyName = new MenuItem("Copy Name");
-        copyName.setOnAction(event -> copyText(selectedNodeName()));
-
-        MenuItem copyQualified = new MenuItem("Copy Qualified Name");
-        copyQualified.setOnAction(event -> {
-            TreeItem<SchemaNode> selected = tree.getSelectionModel().getSelectedItem();
-            if (selected != null) {
-                copyText(SchemaObjectNames.qualifiedName(selected));
-            }
-        });
-
-        MenuItem generateSelect = new MenuItem("Generate SELECT");
-        generateSelect.setOnAction(event -> {
-            TreeItem<SchemaNode> selected = tree.getSelectionModel().getSelectedItem();
-            String sql = SchemaObjectNames.generateSelect(selected);
-            if (sql != null && !sql.isBlank()) {
-                onInsertSql.accept(sql);
-            }
-        });
-
-        MenuItem viewProperties = new MenuItem("View DDL / Properties");
-        viewProperties.setOnAction(event -> viewSelectedObject());
-
-        ContextMenu menu = new ContextMenu(
-                connect, delete, new SeparatorMenuItem(),
-                useDatabase, insertName, copyName, copyQualified, generateSelect,
-                new SeparatorMenuItem(), viewProperties, new SeparatorMenuItem(), newConnection);
-
-        menu.setOnShowing(event -> {
-            TreeItem<SchemaNode> selected = tree.getSelectionModel().getSelectedItem();
-            SchemaNode value = selected == null ? null : selected.getValue();
-            boolean placeholder = value == null || isPlaceholder(value);
-            boolean dataSource = value != null && value.type() == NodeType.DATA_SOURCE;
-            boolean activeDs = dataSource && value.metadataFlag(SchemaNode.META_ACTIVE);
-            boolean hasProfile = dataSource && value.metadata(SchemaNode.META_PROFILE_ID) != null
-                    && !SESSION_ID.equals(value.metadata(SchemaNode.META_PROFILE_ID));
-            boolean usable = !placeholder && value != null
-                    && (value.type() == NodeType.DATABASE || value.type() == NodeType.SCHEMA
-                    || value.type() == NodeType.TABLE || value.type() == NodeType.VIEW);
-            boolean object = value != null
-                    && (value.type() == NodeType.TABLE || value.type() == NodeType.VIEW);
-            boolean selectable = !placeholder && value != null && value.type() != NodeType.DATA_SOURCE;
-            boolean canSelect = SchemaObjectNames.generateSelect(selected) != null;
-
-            connect.setDisable(!dataSource || activeDs);
-            delete.setDisable(!hasProfile);
-            useDatabase.setDisable(!usable);
-            insertName.setDisable(!selectable);
-            copyName.setDisable(placeholder);
-            copyQualified.setDisable(!selectable);
-            generateSelect.setDisable(!canSelect);
-            viewProperties.setDisable(!object);
-        });
-        return menu;
+    private void dumpSqlToFile(String sql) {
+        if (sql == null || sql.isBlank() || tree.getScene() == null) {
+            return;
+        }
+        javafx.stage.FileChooser chooser = new javafx.stage.FileChooser();
+        chooser.setTitle("Dump SQL to File");
+        chooser.getExtensionFilters().add(
+                new javafx.stage.FileChooser.ExtensionFilter("SQL files", "*.sql"));
+        chooser.setInitialFileName("dump.sql");
+        java.io.File file = chooser.showSaveDialog(tree.getScene().getWindow());
+        if (file == null) {
+            return;
+        }
+        try {
+            java.nio.file.Files.writeString(file.toPath(), sql, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (java.io.IOException ignored) {
+            // best-effort dump
+        }
     }
 
     // ---------------------------------------------------------------- public API
@@ -264,6 +283,18 @@ public final class SchemaTreeView extends VBox {
     /** Inserts generated SQL into the active editor. */
     public void setOnInsertSql(Consumer<String> onInsertSql) {
         this.onInsertSql = onInsertSql == null ? sql -> { } : onInsertSql;
+    }
+
+    public void setOnNewQuery(Runnable onNewQuery) {
+        this.onNewQuery = onNewQuery == null ? () -> { } : onNewQuery;
+    }
+
+    public void setOnDisconnect(Runnable onDisconnect) {
+        this.onDisconnect = onDisconnect == null ? () -> { } : onDisconnect;
+    }
+
+    public void setOnRefreshSchema(Runnable onRefreshSchema) {
+        this.onRefreshSchema = onRefreshSchema == null ? this::reload : onRefreshSchema;
     }
 
     public void refreshSavedConnections() {
@@ -506,61 +537,6 @@ public final class SchemaTreeView extends VBox {
                 .ifPresentOrElse(onConnectProfile, onConnectRequested);
     }
 
-    private void deleteSelectedDataSource() {
-        TreeItem<SchemaNode> selected = tree.getSelectionModel().getSelectedItem();
-        if (selected == null || selected.getValue() == null) {
-            return;
-        }
-        String profileId = selected.getValue().metadata(SchemaNode.META_PROFILE_ID);
-        if (profileId == null || SESSION_ID.equals(profileId)) {
-            return;
-        }
-        profileManager.loadProfiles().stream()
-                .filter(profile -> profileId.equals(profile.id()))
-                .findFirst()
-                .ifPresent(profile -> {
-                    onDeleteProfile.accept(profile);
-                    schemaSelection.forgetConnection(profileId);
-                });
-    }
-
-    private void activateSelection() {
-        TreeItem<SchemaNode> selected = tree.getSelectionModel().getSelectedItem();
-        if (selected != null && selected.getValue() != null && !isPlaceholder(selected.getValue())
-                && selected.getValue().type() != NodeType.DATA_SOURCE) {
-            onActivate.accept(selected.getValue());
-        }
-    }
-
-    private void viewSelectedObject() {
-        TreeItem<SchemaNode> selected = tree.getSelectionModel().getSelectedItem();
-        if (selected != null && selected.getValue() != null
-                && (selected.getValue().type() == NodeType.TABLE || selected.getValue().type() == NodeType.VIEW)) {
-            onViewObject.accept(selected.getValue());
-        }
-    }
-
-    private void useSelectedDatabase() {
-        TreeItem<SchemaNode> selected = tree.getSelectionModel().getSelectedItem();
-        if (selected != null && selected.getValue() != null && !isPlaceholder(selected.getValue())) {
-            onUseDatabase.accept(selected.getValue());
-        }
-    }
-
-    private String selectedNodeName() {
-        TreeItem<SchemaNode> selected = tree.getSelectionModel().getSelectedItem();
-        return selected == null || selected.getValue() == null ? "" : selected.getValue().name();
-    }
-
-    private static void copyText(String text) {
-        if (text == null || text.isBlank()) {
-            return;
-        }
-        ClipboardContent content = new ClipboardContent();
-        content.putString(text);
-        Clipboard.getSystemClipboard().setContent(content);
-    }
-
     private TreeItem<SchemaNode> findActiveDataSourceItem() {
         for (TreeItem<SchemaNode> child : tree.getRoot().getChildren()) {
             if (child.getValue() != null && child.getValue().metadataFlag(SchemaNode.META_ACTIVE)) {
@@ -741,6 +717,18 @@ public final class SchemaTreeView extends VBox {
                     loader.accept(this);
                 }
             });
+        }
+
+        void forceReload(Consumer<LazyItem> reload) {
+            loaded = false;
+            fullChildren.clear();
+            getChildren().clear();
+            if (isExpanded()) {
+                loaded = true;
+                reload.accept(this);
+            } else {
+                setExpanded(true);
+            }
         }
 
         @Override

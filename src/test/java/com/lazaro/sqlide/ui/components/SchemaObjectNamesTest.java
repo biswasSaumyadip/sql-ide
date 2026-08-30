@@ -9,6 +9,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SchemaObjectNamesTest {
 
@@ -40,5 +41,39 @@ class SchemaObjectNamesTest {
         assertEquals("SELECT * FROM app.users;", SchemaObjectNames.generateSelect(table));
         assertEquals("SELECT id FROM app.users;", SchemaObjectNames.generateSelect(column));
         assertNull(SchemaObjectNames.generateSelect(catalog));
+    }
+
+    @Test
+    void selectFirstRowsAndInsertAndDdl() {
+        TreeItem<SchemaNode> ds = new TreeItem<>(SchemaNode.of("Local", NodeType.DATA_SOURCE));
+        TreeItem<SchemaNode> catalog = new TreeItem<>(SchemaNode.of("app", NodeType.DATABASE));
+        TreeItem<SchemaNode> table = new TreeItem<>(SchemaNode.of("users", NodeType.TABLE));
+        TreeItem<SchemaNode> id = new TreeItem<>(SchemaNode.of("id", NodeType.COLUMN));
+        TreeItem<SchemaNode> email = new TreeItem<>(SchemaNode.of("email", NodeType.COLUMN));
+        ds.getChildren().add(catalog);
+        catalog.getChildren().add(table);
+        table.getChildren().add(id);
+        table.getChildren().add(email);
+
+        assertEquals("SELECT * FROM app.users LIMIT 1000;", SchemaObjectNames.selectFirstRows(table, 1000));
+        assertEquals(
+                "INSERT INTO app.users (id, email) VALUES (?, ?);",
+                SchemaObjectNames.generateInsert(table));
+        assertEquals("CREATE TABLE app.users (\n    -- columns\n);", SchemaObjectNames.generateDdl(table));
+        assertEquals("TRUNCATE TABLE app.users;", SchemaObjectNames.truncateStatement(table));
+        assertEquals("DROP TABLE IF EXISTS app.users;", SchemaObjectNames.dropStatement(table));
+        assertEquals("DROP DATABASE IF EXISTS app;", SchemaObjectNames.dropStatement(catalog));
+    }
+
+    @Test
+    void createTemplates() {
+        TreeItem<SchemaNode> catalog = new TreeItem<>(SchemaNode.of("app", NodeType.DATABASE));
+        TreeItem<SchemaNode> table = new TreeItem<>(SchemaNode.of("users", NodeType.TABLE));
+        catalog.getChildren().add(table);
+
+        assertEquals("CREATE DATABASE new_schema;", SchemaObjectNames.createSchemaTemplate());
+        assertTrue(SchemaObjectNames.createTableTemplate(catalog).contains("app.new_table"));
+        assertTrue(SchemaObjectNames.createColumnTemplate(table).contains("ALTER TABLE users"));
+        assertTrue(SchemaObjectNames.modifyTableTemplate(table).startsWith("ALTER TABLE users"));
     }
 }
