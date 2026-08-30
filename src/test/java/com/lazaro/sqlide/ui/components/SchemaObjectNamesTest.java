@@ -29,6 +29,26 @@ class SchemaObjectNamesTest {
     }
 
     @Test
+    void qualifiedNameSkipsLogicalFolders() {
+        TreeItem<SchemaNode> ds = new TreeItem<>(SchemaNode.of("Local", NodeType.DATA_SOURCE));
+        TreeItem<SchemaNode> catalog = new TreeItem<>(SchemaNode.of("app", NodeType.DATABASE));
+        TreeItem<SchemaNode> tables = new TreeItem<>(
+                SchemaNode.folder("tables", SchemaNode.FOLDER_TABLES, 1, Map.of()));
+        TreeItem<SchemaNode> table = new TreeItem<>(SchemaNode.of("users", NodeType.TABLE));
+        TreeItem<SchemaNode> columns = new TreeItem<>(
+                SchemaNode.folder("columns", SchemaNode.FOLDER_COLUMNS, 1, Map.of()));
+        TreeItem<SchemaNode> column = new TreeItem<>(SchemaNode.of("email", NodeType.COLUMN));
+        ds.getChildren().add(catalog);
+        catalog.getChildren().add(tables);
+        tables.getChildren().add(table);
+        table.getChildren().add(columns);
+        columns.getChildren().add(column);
+
+        assertEquals("app.users.email", SchemaObjectNames.qualifiedName(column));
+        assertEquals("SELECT email FROM app.users;", SchemaObjectNames.generateSelect(column));
+    }
+
+    @Test
     void generateSelectForTableAndColumn() {
         TreeItem<SchemaNode> ds = new TreeItem<>(SchemaNode.of("Local", NodeType.DATA_SOURCE));
         TreeItem<SchemaNode> catalog = new TreeItem<>(SchemaNode.of("app", NodeType.DATABASE));

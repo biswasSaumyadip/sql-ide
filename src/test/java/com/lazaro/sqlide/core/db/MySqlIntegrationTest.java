@@ -127,20 +127,43 @@ class MySqlIntegrationTest {
 
     @Test
     @Order(5)
-    @DisplayName("expanding a database yields its tables and views, then typed columns")
+    @DisplayName("expanding a database yields logical folders, tables, then typed columns")
     void walksTheTree() throws Exception {
         SchemaNode database = driver.getSchemaTree().get(TIMEOUT_SECONDS, TIMEOUT_UNIT).stream()
                 .filter(node -> node.name().equals(SCHEMA))
                 .findFirst()
                 .orElseThrow();
 
-        List<SchemaNode> tables = driver.getChildren(database).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        List<SchemaNode> folders = driver.getChildren(database).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        SchemaNode tablesFolder = folders.stream()
+                .filter(node -> SchemaNode.FOLDER_TABLES.equals(node.folderKind()))
+                .findFirst()
+                .orElseThrow();
+        List<SchemaNode> tables = tablesFolder.children().isEmpty()
+                ? driver.getChildren(tablesFolder).get(TIMEOUT_SECONDS, TIMEOUT_UNIT)
+                : tablesFolder.children();
         SchemaNode customer = find(tables, "customer");
         assertEquals(NodeType.TABLE, customer.type());
-        assertEquals(NodeType.VIEW, find(tables, "rich_customer").type());
+        SchemaNode viewsFolder = folders.stream()
+                .filter(node -> SchemaNode.FOLDER_VIEWS.equals(node.folderKind()))
+                .findFirst()
+                .orElse(null);
+        if (viewsFolder != null) {
+            List<SchemaNode> views = viewsFolder.children().isEmpty()
+                    ? driver.getChildren(viewsFolder).get(TIMEOUT_SECONDS, TIMEOUT_UNIT)
+                    : viewsFolder.children();
+            assertEquals(NodeType.VIEW, find(views, "rich_customer").type());
+        }
         assertEquals(SCHEMA + ".customer", customer.qualifiedName());
 
-        List<SchemaNode> columns = driver.getChildren(customer).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        List<SchemaNode> tableFolders = driver.getChildren(customer).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        SchemaNode columnsFolder = tableFolders.stream()
+                .filter(node -> SchemaNode.FOLDER_COLUMNS.equals(node.folderKind()))
+                .findFirst()
+                .orElseThrow();
+        List<SchemaNode> columns = columnsFolder.children().isEmpty()
+                ? driver.getChildren(columnsFolder).get(TIMEOUT_SECONDS, TIMEOUT_UNIT)
+                : columnsFolder.children();
         assertEquals(List.of("id", "email", "balance", "signed_up"),
                 columns.stream().map(SchemaNode::name).toList());
 

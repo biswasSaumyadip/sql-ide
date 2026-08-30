@@ -25,7 +25,10 @@ public final class SchemaObjectNames {
                 continue;
             }
             SchemaNode node = cursor.getValue();
-            if (node == null || node.type() == NodeType.DATA_SOURCE) {
+            if (node == null || node.type() == NodeType.DATA_SOURCE
+                    || node.type() == NodeType.FOLDER
+                    || node.type() == NodeType.KEY
+                    || node.type() == NodeType.INDEX) {
                 continue;
             }
             if (node.metadataFlag("__placeholder")) {
@@ -48,7 +51,7 @@ public final class SchemaObjectNames {
         return switch (node.type()) {
             case TABLE, VIEW -> "SELECT * FROM " + qualifiedName(item) + ";";
             case COLUMN -> {
-                TreeItem<SchemaNode> parent = item.getParent();
+                TreeItem<SchemaNode> parent = enclosingTable(item);
                 if (parent == null || parent.getValue() == null) {
                     yield "SELECT " + node.name() + ";";
                 }
@@ -183,22 +186,51 @@ public final class SchemaObjectNames {
         }
         SchemaNode node = tableItem.getValue();
         if (node != null) {
-            for (SchemaNode child : node.children()) {
-                if (child.type() == NodeType.COLUMN) {
-                    columns.add(child.name());
-                }
-            }
+            collectColumnNames(node.children(), columns);
         }
         if (!columns.isEmpty()) {
             return columns;
         }
-        for (TreeItem<SchemaNode> child : tableItem.getChildren()) {
-            SchemaNode value = child.getValue();
-            if (value != null && value.type() == NodeType.COLUMN
-                    && !value.metadataFlag("__placeholder")) {
-                columns.add(value.name());
+        collectColumnNamesFromTree(tableItem.getChildren(), columns);
+        return columns;
+    }
+
+    private static void collectColumnNames(List<SchemaNode> nodes, List<String> columns) {
+        for (SchemaNode child : nodes) {
+            if (child.type() == NodeType.COLUMN && !child.metadataFlag("__placeholder")) {
+                columns.add(child.name());
+            } else if (child.type() == NodeType.FOLDER
+                    && SchemaNode.FOLDER_COLUMNS.equals(child.folderKind())) {
+                collectColumnNames(child.children(), columns);
             }
         }
-        return columns;
+    }
+
+    private static void collectColumnNamesFromTree(
+            List<TreeItem<SchemaNode>> items, List<String> columns) {
+        for (TreeItem<SchemaNode> child : items) {
+            SchemaNode value = child.getValue();
+            if (value == null) {
+                continue;
+            }
+            if (value.type() == NodeType.COLUMN && !value.metadataFlag("__placeholder")) {
+                columns.add(value.name());
+            } else if (value.type() == NodeType.FOLDER
+                    && SchemaNode.FOLDER_COLUMNS.equals(value.folderKind())) {
+                collectColumnNamesFromTree(child.getChildren(), columns);
+            }
+        }
+    }
+
+    /** Walks past folders to the owning TABLE/VIEW. */
+    private static TreeItem<SchemaNode> enclosingTable(TreeItem<SchemaNode> item) {
+        for (TreeItem<SchemaNode> cursor = item == null ? null : item.getParent();
+                cursor != null; cursor = cursor.getParent()) {
+            SchemaNode node = cursor.getValue();
+            if (node != null && (node.type() == NodeType.TABLE || node.type() == NodeType.VIEW)) {
+                return cursor;
+            }
+        }
+        return null;
     }
 }

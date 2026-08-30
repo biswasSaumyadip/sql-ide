@@ -163,6 +163,10 @@
     -fx-stroke: #9b7ed9;
 }
 
+.icon-folder {
+    -fx-stroke: #8b93a1;
+}
+
 .icon-table {
     -fx-stroke: #8fbf7f;
 }
@@ -177,6 +181,14 @@
 
 .icon-key {
     -fx-stroke: #e0c06a;
+}
+
+.icon-key-gold {
+    -fx-stroke: #e8c547;
+}
+
+.icon-index {
+    -fx-stroke: #6ec6e0;
 }
 
 /* ---------------------------------------------------------------- sidebar */
@@ -454,7 +466,8 @@
 }
 
 .schema-tree .tree-cell:selected .schema-node-name,
-.schema-tree .tree-cell:selected .schema-node-detail {
+.schema-tree .tree-cell:selected .schema-node-detail,
+.schema-tree .tree-cell:selected .schema-node-muted {
     -fx-text-fill: #eceff4;
 }
 
@@ -465,6 +478,12 @@
 .schema-node-detail {
     -fx-text-fill: #7f848e;
     -fx-font-size: 11px;
+}
+
+.schema-node-muted {
+    -fx-text-fill: #7f848e;
+    -fx-font-size: 11px;
+    -fx-opacity: 0.9;
 }
 
 .schema-placeholder {

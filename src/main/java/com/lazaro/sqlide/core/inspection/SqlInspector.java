@@ -142,12 +142,13 @@ public final class SqlInspector {
             return;
         }
         boolean ready = schema != null && schema.isReady();
+        TableRef ref = TableRef.from(table);
         Optional<SchemaNode> tableNode = ready
-                ? schema.findTable(stripQuotes(table.getName()), activeCatalog)
+                ? schema.resolveTable(ref.catalogOrSchema(), ref.tableName(), activeCatalog)
                 : Optional.empty();
         if (ready && tableNode.isEmpty()) {
-            issues.add(issueAround(table, sql, stripQuotes(table.getName()),
-                    "Unknown table '" + stripQuotes(table.getName()) + "'", Severity.ERROR));
+            issues.add(issueAround(table, sql, ref.displayName(),
+                    "Unknown table '" + ref.displayName() + "'", Severity.ERROR));
             return;
         }
 
@@ -393,11 +394,14 @@ public final class SqlInspector {
 
         Table table = column.getTable();
         if (table != null && table.getName() != null && !table.getName().isBlank()) {
-            String qualifier = stripQuotes(table.getName());
-            Optional<String> resolved = scope.resolveQualifier(qualifier);
+            TableRef ref = TableRef.from(table);
+            Optional<String> resolved = scope.resolveQualifier(ref.displayName());
             if (resolved.isEmpty()) {
-                issues.add(issueAround(table, sql, qualifier,
-                        "Unknown table or alias '" + qualifier + "'", Severity.ERROR));
+                resolved = scope.resolveQualifier(ref.tableName());
+            }
+            if (resolved.isEmpty()) {
+                issues.add(issueAround(table, sql, ref.displayName(),
+                        "Unknown table or alias '" + ref.displayName() + "'", Severity.ERROR));
                 return;
             }
             if (!scope.hasColumn(resolved.get(), columnName)) {
@@ -505,6 +509,45 @@ public final class SqlInspector {
         return trimmed;
     }
 
+    /**
+     * Extracts catalog/schema + table from a JSqlParser {@link Table}, including
+     * dotted names when the parser left the qualifier inside {@code getName()}.
+     */
+    private record TableRef(String catalogOrSchema, String tableName) {
+
+        static TableRef from(Table table) {
+            if (table == null) {
+                return new TableRef(null, "");
+            }
+            String catalog = firstNonBlank(table.getCatalogName(), table.getSchemaName());
+            String name = stripQuotes(table.getName());
+            if ((catalog == null || catalog.isBlank()) && name.contains(".")) {
+                int dot = name.lastIndexOf('.');
+                catalog = stripQuotes(name.substring(0, dot));
+                name = stripQuotes(name.substring(dot + 1));
+            } else if (catalog != null) {
+                catalog = stripQuotes(catalog);
+            }
+            return new TableRef(
+                    catalog == null || catalog.isBlank() ? null : catalog,
+                    name);
+        }
+
+        String displayName() {
+            if (catalogOrSchema == null || catalogOrSchema.isBlank()) {
+                return tableName;
+            }
+            return catalogOrSchema + "." + tableName;
+        }
+
+        private static String firstNonBlank(String first, String second) {
+            if (first != null && !first.isBlank()) {
+                return first;
+            }
+            return second != null && !second.isBlank() ? second : null;
+        }
+    }
+
     private static String shorten(String message) {
         String oneLine = message.replace('\n', ' ').strip();
         return oneLine.length() <= 160 ? oneLine : oneLine.substring(0, 159) + "\u2026";
@@ -597,28 +640,26 @@ public final class SqlInspector {
                 Map<String, Map<String, String>> types,
                 String sql,
                 List<InspectionIssue> issues) {
-            String name = stripQuotes(table.getName());
-            if (name.isBlank()) {
+            TableRef ref = TableRef.from(table);
+            if (ref.tableName().isBlank()) {
                 return;
             }
-            String alias = table.getAlias() != null ? stripQuotes(table.getAlias().getName()) : name;
+            String alias = table.getAlias() != null
+                    ? stripQuotes(table.getAlias().getName())
+                    : ref.tableName();
             if (!ready) {
-                aliases.put(alias.toLowerCase(Locale.ROOT), name);
-                aliases.put(name.toLowerCase(Locale.ROOT), name);
+                registerAlias(aliases, alias, ref, ref.tableName());
                 return;
             }
-            Optional<SchemaNode> found = schema.findTable(name, catalog);
+            Optional<SchemaNode> found = schema.resolveTable(ref.catalogOrSchema(), ref.tableName(), catalog);
             if (found.isEmpty()) {
-                issues.add(issueAround(table, sql, name,
-                        "Unknown table '" + name + "'", Severity.ERROR));
-                aliases.put(alias.toLowerCase(Locale.ROOT), name);
-                aliases.put(name.toLowerCase(Locale.ROOT), name);
+                issues.add(issueAround(table, sql, ref.displayName(),
+                        "Unknown table '" + ref.displayName() + "'", Severity.ERROR));
+                registerAlias(aliases, alias, ref, ref.tableName());
                 return;
             }
             String physical = found.get().name();
-            aliases.put(alias.toLowerCase(Locale.ROOT), physical);
-            aliases.put(name.toLowerCase(Locale.ROOT), physical);
-            aliases.put(physical.toLowerCase(Locale.ROOT), physical);
+            registerAlias(aliases, alias, ref, physical);
             Set<String> cols = columns.computeIfAbsent(physical.toLowerCase(Locale.ROOT), key -> new HashSet<>());
             Map<String, String> typeMap = types.computeIfAbsent(
                     physical.toLowerCase(Locale.ROOT), key -> new HashMap<>());
@@ -629,6 +670,17 @@ public final class SqlInspector {
                 if (dataType != null && !dataType.isBlank()) {
                     typeMap.put(colName, dataType);
                 }
+            }
+        }
+
+        private static void registerAlias(
+                Map<String, String> aliases, String alias, TableRef ref, String physical) {
+            aliases.put(alias.toLowerCase(Locale.ROOT), physical);
+            aliases.put(ref.tableName().toLowerCase(Locale.ROOT), physical);
+            aliases.put(physical.toLowerCase(Locale.ROOT), physical);
+            if (ref.catalogOrSchema() != null && !ref.catalogOrSchema().isBlank()) {
+                String qualified = ref.catalogOrSchema() + "." + ref.tableName();
+                aliases.put(qualified.toLowerCase(Locale.ROOT), physical);
             }
         }
 
@@ -645,7 +697,11 @@ public final class SqlInspector {
             String columnName = stripQuotes(column.getColumnName()).toLowerCase(Locale.ROOT);
             Table table = column.getTable();
             if (table != null && table.getName() != null && !table.getName().isBlank()) {
-                Optional<String> resolved = resolveQualifier(stripQuotes(table.getName()));
+                TableRef ref = TableRef.from(table);
+                Optional<String> resolved = resolveQualifier(ref.displayName());
+                if (resolved.isEmpty()) {
+                    resolved = resolveQualifier(ref.tableName());
+                }
                 if (resolved.isEmpty()) {
                     return null;
                 }

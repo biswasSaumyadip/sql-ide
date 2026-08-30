@@ -462,7 +462,7 @@ public final class MainController {
         }
         String catalog = switch (node.type()) {
             case DATABASE, SCHEMA -> node.name();
-            case TABLE, VIEW, COLUMN -> {
+            case TABLE, VIEW, COLUMN, FOLDER, KEY, INDEX -> {
                 String meta = node.metadata(SchemaNode.META_CATALOG);
                 yield meta == null || meta.isBlank() ? null : meta;
             }

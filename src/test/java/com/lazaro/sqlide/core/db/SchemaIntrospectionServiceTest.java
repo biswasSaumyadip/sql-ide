@@ -118,15 +118,46 @@ class SchemaIntrospectionServiceTest {
     }
 
     @Test
-    @DisplayName("getChildren walks the tree one level at a time")
+    @DisplayName("getChildren walks the tree through logical folders")
     void getChildrenWalksTheTree() throws Exception {
         SchemaNode database = find(driver.getSchemaTree().get(TIMEOUT_SECONDS, TIMEOUT_UNIT), catalog);
 
-        List<SchemaNode> tables = driver.getChildren(database).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
-        SchemaNode customer = find(tables, "CUSTOMER");
+        List<SchemaNode> folders = driver.getChildren(database).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        assertTrue(folders.stream().anyMatch(node -> node.type() == NodeType.FOLDER
+                && SchemaNode.FOLDER_TABLES.equals(node.folderKind())));
+        SchemaNode tablesFolder = folders.stream()
+                .filter(node -> SchemaNode.FOLDER_TABLES.equals(node.folderKind()))
+                .findFirst()
+                .orElseThrow();
+        assertTrue(tablesFolder.childCountBadge() >= 1);
 
-        List<SchemaNode> columns = driver.getChildren(customer).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        SchemaNode customer = find(tablesFolder.children().isEmpty()
+                ? driver.getChildren(tablesFolder).get(TIMEOUT_SECONDS, TIMEOUT_UNIT)
+                : tablesFolder.children(), "CUSTOMER");
+
+        List<SchemaNode> tableFolders = driver.getChildren(customer).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        assertEquals(3, tableFolders.size());
+        assertEquals(List.of("columns", "keys", "indexes"),
+                tableFolders.stream().map(SchemaNode::name).toList());
+
+        SchemaNode columnsFolder = tableFolders.get(0);
+        List<SchemaNode> columns = columnsFolder.children().isEmpty()
+                ? driver.getChildren(columnsFolder).get(TIMEOUT_SECONDS, TIMEOUT_UNIT)
+                : columnsFolder.children();
         assertEquals(4, columns.size());
+
+        SchemaNode keysFolder = tableFolders.get(1);
+        List<SchemaNode> keys = keysFolder.children().isEmpty()
+                ? driver.getChildren(keysFolder).get(TIMEOUT_SECONDS, TIMEOUT_UNIT)
+                : keysFolder.children();
+        assertTrue(keys.stream().anyMatch(node ->
+                node.type() == NodeType.KEY && "PRIMARY".equalsIgnoreCase(node.name())));
+
+        SchemaNode indexesFolder = tableFolders.get(2);
+        List<SchemaNode> indexes = indexesFolder.children().isEmpty()
+                ? driver.getChildren(indexesFolder).get(TIMEOUT_SECONDS, TIMEOUT_UNIT)
+                : indexesFolder.children();
+        assertTrue(indexes.stream().anyMatch(node -> node.type() == NodeType.INDEX));
 
         assertTrue(driver.getChildren(columns.get(0)).get(TIMEOUT_SECONDS, TIMEOUT_UNIT).isEmpty(),
                 "a column has no children");

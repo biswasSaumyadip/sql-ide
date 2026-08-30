@@ -476,6 +476,16 @@ public final class SchemaTreeView extends VBox {
             item.replaceChildren(List.of(placeholderItem("Not connected")));
             return;
         }
+        // Folders/tables may already carry children from the parent JDBC round-trip.
+        if (!node.children().isEmpty()) {
+            List<TreeItem<SchemaNode>> items = new ArrayList<>();
+            for (SchemaNode child : node.children()) {
+                items.add(schemaItem(child));
+            }
+            item.replaceChildren(items);
+            applyFilter();
+            return;
+        }
         item.replaceChildren(List.of(placeholderItem("Loading\u2026")));
         driver.getChildren(node).whenComplete((children, error) -> Platform.runLater(() -> {
             if (error != null) {
@@ -723,6 +733,10 @@ public final class SchemaTreeView extends VBox {
             loaded = false;
             fullChildren.clear();
             getChildren().clear();
+            SchemaNode value = getValue();
+            if (value != null && !value.children().isEmpty()) {
+                setValue(value.withChildren(List.of()));
+            }
             if (isExpanded()) {
                 loaded = true;
                 reload.accept(this);
@@ -843,6 +857,11 @@ public final class SchemaTreeView extends VBox {
 
             nameLabel.setText(item.name());
             detailLabel.setText(detailOf(item));
+            detailLabel.getStyleClass().removeAll("schema-node-muted", "schema-node-detail");
+            detailLabel.getStyleClass().add(
+                    item.type() == NodeType.FOLDER || item.type() == NodeType.COLUMN
+                            || item.type() == NodeType.KEY || item.type() == NodeType.INDEX
+                            ? "schema-node-muted" : "schema-node-detail");
             detailLabel.setVisible(!detailLabel.getText().isEmpty());
             detailLabel.setManaged(detailLabel.isVisible());
 
@@ -881,9 +900,23 @@ public final class SchemaTreeView extends VBox {
         private static String detailOf(SchemaNode node) {
             return switch (node.type()) {
                 case DATA_SOURCE -> Objects.requireNonNullElse(node.metadata("endpoint"), "");
-                case COLUMN -> {
-                    String type = node.metadata(SchemaNode.META_DATA_TYPE);
-                    yield type == null ? "" : type;
+                case FOLDER -> {
+                    int count = node.childCountBadge();
+                    yield count > 0 || node.metadata(SchemaNode.META_CHILD_COUNT) != null
+                            ? Integer.toString(count) : "";
+                }
+                case COLUMN -> Objects.requireNonNullElse(node.metadata(SchemaNode.META_DATA_TYPE), "");
+                case KEY -> {
+                    String columns = node.metadata(SchemaNode.META_COLUMNS);
+                    yield columns == null || columns.isBlank() ? "" : "(" + columns + ")";
+                }
+                case INDEX -> {
+                    String columns = node.metadata(SchemaNode.META_COLUMNS);
+                    String cols = columns == null || columns.isBlank() ? "" : "(" + columns + ")";
+                    if (node.metadataFlag(SchemaNode.META_UNIQUE)) {
+                        yield cols.isEmpty() ? "UNIQUE" : cols + " UNIQUE";
+                    }
+                    yield cols;
                 }
                 case VIEW -> "view";
                 default -> "";

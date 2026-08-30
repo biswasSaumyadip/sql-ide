@@ -74,15 +74,116 @@ public final class SchemaIntrospectionService {
     /**
      * Loads the level below {@code parent}, dispatching on its node type. This is
      * what drives lazy expansion of the schema tree.
+     *
+     * <p>Catalogs expand into logical {@code tables}/{@code views} folders; tables
+     * expand into {@code columns}/{@code keys}/{@code indexes} folders. The full-schema
+     * cache path stays flat (table → columns) and does not use these folders.
      */
     public CompletableFuture<List<SchemaNode>> fetchChildrenAsync(SchemaNode parent) {
         Objects.requireNonNull(parent, "parent must not be null");
         return switch (parent.type()) {
-            case DATABASE, SCHEMA -> fetchTablesAsync(parent.name());
-            case TABLE, VIEW -> fetchColumnsAsync(
-                    Objects.requireNonNullElse(parent.metadata(SchemaNode.META_CATALOG), ""), parent.name());
-            case COLUMN, DATA_SOURCE -> CompletableFuture.completedFuture(List.of());
+            case DATABASE, SCHEMA -> supplyAsync(connection ->
+                    catalogFolders(connection, parent.name()));
+            case FOLDER -> supplyAsync(connection -> folderChildren(connection, parent));
+            case TABLE, VIEW -> supplyAsync(connection -> tableFolders(connection, parent));
+            case COLUMN, KEY, INDEX, DATA_SOURCE -> CompletableFuture.completedFuture(List.of());
         };
+    }
+
+    private static List<SchemaNode> catalogFolders(Connection connection, String catalog) throws SQLException {
+        List<SchemaNode> all = readTables(connection, catalog);
+        List<SchemaNode> tables = all.stream().filter(node -> node.type() == NodeType.TABLE).toList();
+        List<SchemaNode> views = all.stream().filter(node -> node.type() == NodeType.VIEW).toList();
+        Map<String, String> catalogMeta = Map.of(SchemaNode.META_CATALOG, catalog);
+        List<SchemaNode> folders = new ArrayList<>(2);
+        folders.add(SchemaNode.folder(SchemaNode.FOLDER_TABLES, SchemaNode.FOLDER_TABLES, tables.size(), catalogMeta)
+                .withChildren(tables));
+        if (!views.isEmpty()) {
+            folders.add(SchemaNode.folder(SchemaNode.FOLDER_VIEWS, SchemaNode.FOLDER_VIEWS, views.size(), catalogMeta)
+                    .withChildren(views));
+        }
+        return List.copyOf(folders);
+    }
+
+    private static List<SchemaNode> folderChildren(Connection connection, SchemaNode folder) throws SQLException {
+        String kind = Objects.requireNonNullElse(folder.folderKind(), "");
+        String catalog = Objects.requireNonNullElse(folder.metadata(SchemaNode.META_CATALOG), "");
+        String table = folder.metadata(SchemaNode.META_TABLE);
+        return switch (kind) {
+            case SchemaNode.FOLDER_TABLES -> readTables(connection, catalog).stream()
+                    .filter(node -> node.type() == NodeType.TABLE)
+                    .toList();
+            case SchemaNode.FOLDER_VIEWS -> readTables(connection, catalog).stream()
+                    .filter(node -> node.type() == NodeType.VIEW)
+                    .toList();
+            case SchemaNode.FOLDER_COLUMNS -> readColumns(connection, catalog, table);
+            case SchemaNode.FOLDER_KEYS -> readKeyNodes(connection, catalog, table);
+            case SchemaNode.FOLDER_INDEXES -> readIndexNodes(connection, catalog, table);
+            default -> List.of();
+        };
+    }
+
+    private static List<SchemaNode> tableFolders(Connection connection, SchemaNode table) throws SQLException {
+        String catalog = Objects.requireNonNullElse(table.metadata(SchemaNode.META_CATALOG), "");
+        String tableName = table.name();
+        List<SchemaNode> columns = readColumns(connection, catalog, tableName);
+        List<SchemaNode> keys = readKeyNodes(connection, catalog, tableName);
+        List<SchemaNode> indexes = readIndexNodes(connection, catalog, tableName);
+
+        Map<String, String> shared = new LinkedHashMap<>();
+        shared.put(SchemaNode.META_CATALOG, catalog);
+        shared.put(SchemaNode.META_TABLE, tableName);
+
+        return List.of(
+                SchemaNode.folder(SchemaNode.FOLDER_COLUMNS, SchemaNode.FOLDER_COLUMNS, columns.size(), shared)
+                        .withChildren(columns),
+                SchemaNode.folder(SchemaNode.FOLDER_KEYS, SchemaNode.FOLDER_KEYS, keys.size(), shared)
+                        .withChildren(keys),
+                SchemaNode.folder(SchemaNode.FOLDER_INDEXES, SchemaNode.FOLDER_INDEXES, indexes.size(), shared)
+                        .withChildren(indexes));
+    }
+
+    private static List<SchemaNode> readKeyNodes(Connection connection, String catalog, String table)
+            throws SQLException {
+        DatabaseMetaData metaData = connection.getMetaData();
+        List<SchemaNode> keys = new ArrayList<>();
+
+        List<String> pkColumns = readPrimaryKeyColumns(metaData, catalog, null, table);
+        if (pkColumns.isEmpty()) {
+            pkColumns = readPrimaryKeyColumns(metaData, null, catalog, table);
+        }
+        Map<String, String> shared = Map.of(
+                SchemaNode.META_CATALOG, catalog,
+                SchemaNode.META_TABLE, table);
+        if (!pkColumns.isEmpty()) {
+            keys.add(SchemaNode.key("PRIMARY", "PRIMARY", pkColumns, shared));
+        }
+
+        List<SchemaMetadataCodec.ForeignKey> foreignKeys = readForeignKeys(metaData, catalog, null, table);
+        if (foreignKeys.isEmpty()) {
+            foreignKeys = readForeignKeys(metaData, null, catalog, table);
+        }
+        for (SchemaMetadataCodec.ForeignKey fk : foreignKeys) {
+            keys.add(SchemaNode.key(fk.name(), "FOREIGN", List.of(fk.fkColumn()), shared));
+        }
+        return List.copyOf(keys);
+    }
+
+    private static List<SchemaNode> readIndexNodes(Connection connection, String catalog, String table)
+            throws SQLException {
+        DatabaseMetaData metaData = connection.getMetaData();
+        List<SchemaMetadataCodec.IndexInfo> indexes = readIndexes(metaData, catalog, null, table);
+        if (indexes.isEmpty()) {
+            indexes = readIndexes(metaData, null, catalog, table);
+        }
+        Map<String, String> shared = Map.of(
+                SchemaNode.META_CATALOG, catalog,
+                SchemaNode.META_TABLE, table);
+        List<SchemaNode> nodes = new ArrayList<>(indexes.size());
+        for (SchemaMetadataCodec.IndexInfo index : indexes) {
+            nodes.add(SchemaNode.index(index.name(), index.unique(), index.columns(), shared));
+        }
+        return List.copyOf(nodes);
     }
 
     /**
@@ -273,7 +374,7 @@ public final class SchemaIntrospectionService {
     private static List<SchemaMetadataCodec.IndexInfo> readIndexes(
             DatabaseMetaData metaData, String catalog, String schema, String table) {
         Map<String, SchemaMetadataCodec.IndexInfo> byName = new LinkedHashMap<>();
-        try (ResultSet resultSet = metaData.getIndexInfo(catalog, schema, table, false, true)) {
+        try (ResultSet resultSet = metaData.getIndexInfo(catalog, schema, table, false, false)) {
             while (resultSet.next()) {
                 String name = resultSet.getString("INDEX_NAME");
                 String column = resultSet.getString("COLUMN_NAME");
@@ -390,15 +491,26 @@ public final class SchemaIntrospectionService {
 
     /** Primary keys are a nice-to-have: some drivers or permission sets refuse this call. */
     private static Set<String> readPrimaryKeys(DatabaseMetaData metaData, String catalog, String schema, String table) {
-        Set<String> keys = new HashSet<>();
+        return new HashSet<>(readPrimaryKeyColumns(metaData, catalog, schema, table));
+    }
+
+    /** Ordered primary-key columns via {@link DatabaseMetaData#getPrimaryKeys}. */
+    private static List<String> readPrimaryKeyColumns(
+            DatabaseMetaData metaData, String catalog, String schema, String table) {
+        Map<Integer, String> byPosition = new LinkedHashMap<>();
         try (ResultSet resultSet = metaData.getPrimaryKeys(catalog, schema, table)) {
             while (resultSet.next()) {
-                addIfPresent(keys, resultSet.getString("COLUMN_NAME"));
+                String column = resultSet.getString("COLUMN_NAME");
+                if (column == null || column.isBlank()) {
+                    continue;
+                }
+                int position = resultSet.getInt("KEY_SEQ");
+                byPosition.put(position, column);
             }
         } catch (SQLException ignored) {
-            return Set.of();
+            return List.of();
         }
-        return keys;
+        return List.copyOf(byPosition.values());
     }
 
     /**

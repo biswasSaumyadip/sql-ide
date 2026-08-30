@@ -121,7 +121,11 @@ class RecordsTest {
         assertFalse(unexpandedTable.isLeaf(), "an unexpanded table is not a leaf");
 
         assertTrue(SchemaNode.of("id", NodeType.COLUMN).isLeaf());
+        assertTrue(SchemaNode.of("PRIMARY", NodeType.KEY).isLeaf());
+        assertTrue(SchemaNode.index("idx", true, List.of("id"), Map.of()).isLeaf());
+        assertFalse(SchemaNode.folder("columns", SchemaNode.FOLDER_COLUMNS, 0, Map.of()).isLeaf());
         assertFalse(NodeType.COLUMN.isContainer());
+        assertTrue(NodeType.FOLDER.isContainer());
         assertTrue(NodeType.DATABASE.isContainer());
         assertTrue(NodeType.DATA_SOURCE.isContainer());
         assertFalse(SchemaNode.of("Local", NodeType.DATA_SOURCE).isLeaf());

@@ -33,9 +33,12 @@ public final class Icons {
         return switch (node.type()) {
             case DATA_SOURCE -> database();
             case DATABASE, SCHEMA -> schema();
+            case FOLDER -> folder();
             case TABLE -> table();
             case VIEW -> view();
             case COLUMN -> node.metadataFlag(SchemaNode.META_PRIMARY_KEY) ? primaryKeyColumn() : column();
+            case KEY -> key();
+            case INDEX -> index();
         };
     }
 
@@ -57,6 +60,17 @@ public final class Icons {
         tab.setArcHeight(1.5);
         // Body
         Rectangle body = outlined(new Rectangle(2.0, 5.0, 10.0, 7.0), "icon-schema");
+        body.setArcWidth(1.5);
+        body.setArcHeight(1.5);
+        return group(tab, body);
+    }
+
+    /** Standard folder for logical groupings (tables / columns / keys / indexes). */
+    public static Node folder() {
+        Rectangle tab = outlined(new Rectangle(2.0, 3.0, 4.5, 2.2), "icon-folder");
+        tab.setArcWidth(1.5);
+        tab.setArcHeight(1.5);
+        Rectangle body = outlined(new Rectangle(2.0, 5.0, 10.0, 7.0), "icon-folder");
         body.setArcWidth(1.5);
         body.setArcHeight(1.5);
         return group(tab, body);
@@ -91,6 +105,29 @@ public final class Icons {
         Line shaft = outlined(new Line(7, 7, 12, 7), "icon-key");
         Line tooth = outlined(new Line(10.5, 7, 10.5, 9.5), "icon-key");
         return group(ring, shaft, tooth);
+    }
+
+    /** Gold-tinted key glyph for KEY nodes under the keys folder. */
+    public static Node key() {
+        Circle ring = outlined(new Circle(4.5, 7, 2.4), "icon-key-gold");
+        Line shaft = outlined(new Line(7, 7, 12, 7), "icon-key-gold");
+        Line tooth = outlined(new Line(10.5, 7, 10.5, 9.5), "icon-key-gold");
+        return group(ring, shaft, tooth);
+    }
+
+    /** Lightning bolt for indexes. */
+    public static Node index() {
+        Polygon bolt = new Polygon(
+                8.5, 1.5,
+                4.0, 7.5,
+                7.0, 7.5,
+                5.5, 12.5,
+                11.0, 6.0,
+                8.0, 6.0);
+        bolt.setFill(null);
+        bolt.setStrokeWidth(STROKE);
+        bolt.getStyleClass().addAll(BASE_CLASS, "icon-index");
+        return group(bolt);
     }
 
     // ---------------------------------------------------------------- toolbar

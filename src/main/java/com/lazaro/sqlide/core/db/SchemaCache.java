@@ -85,7 +85,8 @@ public final class SchemaCache {
 
     /**
      * Locates a table by name. When {@code preferredCatalog} is set and multiple
-     * catalogs share the name, the match in that catalog wins.
+     * catalogs share the name, the match in that catalog wins; otherwise the first
+     * match across catalogs is returned.
      */
     public Optional<SchemaNode> findTable(String name, String preferredCatalog) {
         if (name == null || name.isBlank()) {
@@ -99,7 +100,8 @@ public final class SchemaCache {
             }
             if (preferredCatalog != null && !preferredCatalog.isBlank()) {
                 String meta = table.metadata(SchemaNode.META_CATALOG);
-                if (meta != null && meta.equalsIgnoreCase(preferredCatalog)) {
+                String owner = meta != null && !meta.isBlank() ? meta : catalogOf(table);
+                if (owner != null && owner.equalsIgnoreCase(preferredCatalog)) {
                     return Optional.of(table);
                 }
                 if (fallback.isEmpty()) {
@@ -110,6 +112,91 @@ public final class SchemaCache {
             }
         }
         return fallback;
+    }
+
+    /**
+     * Resolves a possibly qualified table reference.
+     *
+     * <ul>
+     *   <li>When {@code catalogOrSchema} is set, looks <em>only</em> inside that
+     *       catalog (no cross-catalog fallback).</li>
+     *   <li>Otherwise prefers {@code activeCatalog}, then any catalog.</li>
+     * </ul>
+     */
+    public Optional<SchemaNode> resolveTable(String catalogOrSchema, String tableName, String activeCatalog) {
+        if (tableName == null || tableName.isBlank()) {
+            return Optional.empty();
+        }
+        String needle = stripQuotes(tableName);
+        if (catalogOrSchema != null && !catalogOrSchema.isBlank()) {
+            return findInCatalog(stripQuotes(catalogOrSchema), needle);
+        }
+        return findTable(needle, activeCatalog);
+    }
+
+    /** Strict lookup: table must live under the named catalog. */
+    public Optional<SchemaNode> findInCatalog(String catalog, String tableName) {
+        if (catalog == null || catalog.isBlank() || tableName == null || tableName.isBlank()) {
+            return Optional.empty();
+        }
+        String catalogNeedle = stripQuotes(catalog);
+        String tableNeedle = stripQuotes(tableName);
+        for (SchemaNode db : catalogs) {
+            if (!db.name().equalsIgnoreCase(catalogNeedle)) {
+                continue;
+            }
+            Optional<SchemaNode> direct = findTableChild(db, tableNeedle);
+            if (direct.isPresent()) {
+                return direct;
+            }
+        }
+        // Fallback: match via META_CATALOG when the catalog node name differs.
+        for (SchemaNode table : tables(catalogNeedle)) {
+            if (table.name().equalsIgnoreCase(tableNeedle)) {
+                return Optional.of(table);
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<SchemaNode> findTableChild(SchemaNode parent, String tableName) {
+        for (SchemaNode child : parent.children()) {
+            if ((child.type() == NodeType.TABLE || child.type() == NodeType.VIEW)
+                    && child.name().equalsIgnoreCase(tableName)) {
+                return Optional.of(child);
+            }
+            // Defensive: skip logical folders if a future snapshot nests them.
+            if (child.type() == NodeType.FOLDER) {
+                Optional<SchemaNode> nested = findTableChild(child, tableName);
+                if (nested.isPresent()) {
+                    return nested;
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    private String catalogOf(SchemaNode table) {
+        for (SchemaNode db : catalogs) {
+            if (containsTable(db, table)) {
+                return db.name();
+            }
+        }
+        return null;
+    }
+
+    private static boolean containsTable(SchemaNode parent, SchemaNode table) {
+        for (SchemaNode child : parent.children()) {
+            if (child == table || (child.type() == table.type()
+                    && child.name().equalsIgnoreCase(table.name())
+                    && (child.type() == NodeType.TABLE || child.type() == NodeType.VIEW))) {
+                return true;
+            }
+            if (child.type() == NodeType.FOLDER && containsTable(child, table)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public List<SchemaNode> columnsOf(String tableOrAlias) {

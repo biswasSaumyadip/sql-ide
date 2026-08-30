@@ -65,9 +65,11 @@ final class SchemaTreeContextMenus {
         List<MenuItem> items = switch (node.type()) {
             case DATA_SOURCE -> connectionMenu(item);
             case DATABASE, SCHEMA -> schemaMenu(item);
+            case FOLDER -> folderMenu(item);
             case TABLE -> tableMenu(item);
             case VIEW -> viewMenu(item);
             case COLUMN -> columnMenu(item);
+            case KEY, INDEX -> keyOrIndexMenu(item);
         };
         menu.getItems().setAll(items);
     }
@@ -190,6 +192,23 @@ final class SchemaTreeContextMenus {
                 action("Copy Name", null, () -> copy(item.getValue().name())),
                 action("Copy Qualified Name", null, () -> copy(SchemaObjectNames.qualifiedName(item))),
                 action("Generate SELECT", null, () -> insert(SchemaObjectNames.generateSelect(item))));
+    }
+
+    private List<MenuItem> folderMenu(TreeItem<SchemaNode> item) {
+        return List.of(
+                action("Refresh", new KeyCodeCombination(KeyCode.F5, KeyCombination.CONTROL_DOWN),
+                        () -> actions.refreshItem.accept(item)),
+                new SeparatorMenuItem(),
+                action("Copy Name", null, () -> copy(item.getValue().name())));
+    }
+
+    private List<MenuItem> keyOrIndexMenu(TreeItem<SchemaNode> item) {
+        return List.of(
+                action("Copy Name", null, () -> copy(item.getValue().name())),
+                action("Copy Detail", null, () -> {
+                    String columns = item.getValue().metadata(SchemaNode.META_COLUMNS);
+                    copy(columns == null ? item.getValue().name() : item.getValue().name() + " (" + columns + ")");
+                }));
     }
 
     private void insert(String sql) {

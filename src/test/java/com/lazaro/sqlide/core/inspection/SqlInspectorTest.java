@@ -149,4 +149,38 @@ class SqlInspectorTest {
                 "SELECT u.email FROM users u WHERE u.id = 1", cache, "app");
         assertEquals(0, issues.stream().filter(i -> i.severity() == Severity.ERROR).count());
     }
+
+    @Test
+    @DisplayName("fully qualified catalog.table resolves hierarchically")
+    void acceptsFullyQualifiedTable() {
+        SchemaNode id = SchemaNode.of("id", NodeType.COLUMN, Map.of(SchemaNode.META_DATA_TYPE, "INT"));
+        SchemaNode name = SchemaNode.of("name", NodeType.COLUMN, Map.of(SchemaNode.META_DATA_TYPE, "VARCHAR"));
+        SchemaNode faction = new SchemaNode("faction", NodeType.TABLE, List.of(id, name), Map.of(
+                SchemaNode.META_CATALOG, "warcraft"));
+        cache.replace(List.of(
+                new SchemaNode("app", NodeType.DATABASE, List.of(), Map.of()),
+                new SchemaNode("warcraft", NodeType.DATABASE, List.of(faction), Map.of())));
+
+        // Active catalog is app — unqualified would miss, but warcraft.faction must resolve.
+        List<InspectionIssue> issues = SqlInspector.inspect(
+                "SELECT name FROM warcraft.faction WHERE id = 1", cache, "app");
+        assertTrue(issues.stream().noneMatch(i -> i.message().contains("Unknown table")),
+                () -> "unexpected issues: " + issues);
+
+        List<InspectionIssue> unknownSchema = SqlInspector.inspect(
+                "SELECT 1 FROM missing_db.faction", cache, "app");
+        assertTrue(unknownSchema.stream().anyMatch(i -> i.message().contains("Unknown table")));
+
+        List<InspectionIssue> wrongTable = SqlInspector.inspect(
+                "SELECT 1 FROM warcraft.missing_table", cache, "app");
+        assertTrue(wrongTable.stream().anyMatch(i -> i.message().contains("Unknown table")));
+    }
+
+    @Test
+    @DisplayName("unqualified tables still resolve against the active catalog")
+    void acceptsUnqualifiedInActiveCatalog() {
+        List<InspectionIssue> issues = SqlInspector.inspect(
+                "SELECT email FROM users", cache, "app");
+        assertTrue(issues.stream().noneMatch(i -> i.message().contains("Unknown table")));
+    }
 }

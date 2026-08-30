@@ -1,5 +1,6 @@
 package com.lazaro.sqlide.core.db;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -51,19 +52,46 @@ public record SchemaNode(String name, NodeType type, List<SchemaNode> children, 
     public static final String META_ACTIVE = "active";
     /** Metadata key, {@code "true"} for an unsaved ephemeral session root. */
     public static final String META_SESSION = "session";
+    /**
+     * Logical folder kind under a database or table:
+     * {@code tables}, {@code views}, {@code columns}, {@code keys}, {@code indexes}.
+     */
+    public static final String META_FOLDER_KIND = "folderKind";
+    /** Child count shown muted next to a folder label. */
+    public static final String META_CHILD_COUNT = "childCount";
+    /** Comma-separated column list for a key or index, e.g. {@code id,name}. */
+    public static final String META_COLUMNS = "columns";
+    /** {@code true} when an index is unique. */
+    public static final String META_UNIQUE = "unique";
+    /** Owning table name for a folder / key / index under a table. */
+    public static final String META_TABLE = "table";
+    /** Key kind: {@code PRIMARY} or {@code FOREIGN}. */
+    public static final String META_KEY_KIND = "keyKind";
+
+    public static final String FOLDER_TABLES = "tables";
+    public static final String FOLDER_VIEWS = "views";
+    public static final String FOLDER_COLUMNS = "columns";
+    public static final String FOLDER_KEYS = "keys";
+    public static final String FOLDER_INDEXES = "indexes";
 
     public enum NodeType {
         /** Saved / session data source root in the Database pane. */
         DATA_SOURCE,
         DATABASE,
         SCHEMA,
+        /** Virtual grouping folder (tables / columns / keys / indexes). */
+        FOLDER,
         TABLE,
         VIEW,
-        COLUMN;
+        COLUMN,
+        /** Primary or foreign key under a table's keys folder. */
+        KEY,
+        /** Index under a table's indexes folder. */
+        INDEX;
 
         /** Whether nodes of this kind can ever contain children. */
         public boolean isContainer() {
-            return this != COLUMN;
+            return this != COLUMN && this != KEY && this != INDEX;
         }
     }
 
@@ -82,6 +110,39 @@ public record SchemaNode(String name, NodeType type, List<SchemaNode> children, 
         return new SchemaNode(name, type, List.of(), metadata);
     }
 
+    /** Virtual folder with a muted child-count badge. */
+    public static SchemaNode folder(String label, String kind, int childCount, Map<String, String> extra) {
+        Map<String, String> metadata = new LinkedHashMap<>();
+        if (extra != null) {
+            metadata.putAll(extra);
+        }
+        metadata.put(META_FOLDER_KIND, kind);
+        metadata.put(META_CHILD_COUNT, Integer.toString(Math.max(0, childCount)));
+        return of(label, NodeType.FOLDER, metadata);
+    }
+
+    /** Primary / foreign key leaf shown as {@code name (cols)}. */
+    public static SchemaNode key(String name, String kind, List<String> columns, Map<String, String> extra) {
+        Map<String, String> metadata = new LinkedHashMap<>();
+        if (extra != null) {
+            metadata.putAll(extra);
+        }
+        metadata.put(META_KEY_KIND, kind);
+        metadata.put(META_COLUMNS, String.join(",", columns == null ? List.of() : columns));
+        return of(name, NodeType.KEY, metadata);
+    }
+
+    /** Index leaf shown as {@code name (cols) [UNIQUE]}. */
+    public static SchemaNode index(String name, boolean unique, List<String> columns, Map<String, String> extra) {
+        Map<String, String> metadata = new LinkedHashMap<>();
+        if (extra != null) {
+            metadata.putAll(extra);
+        }
+        metadata.put(META_UNIQUE, Boolean.toString(unique));
+        metadata.put(META_COLUMNS, String.join(",", columns == null ? List.of() : columns));
+        return of(name, NodeType.INDEX, metadata);
+    }
+
     public SchemaNode withChildren(List<SchemaNode> newChildren) {
         return new SchemaNode(name, type, newChildren, metadata);
     }
@@ -97,6 +158,22 @@ public record SchemaNode(String name, NodeType type, List<SchemaNode> children, 
 
     public boolean metadataFlag(String key) {
         return Boolean.parseBoolean(metadata.get(key));
+    }
+
+    public int childCountBadge() {
+        String raw = metadata.get(META_CHILD_COUNT);
+        if (raw == null || raw.isBlank()) {
+            return children.size();
+        }
+        try {
+            return Integer.parseInt(raw);
+        } catch (NumberFormatException ignored) {
+            return children.size();
+        }
+    }
+
+    public String folderKind() {
+        return metadata.get(META_FOLDER_KIND);
     }
 
     /** Name usable in a statement, e.g. {@code sales.orders}, when the catalog is known. */
