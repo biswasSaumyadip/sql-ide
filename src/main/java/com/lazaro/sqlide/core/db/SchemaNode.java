@@ -88,6 +88,8 @@ public record SchemaNode(String name, NodeType type, List<SchemaNode> children, 
     public static final String META_REDIS_DB = "redisDb";
     /** {@link com.lazaro.sqlide.core.db.ConnectionConfig.ConnectionType} name on a data source. */
     public static final String META_CONNECTION_TYPE = "connectionType";
+    /** {@link com.lazaro.sqlide.core.db.ConnectionConfig.Driver} name on a data source. */
+    public static final String META_DRIVER = "driver";
 
     public enum NodeType {
         /** Saved / session data source root in the Database pane. */

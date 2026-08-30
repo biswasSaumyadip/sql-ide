@@ -3,6 +3,8 @@ package com.lazaro.sqlide.ui;
 import com.lazaro.sqlide.core.db.SchemaNode;
 import javafx.scene.Group;
 import javafx.scene.Node;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.shape.Arc;
 import javafx.scene.shape.ArcType;
 import javafx.scene.shape.Circle;
@@ -23,6 +25,7 @@ public final class Icons {
 
     private static final String BASE_CLASS = "icon";
     private static final double STROKE = 1.2;
+    private static final double BRAND_ICON_SIZE = 14;
 
     private Icons() {
     }
@@ -31,8 +34,8 @@ public final class Icons {
 
     public static Node forNode(SchemaNode node) {
         return switch (node.type()) {
-            case DATA_SOURCE -> database();
-            case DATABASE, SCHEMA -> node.metadata(SchemaNode.META_REDIS_DB) != null ? database() : schema();
+            case DATA_SOURCE -> forDriver(node);
+            case DATABASE, SCHEMA -> node.metadata(SchemaNode.META_REDIS_DB) != null ? redis() : schema();
             case FOLDER -> folder();
             case TABLE -> table();
             case VIEW -> view();
@@ -44,12 +47,50 @@ public final class Icons {
         };
     }
 
+    /**
+     * MySQL dolphin and Redis cube for known engines; stacked discs for anything else
+     * (PostgreSQL, H2, MariaDB, unknown).
+     */
+    public static Node forDriver(SchemaNode node) {
+        String driver = node == null ? null : node.metadata(SchemaNode.META_DRIVER);
+        if (driver == null || driver.isBlank()) {
+            String type = node == null ? null : node.metadata(SchemaNode.META_CONNECTION_TYPE);
+            if ("REDIS".equalsIgnoreCase(type)) {
+                return redis();
+            }
+            if ("MYSQL".equalsIgnoreCase(type)) {
+                return mysql();
+            }
+            return database();
+        }
+        String name = driver.trim().toUpperCase();
+        if ("REDIS".equals(name)) {
+            return redis();
+        }
+        if ("MYSQL".equals(name)) {
+            return mysql();
+        }
+        return database();
+    }
+
     /** Three stacked discs, the conventional database glyph. */
     public static Node database() {
         Ellipse top = outlined(new Ellipse(7, 3.5, 5.5, 2.2), "icon-database");
         Ellipse middle = outlined(new Ellipse(7, 7, 5.5, 2.2), "icon-database");
         Ellipse bottom = outlined(new Ellipse(7, 10.5, 5.5, 2.2), "icon-database");
         return group(top, middle, bottom);
+    }
+
+    /**
+     * Official MySQL dolphin (Devicon). PostgreSQL / H2 / unknown keep the cylinder.
+     */
+    public static Node mysql() {
+        return brandImage("mysql.png");
+    }
+
+    /** Official Redis cube (Devicon). */
+    public static Node redis() {
+        return brandImage("redis.png");
     }
 
     /**
@@ -424,6 +465,22 @@ public final class Icons {
         shape.setStrokeWidth(STROKE);
         shape.getStyleClass().addAll(BASE_CLASS, variantClass);
         return shape;
+    }
+
+    /** Official 64px Devicon raster, shown at tree-icon size. */
+    private static Node brandImage(String fileName) {
+        var url = Icons.class.getResource("/com/lazaro/sqlide/icons/" + fileName);
+        if (url == null) {
+            return database();
+        }
+        Image image = new Image(url.toExternalForm(), BRAND_ICON_SIZE * 2, BRAND_ICON_SIZE * 2, true, true);
+        ImageView view = new ImageView(image);
+        view.setFitWidth(BRAND_ICON_SIZE);
+        view.setFitHeight(BRAND_ICON_SIZE);
+        view.setPreserveRatio(true);
+        view.setSmooth(true);
+        view.setMouseTransparent(true);
+        return view;
     }
 
     private static Group group(Shape... shapes) {

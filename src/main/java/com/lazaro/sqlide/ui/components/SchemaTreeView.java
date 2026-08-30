@@ -975,6 +975,7 @@ public final class SchemaTreeView extends VBox {
         String schema = profile.database().isBlank() ? "" : "/" + profile.database();
         meta.put("endpoint", "%s@%s:%d%s".formatted(user, profile.host(), profile.port(), schema));
         meta.put(SchemaNode.META_CONNECTION_TYPE, connectionTypeName(profile.driver()));
+        meta.put(SchemaNode.META_DRIVER, profile.driver());
         return SchemaNode.of(profile.displayName(), NodeType.DATA_SOURCE, meta);
     }
 
@@ -986,6 +987,7 @@ public final class SchemaTreeView extends VBox {
         meta.put(SchemaNode.META_ACTIVE, "true");
         meta.put("endpoint", session.config().displayLabel());
         meta.put(SchemaNode.META_CONNECTION_TYPE, session.config().connectionType().name());
+        meta.put(SchemaNode.META_DRIVER, session.config().driver().name());
         return SchemaNode.of(session.displayName(), NodeType.DATA_SOURCE, meta);
     }
 
