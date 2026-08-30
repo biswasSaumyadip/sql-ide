@@ -48,7 +48,6 @@ public final class SchemaTreeView extends VBox {
     private final TreeView<SchemaNode> tree = new TreeView<>();
     private final TextField filterField = new TextField();
     private final SchemaSelectionControl schemaSelection = new SchemaSelectionControl();
-    private final Label headerLabel = new Label("DATABASE");
     private final StackPane body = new StackPane();
     private final VBox loadingState = new VBox(10);
     private final Label emptyHint = new Label();
@@ -77,16 +76,18 @@ public final class SchemaTreeView extends VBox {
         getStyleClass().add("schema-tree-pane");
         setMinWidth(170);
 
-        headerLabel.getStyleClass().add("panel-header");
         Button addConnection = new Button();
         addConnection.setGraphic(Icons.newQuery());
-        addConnection.getStyleClass().addAll("panel-header-action", "panel-header-icon-action");
+        addConnection.getStyleClass().addAll(
+                "panel-header-action",
+                "panel-header-icon-action",
+                "schema-add-connection");
         addConnection.setTooltip(new Tooltip("New Connection"));
         addConnection.setOnAction(event -> onConnectRequested.run());
-        HBox header = new HBox(4, headerLabel, addConnection);
+        HBox header = new HBox(addConnection);
         header.getStyleClass().add("panel-header-bar");
         header.setAlignment(Pos.CENTER_LEFT);
-        HBox.setHgrow(headerLabel, Priority.ALWAYS);
+        header.setPadding(new Insets(4, 6, 4, 6));
 
         filterField.setPromptText("Filter tables, columns\u2026");
         filterField.getStyleClass().add("sidebar-search");

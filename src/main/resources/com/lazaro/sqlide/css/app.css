@@ -446,7 +446,7 @@
 }
 
 .panel-header-bar {
-    -fx-padding: 7px 10px;
+    -fx-padding: 4px 6px;
     -fx-border-color: transparent transparent #303237 transparent;
     -fx-border-width: 0 0 1 0;
 }
@@ -455,6 +455,15 @@
     -fx-font-size: 10.5px;
     -fx-font-weight: bold;
     -fx-opacity: 0.62;
+}
+
+/* Green/teal accent for the Database panel "+" (primary add-connection action). */
+.schema-add-connection .icon-new {
+    -fx-stroke: #2ea043;
+}
+
+.schema-add-connection:hover {
+    -fx-background-color: derive(#2ea043, -55%);
 }
 
 .schema-tree-pane {
@@ -784,10 +793,14 @@
     -fx-border-width: 0 0 1 0;
 }
 
+.editor-tabs .tab,
+.result-tabs .tab {
+    -fx-padding: 2px 10px 2px 10px;
+    -fx-background-radius: 4px 4px 0 0;
+}
+
 .editor-tabs .tab {
     -fx-background-color: transparent;
-    -fx-background-radius: 5px 5px 0 0;
-    -fx-padding: 5px 10px;
 }
 
 .editor-tabs .tab:hover {
@@ -802,6 +815,12 @@
     -fx-background-color: derive(#2f5d8c, 8%);
 }
 
+.editor-tabs .tab .tab-label,
+.result-tabs .tab .tab-label {
+    -fx-font-size: 11px;
+    -fx-padding: 0;
+}
+
 .editor-tabs .tab .tab-label {
     -fx-text-fill: #b6bcc6;
 }
@@ -809,6 +828,16 @@
 .editor-tabs .tab:selected .tab-label {
     -fx-text-fill: #eceff4;
     -fx-font-weight: bold;
+}
+
+.editor-tabs .tab .tab-container,
+.result-tabs .tab .tab-container {
+    -fx-spacing: 4px;
+}
+
+.editor-tabs .tab .tab-close-button,
+.result-tabs .tab .tab-close-button {
+    -fx-padding: 2px;
 }
 
 /* ---------------------------------------------------------------- query errors */
@@ -829,8 +858,6 @@
 
 .result-tabs .tab {
     -fx-background-color: transparent;
-    -fx-background-radius: 5px 5px 0 0;
-    -fx-padding: 4px 10px;
 }
 
 .result-tabs .tab:selected {
@@ -839,7 +866,6 @@
 
 .result-tabs .tab .tab-label {
     -fx-text-fill: #b6bcc6;
-    -fx-font-size: 11px;
 }
 
 .result-tabs .tab:selected .tab-label {
