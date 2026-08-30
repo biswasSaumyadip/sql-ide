@@ -394,6 +394,11 @@ public final class ResultToolbar extends HBox {
         attachItemsListeners(table);
     }
 
+    /** Enables Clear independently of the active grid (e.g. while Output is focused). */
+    public void setClearEnabled(boolean enabled) {
+        clearButton.setDisable(!enabled);
+    }
+
     public void setRefreshEnabled(boolean enabled) {
         if (dataEditMode) {
             refreshButton.setDisable(false);

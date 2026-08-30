@@ -28,17 +28,21 @@ public final class QueryOutcomePane extends VBox {
 
     private static final String PINNED_STYLE = "result-tab-pinned";
     private static final String DATA_TAB_STYLE = "result-tab-data";
+    private static final String OUTPUT_TAB_STYLE = "result-tab-output";
     private static final String DIRTY_MARK = "\u25CF ";
 
     private final ResultToolbar toolbar = new ResultToolbar();
     private final QueryErrorPanel errorPanel = new QueryErrorPanel();
     private final TabPane resultTabs = new TabPane();
     private final DynamicResultTable fallbackResults = new DynamicResultTable();
+    private final OutputConsoleView output = new OutputConsoleView();
+    private final Tab outputTab = createOutputTab();
     private final StackPane body = new StackPane(resultTabs);
 
     private Consumer<QueryResult> onExportToFile = result -> { };
     private Runnable onRefresh = () -> { };
     private Runnable onActionsChanged = () -> { };
+    private boolean awaitingRunResult;
 
     public QueryOutcomePane() {
         getStyleClass().add("query-outcome-pane");
@@ -83,7 +87,28 @@ public final class QueryOutcomePane extends VBox {
         });
 
         getChildren().addAll(toolbar, errorPanel, body);
+        ensureOutputTab();
         showIdle();
+    }
+
+    private Tab createOutputTab() {
+        Tab tab = new Tab("Output", output);
+        tab.setClosable(false);
+        tab.getStyleClass().add(OUTPUT_TAB_STYLE);
+        return tab;
+    }
+
+    private void ensureOutputTab() {
+        if (!resultTabs.getTabs().contains(outputTab)) {
+            resultTabs.getTabs().add(0, outputTab);
+        } else if (resultTabs.getTabs().indexOf(outputTab) != 0) {
+            resultTabs.getTabs().remove(outputTab);
+            resultTabs.getTabs().add(0, outputTab);
+        }
+    }
+
+    public OutputConsoleView output() {
+        return output;
     }
 
     public ResultToolbar toolbar() {
@@ -146,7 +171,7 @@ public final class QueryOutcomePane extends VBox {
         }
 
         ResultPage page = ResultPage.forTableData(
-                node, qualifiedName, primaryKeyColumns, scriptRunner, background, onExportToFile);
+                node, qualifiedName, primaryKeyColumns, scriptRunner, background, onExportToFile, output);
         Tab tab = wrap(node.name() + " data", page, false, false);
         tab.getStyleClass().add(DATA_TAB_STYLE);
         page.editSession().setOnDirtyChanged(() -> {
@@ -172,13 +197,20 @@ public final class QueryOutcomePane extends VBox {
 
     public void showIdle() {
         errorPanel.clear();
-        replaceTransientWith(List.of(wrap("Result", ResultPage.message("Run a query to see results."), false, false)));
+        replaceTransientWith(List.of());
+        resultTabs.getSelectionModel().select(outputTab);
         toolbar.setSummary("");
         syncToolbarState();
     }
 
     public void showLoading() {
+        showLoading(List.of());
+    }
+
+    public void showLoading(List<String> statements) {
         errorPanel.clear();
+        awaitingRunResult = true;
+        output.appendRunning(statements);
         replaceTransientWith(List.of(wrap("Running", ResultPage.message("Running query\u2026"), false, false)));
         toolbar.setSummary("Running\u2026");
         syncToolbarState();
@@ -186,6 +218,7 @@ public final class QueryOutcomePane extends VBox {
 
     public void showCancelling() {
         errorPanel.clear();
+        output.appendCancelling();
         replaceTransientWith(List.of(wrap("Cancelling", ResultPage.message("Cancelling query\u2026"), false, false)));
         toolbar.setSummary("Cancelling\u2026");
         syncToolbarState();
@@ -206,17 +239,32 @@ public final class QueryOutcomePane extends VBox {
     public void presentScript(ScriptResult script, boolean preferPlan) {
         errorPanel.clear();
         if (script == null || script.isEmpty()) {
+            if (!awaitingRunResult) {
+                output.appendSeparator();
+            }
+            output.appendInfo("Nothing executed");
+            awaitingRunResult = false;
             showIdle();
             return;
         }
 
+        if (!awaitingRunResult) {
+            output.appendSeparator();
+        }
+        output.appendScript(script);
+        awaitingRunResult = false;
+
         List<QueryResult> results = script.results();
         List<Tab> fresh = new ArrayList<>(results.size());
         QueryResult lastError = null;
+        boolean hasResultSet = false;
         for (int i = 0; i < results.size(); i++) {
             QueryResult result = results.get(i);
             if (result.isError()) {
                 lastError = result;
+            }
+            if (result.isResultSet() && !result.isError()) {
+                hasResultSet = true;
             }
             String title = results.size() == 1 ? tabTitle(result) : "Result " + (i + 1);
             ResultPage page = ResultPage.from(result, preferPlan && results.size() == 1, onExportToFile);
@@ -226,8 +274,11 @@ public final class QueryOutcomePane extends VBox {
         if (lastError != null) {
             errorPanel.show(lastError.errorMessage());
         }
-        if (!fresh.isEmpty()) {
+        // JetBrains-style: focus Output when there is no grid to inspect.
+        if (hasResultSet && !fresh.isEmpty()) {
             resultTabs.getSelectionModel().select(fresh.getFirst());
+        } else {
+            resultTabs.getSelectionModel().select(outputTab);
         }
         toolbar.setSummary(script.summary());
         syncToolbarState();
@@ -241,14 +292,11 @@ public final class QueryOutcomePane extends VBox {
     public void clearUnpinned() {
         List<Tab> keep = stickyTabs();
         resultTabs.getTabs().setAll(keep);
-        if (keep.isEmpty()) {
-            showIdle();
-        } else {
-            resultTabs.getSelectionModel().select(keep.getFirst());
-            toolbar.setSummary("");
-            syncToolbarState();
-            onActionsChanged.run();
-        }
+        ensureOutputTab();
+        resultTabs.getSelectionModel().select(outputTab);
+        toolbar.setSummary("");
+        syncToolbarState();
+        onActionsChanged.run();
     }
 
     /** Prompts for dirty data tabs (e.g. app exit). */
@@ -285,8 +333,13 @@ public final class QueryOutcomePane extends VBox {
 
     private void replaceTransientWith(List<Tab> fresh) {
         List<Tab> sticky = stickyTabs();
-        List<Tab> next = new ArrayList<>(sticky.size() + fresh.size());
-        next.addAll(sticky);
+        List<Tab> next = new ArrayList<>(1 + sticky.size() + fresh.size());
+        next.add(outputTab);
+        for (Tab tab : sticky) {
+            if (tab != outputTab) {
+                next.add(tab);
+            }
+        }
         next.addAll(fresh);
         resultTabs.getTabs().setAll(next);
     }
@@ -302,16 +355,20 @@ public final class QueryOutcomePane extends VBox {
     }
 
     private static boolean isSticky(Tab tab) {
-        return isPinned(tab) || isDataTab(tab);
+        return isPinned(tab) || isDataTab(tab) || isOutputTab(tab);
     }
 
     private static boolean isDataTab(Tab tab) {
         return tab != null && tab.getStyleClass().contains(DATA_TAB_STYLE);
     }
 
+    private static boolean isOutputTab(Tab tab) {
+        return tab != null && tab.getStyleClass().contains(OUTPUT_TAB_STYLE);
+    }
+
     private void togglePinSelected() {
         Tab selected = resultTabs.getSelectionModel().getSelectedItem();
-        if (selected == null || !(selected.getContent() instanceof ResultPage)) {
+        if (selected == null || isOutputTab(selected) || !(selected.getContent() instanceof ResultPage)) {
             return;
         }
         setPinned(selected, !isPinned(selected));
@@ -351,7 +408,18 @@ public final class QueryOutcomePane extends VBox {
         boolean hasPage = selected != null && selected.getContent() instanceof ResultPage;
         DynamicResultTable table = hasPage ? ((ResultPage) selected.getContent()).table() : null;
         toolbar.bindActiveTable(table, hasPage);
-        toolbar.setPinnedSelected(isPinned(selected));
+        toolbar.setPinnedSelected(isPinned(selected) && !isOutputTab(selected));
+        boolean hasClearable = false;
+        for (Tab tab : resultTabs.getTabs()) {
+            if (!isSticky(tab)) {
+                hasClearable = true;
+                break;
+            }
+        }
+        // Keep Clear usable even while Output is focused.
+        if (isOutputTab(selected)) {
+            toolbar.setClearEnabled(hasClearable);
+        }
         if (hasPage) {
             ResultPage page = (ResultPage) selected.getContent();
             toolbar.setViewToggleAvailable(page.hasPlan(), page.showingPlan());
@@ -465,11 +533,13 @@ public final class QueryOutcomePane extends VBox {
                 List<String> primaryKeyColumns,
                 Function<List<String>, CompletableFuture<ScriptResult>> scriptRunner,
                 Executor background,
-                Consumer<QueryResult> onExportToFile) {
+                Consumer<QueryResult> onExportToFile,
+                OutputConsoleView output) {
             ResultPage page = new ResultPage();
             page.table.setOnExportToFile(onExportToFile);
             TableDataEditSession session = new TableDataEditSession(
                     page.table, node, qualifiedName, primaryKeyColumns, scriptRunner, background);
+            session.setOutputHooks(output::appendRunning, output::appendScript);
             page.table.attachEditSession(session);
             page.editSession = session;
             session.reload();

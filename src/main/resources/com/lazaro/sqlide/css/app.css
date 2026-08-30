@@ -915,6 +915,43 @@
     -fx-padding: 0;
 }
 
+.output-console {
+    -fx-background-color: #1e1f22;
+}
+
+.output-console-scroll {
+    -fx-background-color: #1e1f22;
+    -fx-background: #1e1f22;
+    -fx-border-width: 0;
+    -fx-padding: 0;
+}
+
+.output-console-scroll > .viewport {
+    -fx-background-color: #1e1f22;
+}
+
+.output-console-text {
+    -fx-control-inner-background: #1e1f22;
+    -fx-background-color: #1e1f22;
+    -fx-text-fill: #c8ccd2;
+    -fx-highlight-fill: #2f5d8c;
+    -fx-highlight-text-fill: #eceff4;
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 12px;
+    -fx-padding: 10 12 10 12;
+    -fx-border-width: 0;
+    -fx-background-insets: 0;
+    -fx-background-radius: 0;
+}
+
+.result-tab-output .tab-label {
+    -fx-text-fill: #9aa0a6;
+}
+
+.result-tab-output:selected .tab-label {
+    -fx-text-fill: #e6e8eb;
+}
+
 .explain-plan-tree {
     -fx-background-color: #17181b;
     -fx-border-width: 0;

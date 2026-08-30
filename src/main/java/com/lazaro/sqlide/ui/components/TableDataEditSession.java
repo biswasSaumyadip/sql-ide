@@ -37,6 +37,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
@@ -70,6 +71,8 @@ public final class TableDataEditSession {
     private boolean truncated;
     private Runnable onDirtyChanged = () -> { };
     private Runnable onStatusChanged = () -> { };
+    private Consumer<ScriptResult> onScriptLogged = script -> { };
+    private Consumer<List<String>> onRunLogged = statements -> { };
     private String statusText = "";
 
     public TableDataEditSession(
@@ -124,9 +127,16 @@ public final class TableDataEditSession {
         this.onStatusChanged = action == null ? () -> { } : action;
     }
 
+    /** Logs SELECT / DML runs into the Output console (JetBrains-style). */
+    public void setOutputHooks(Consumer<List<String>> onRun, Consumer<ScriptResult> onResult) {
+        this.onRunLogged = onRun == null ? statements -> { } : onRun;
+        this.onScriptLogged = onResult == null ? script -> { } : onResult;
+    }
+
     public void reload() {
         setStatus("Loading\u2026");
         String sql = "SELECT * FROM " + qualifiedName + " LIMIT " + DEFAULT_LIMIT + ";";
+        onRunLogged.accept(List.of(sql));
         Task<ScriptResult> task = new Task<>() {
             @Override
             protected ScriptResult call() throws Exception {
@@ -135,6 +145,7 @@ public final class TableDataEditSession {
         };
         task.setOnSucceeded(event -> {
             ScriptResult script = task.getValue();
+            onScriptLogged.accept(script);
             if (script == null || script.isEmpty()) {
                 setStatus("No result");
                 return;
@@ -149,7 +160,11 @@ public final class TableDataEditSession {
             }
             present(result);
         });
-        task.setOnFailed(event -> setStatus(String.valueOf(task.getException().getMessage())));
+        task.setOnFailed(event -> {
+            String message = String.valueOf(task.getException().getMessage());
+            onScriptLogged.accept(ScriptResult.ofSingle(QueryResult.ofError(message, 0)));
+            setStatus(message);
+        });
         background.execute(task);
     }
 
@@ -226,9 +241,11 @@ public final class TableDataEditSession {
             return true;
         }
         setStatus("Submitting " + statements.size() + " change(s)\u2026");
+        onRunLogged.accept(statements);
         if (blocking) {
             try {
                 ScriptResult script = scriptRunner.apply(statements).get(60, TimeUnit.SECONDS);
+                onScriptLogged.accept(script);
                 if (script.errorCount() > 0) {
                     setStatus("Submit failed: " + script.summary());
                     notifyDirty();
@@ -238,6 +255,7 @@ public final class TableDataEditSession {
                 reload();
                 return true;
             } catch (Exception error) {
+                onScriptLogged.accept(ScriptResult.ofSingle(QueryResult.ofError(error.getMessage(), 0)));
                 setStatus("Submit failed: " + error.getMessage());
                 notifyDirty();
                 return false;
@@ -251,6 +269,7 @@ public final class TableDataEditSession {
         };
         task.setOnSucceeded(event -> {
             ScriptResult script = task.getValue();
+            onScriptLogged.accept(script);
             if (script.errorCount() > 0) {
                 setStatus("Submit failed: " + script.summary());
                 notifyDirty();
@@ -260,7 +279,9 @@ public final class TableDataEditSession {
             Platform.runLater(this::reload);
         });
         task.setOnFailed(event -> {
-            setStatus("Submit failed: " + task.getException().getMessage());
+            String message = String.valueOf(task.getException().getMessage());
+            onScriptLogged.accept(ScriptResult.ofSingle(QueryResult.ofError(message, 0)));
+            setStatus("Submit failed: " + message);
             notifyDirty();
         });
         background.execute(task);

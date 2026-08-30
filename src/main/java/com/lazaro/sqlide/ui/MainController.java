@@ -717,10 +717,10 @@ public final class MainController {
         }
         cancelling = false;
         setQueryRunning(true);
-        outcome.showLoading();
-        statusBar.setQueryRunning();
         final List<String> toRun = lastRerunStatements;
         final String historySql = lastRerunHistorySql;
+        outcome.showLoading(toRun);
+        statusBar.setQueryRunning();
         Task<ScriptResult> task = new Task<>() {
             @Override
             protected ScriptResult call() throws Exception {
@@ -820,7 +820,7 @@ public final class MainController {
 
         cancelling = false;
         setQueryRunning(true);
-        outcome.showLoading();
+        outcome.showLoading(toRun);
         statusBar.setQueryRunning();
 
         Task<ScriptResult> task = new Task<>() {
@@ -894,7 +894,7 @@ public final class MainController {
         DataSourceDriver active = driver;
         cancelling = false;
         setQueryRunning(true);
-        outcome.showLoading();
+        outcome.showLoading(statements);
         statusBar.setQueryRunning();
         Task<ScriptResult> task = new Task<>() {
             @Override
