@@ -2,6 +2,7 @@ package com.lazaro.sqlide.ui.components;
 
 import com.lazaro.sqlide.core.db.SchemaNode;
 import com.lazaro.sqlide.core.db.SchemaNode.NodeType;
+import com.lazaro.sqlide.core.redis.RedisKeyspace;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
@@ -125,7 +126,7 @@ final class SchemaTreeContextMenus {
             items.add(action("Connect / Reconnect", null, actions.reconnect));
         }
         items.add(new SeparatorMenuItem());
-        items.add(danger("Flush Database\u2026", () -> run("FLUSHDB")));
+        items.add(danger("Flush Database\u2026", () -> run(redisFlushCommand(item))));
         items.add(danger("Remove Connection", () -> actions.removeConnection.accept(item)));
         return items;
     }
@@ -138,7 +139,7 @@ final class SchemaTreeContextMenus {
                 new SeparatorMenuItem(),
                 action("Copy Name", null, () -> copy(item.getValue().name())),
                 new SeparatorMenuItem(),
-                danger("Flush Database\u2026", () -> run("FLUSHDB")));
+                danger("Flush Database\u2026", () -> run(redisFlushCommand(item))));
     }
 
     private Menu redisNewMenu() {
@@ -315,6 +316,14 @@ final class SchemaTreeContextMenus {
         if (command != null && !command.isBlank() && actions.runCommand != null) {
             actions.runCommand.accept(command);
         }
+    }
+
+    private static String redisFlushCommand(TreeItem<SchemaNode> item) {
+        int db = item == null ? 0 : RedisKeyspace.indexOf(item.getValue());
+        if (db <= 0) {
+            return "FLUSHDB";
+        }
+        return "SELECT " + db + "\nFLUSHDB";
     }
 
     private static boolean isRedis(TreeItem<SchemaNode> item) {

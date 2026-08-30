@@ -32,7 +32,7 @@ public final class Icons {
     public static Node forNode(SchemaNode node) {
         return switch (node.type()) {
             case DATA_SOURCE -> database();
-            case DATABASE, SCHEMA -> schema();
+            case DATABASE, SCHEMA -> node.metadata(SchemaNode.META_REDIS_DB) != null ? database() : schema();
             case FOLDER -> folder();
             case TABLE -> table();
             case VIEW -> view();

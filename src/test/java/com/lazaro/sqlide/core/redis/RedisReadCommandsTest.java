@@ -16,6 +16,8 @@ class RedisReadCommandsTest {
         assertEquals("HGETALL user", RedisReadCommands.forType("user", "hash"));
         assertEquals("LRANGE q 0 -1", RedisReadCommands.forType("q", "list"));
         assertEquals("SMEMBERS tags", RedisReadCommands.forType("tags", "set"));
+        assertEquals("GET mykey", RedisReadCommands.forType("mykey", "string", 0));
+        assertEquals("SELECT 2\nGET mykey", RedisReadCommands.forType("mykey", "string", 2));
     }
 
     @Test

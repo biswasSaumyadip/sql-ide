@@ -7,6 +7,7 @@ import com.lazaro.sqlide.core.db.DataSourceDriver;
 import com.lazaro.sqlide.core.db.RedisDriver;
 import com.lazaro.sqlide.core.db.SchemaNode;
 import com.lazaro.sqlide.core.db.SchemaNode.NodeType;
+import com.lazaro.sqlide.core.redis.RedisKeyspace;
 import com.lazaro.sqlide.core.redis.RedisReadCommands;
 import com.lazaro.sqlide.core.session.ConnectionSession;
 import com.lazaro.sqlide.core.session.SessionManager;
@@ -697,7 +698,7 @@ public final class SchemaTreeView extends VBox {
             return;
         }
         if (isRedisDriver(driver, node)) {
-            populateRedisKeys(item, driver);
+            populateRedisDatabases(item, driver);
             return;
         }
         item.replaceChildren(List.of(placeholderItem("Loading\u2026")));
@@ -707,10 +708,10 @@ public final class SchemaTreeView extends VBox {
     }
 
     /**
-     * SCAN-backed Redis key tree under the connection node (colon folders + key leaves).
+     * Logical Redis databases under the connection node. Keys load when a DB expands.
      */
-    private void populateRedisKeys(DataSourceItem item, DataSourceDriver driver) {
-        item.replaceChildren(List.of(placeholderItem("Scanning keys\u2026")));
+    private void populateRedisDatabases(DataSourceItem item, DataSourceDriver driver) {
+        item.replaceChildren(List.of(placeholderItem("Loading databases\u2026")));
         driver.getSchemaTree().whenComplete((nodes, error) -> Platform.runLater(() -> {
             applyLoadedChildren(item, driver, nodes, error, false);
         }));
@@ -748,6 +749,18 @@ public final class SchemaTreeView extends VBox {
             return true;
         }
         return dataSource != null && "REDIS".equalsIgnoreCase(dataSource.metadata(SchemaNode.META_CONNECTION_TYPE));
+    }
+
+    private boolean isRedisTreeItem(TreeItem<SchemaNode> item) {
+        TreeItem<SchemaNode> current = item;
+        while (current != null) {
+            SchemaNode node = current.getValue();
+            if (node != null && node.type() == NodeType.DATA_SOURCE) {
+                return isRedisDriver(driverFor(current), node);
+            }
+            current = current.getParent();
+        }
+        return false;
     }
 
     private void rememberAvailableSchemas(List<SchemaNode> nodes, String connectionId, DataSourceDriver driver) {
@@ -863,6 +876,10 @@ public final class SchemaTreeView extends VBox {
             return;
         }
         if (node.type() == NodeType.DATABASE || node.type() == NodeType.SCHEMA) {
+            if (isRedisTreeItem(selected)) {
+                selected.setExpanded(!selected.isExpanded());
+                return;
+            }
             onUseDatabase.accept(node);
         } else if (node.type() == NodeType.TABLE || node.type() == NodeType.VIEW) {
             onUseDatabase.accept(node);
@@ -878,15 +895,29 @@ public final class SchemaTreeView extends VBox {
             key = node.name();
         }
         String fullKey = key;
+        int db = redisDbOf(selected, node);
         DataSourceDriver driver = driverFor(selected);
         if (driver instanceof RedisDriver redis) {
-            redis.keyType(fullKey).whenComplete((type, error) -> Platform.runLater(() -> {
-                String command = RedisReadCommands.forType(fullKey, error == null ? type : "string");
+            redis.keyType(fullKey, db).whenComplete((type, error) -> Platform.runLater(() -> {
+                String command = RedisReadCommands.forType(fullKey, error == null ? type : "string", db);
                 onRunCommand.accept(command);
             }));
             return;
         }
-        onRunCommand.accept(RedisReadCommands.forType(fullKey, "string"));
+        onRunCommand.accept(RedisReadCommands.forType(fullKey, "string", db));
+    }
+
+    private static int redisDbOf(TreeItem<SchemaNode> item, SchemaNode node) {
+        if (node != null && node.metadata(SchemaNode.META_REDIS_DB) != null) {
+            return RedisKeyspace.indexOf(node);
+        }
+        for (TreeItem<SchemaNode> cursor = item; cursor != null; cursor = cursor.getParent()) {
+            SchemaNode value = cursor.getValue();
+            if (value != null && value.metadata(SchemaNode.META_REDIS_DB) != null) {
+                return RedisKeyspace.indexOf(value);
+            }
+        }
+        return 0;
     }
 
     private void connectSelectedDataSource() {
@@ -1076,6 +1107,9 @@ public final class SchemaTreeView extends VBox {
         private boolean passesSchemaSelection(TreeItem<SchemaNode> child) {
             SchemaNode node = child.getValue();
             if (node == null || isPlaceholder(node)) {
+                return true;
+            }
+            if ("REDIS".equalsIgnoreCase(getValue().metadata(SchemaNode.META_CONNECTION_TYPE))) {
                 return true;
             }
             if (node.type() != NodeType.DATABASE && node.type() != NodeType.SCHEMA) {
@@ -1315,6 +1349,9 @@ public final class SchemaTreeView extends VBox {
                     case SchemaNode.FOLDER_REDIS -> "Redis key namespace";
                     default -> null;
                 };
+                case DATABASE, SCHEMA -> node.metadata(SchemaNode.META_REDIS_DB) == null
+                        ? null
+                        : "Redis logical database " + node.metadata(SchemaNode.META_REDIS_DB);
                 case REDIS_KEY -> {
                     String key = node.metadata(SchemaNode.META_REDIS_KEY);
                     yield key == null || key.isBlank() ? node.name() : key;
@@ -1345,6 +1382,16 @@ public final class SchemaTreeView extends VBox {
                     yield cols;
                 }
                 case VIEW -> "view";
+                case DATABASE, SCHEMA -> {
+                    if (node.metadata(SchemaNode.META_REDIS_DB) == null) {
+                        yield "";
+                    }
+                    String count = node.metadata(SchemaNode.META_CHILD_COUNT);
+                    if (count == null || count.isBlank()) {
+                        yield "";
+                    }
+                    yield count + ("1".equals(count) ? " key" : " keys");
+                }
                 case PROCEDURE -> {
                     String kind = node.metadata(SchemaNode.META_ROUTINE_KIND);
                     yield SchemaNode.ROUTINE_FUNCTION.equalsIgnoreCase(kind) ? "function" : "procedure";

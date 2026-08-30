@@ -84,6 +84,8 @@ public record SchemaNode(String name, NodeType type, List<SchemaNode> children, 
     public static final String META_REDIS_KEY = "redisKey";
     /** Redis TYPE string: {@code string}, {@code hash}, {@code list}, {@code set}, … */
     public static final String META_REDIS_TYPE = "redisType";
+    /** Logical Redis database index ({@code 0}…{@code 15}) on a database or key node. */
+    public static final String META_REDIS_DB = "redisDb";
     /** {@link com.lazaro.sqlide.core.db.ConnectionConfig.ConnectionType} name on a data source. */
     public static final String META_CONNECTION_TYPE = "connectionType";
 

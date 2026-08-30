@@ -44,4 +44,13 @@ public final class RedisReadCommands {
             default -> "GET " + quoted;
         };
     }
+
+    /** Prefixes {@code SELECT n} when {@code dbIndex} is not the default database. */
+    public static String forType(String key, String type, int dbIndex) {
+        String command = forType(key, type);
+        if (dbIndex <= 0) {
+            return command;
+        }
+        return "SELECT " + dbIndex + "\n" + command;
+    }
 }
