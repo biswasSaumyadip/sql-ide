@@ -21,4 +21,8 @@ public final class AppPaths {
     public static Path snippetsFile() {
         return dataDirectory().resolve("snippets.json");
     }
+
+    public static Path runConfigurationsFile() {
+        return dataDirectory().resolve("run-configurations.json");
+    }
 }

@@ -12,19 +12,29 @@ import com.lazaro.sqlide.core.db.ScriptResult;
 import com.lazaro.sqlide.core.explain.ExplainSql;
 import com.lazaro.sqlide.core.export.ResultExporter;
 import com.lazaro.sqlide.core.history.QueryHistoryStore;
+import com.lazaro.sqlide.core.runconfig.RunConfiguration;
+import com.lazaro.sqlide.core.runconfig.RunConfigurationStore;
+import com.lazaro.sqlide.core.session.ConnectionSession;
+import com.lazaro.sqlide.core.session.SessionManager;
 import com.lazaro.sqlide.core.snippets.SnippetStore;
 import com.lazaro.sqlide.ui.components.DynamicResultTable;
 import com.lazaro.sqlide.ui.components.EditorTabPane;
 import com.lazaro.sqlide.ui.components.QueryHistoryPane;
 import com.lazaro.sqlide.ui.components.QueryOutcomePane;
+import com.lazaro.sqlide.ui.components.RunConfigsPane;
 import com.lazaro.sqlide.ui.components.SchemaTreeView;
 import com.lazaro.sqlide.ui.components.SnippetsPane;
 import com.lazaro.sqlide.ui.components.SqlEditorPane;
 import com.lazaro.sqlide.ui.components.StatusBar;
 import com.lazaro.sqlide.core.transfer.TransferRequest;
 import com.lazaro.sqlide.core.transfer.TransferResult;
+import com.lazaro.sqlide.core.sql.SimpleSelectAnalyzer;
+import com.lazaro.sqlide.core.sql.SqlParameterParser;
+import com.lazaro.sqlide.ui.dialogs.CompareDataDialog;
+import com.lazaro.sqlide.ui.dialogs.CompareStructureDialog;
 import com.lazaro.sqlide.ui.dialogs.ConnectionDialog;
 import com.lazaro.sqlide.ui.dialogs.ImportDataDialog;
+import com.lazaro.sqlide.ui.dialogs.ParameterPromptDialog;
 import com.lazaro.sqlide.ui.dialogs.TableDataTransferDialog;
 import com.lazaro.sqlide.ui.dialogs.TransferProgressDialog;
 import javafx.concurrent.Task;
@@ -59,12 +69,14 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Builds the main window and connects its actions to a {@link DataSourceDriver}
- * obtained from the {@link DriverRegistry}. No concrete driver class is named here.
+ * Builds the main window and connects its actions to live {@link ConnectionSession}s
+ * via {@link SessionManager}. No concrete driver class is named here.
  *
  * <p>Database work always runs inside a {@link Task} on a background executor;
  * results reach the scene graph only through the Task's JavaFX callbacks. Failures
@@ -91,11 +103,13 @@ public final class MainController {
     private final SnippetStore snippetStore = new SnippetStore();
     private final QueryHistoryPane historyPane = new QueryHistoryPane(historyStore);
     private final SnippetsPane snippetsPane = new SnippetsPane(snippetStore);
+    private final RunConfigurationStore runConfigStore = new RunConfigurationStore();
+    private final RunConfigsPane runConfigsPane;
     private final TabPane sidebarTabs = new TabPane();
     private final EditorTabPane editors = new EditorTabPane();
     private final QueryOutcomePane outcome = new QueryOutcomePane();
     private final StatusBar statusBar = new StatusBar();
-    private final SchemaCache schemaCache = new SchemaCache();
+    private final SessionManager sessions;
 
     private final SplitPane mainSplit = new SplitPane();
     private final SplitPane rightSplit = new SplitPane();
@@ -113,9 +127,10 @@ public final class MainController {
     private Button connectButton;
     private Button disconnectButton;
     private Button refreshButton;
+    private Button compareStructureButton;
+    private Button compareDataButton;
     private ProgressIndicator toolbarActivity;
 
-    private DataSourceDriver driver;
     private Task<?> activeTask;
     private volatile boolean cancelling;
     private boolean sidebarCollapsed;
@@ -123,16 +138,22 @@ public final class MainController {
     /** Last successfully-submitted script for results-toolbar refresh / auto-rerun. */
     private List<String> lastRerunStatements = List.of();
     private String lastRerunHistorySql = "";
+    private String lastRunSessionId;
 
     public MainController(DriverRegistry registry, WorkspaceState state) {
         this.registry = registry;
         this.state = state;
-        this.driver = registry.create(DriverRegistry.DEFAULT_DRIVER_ID);
-        this.driver.setMaxRowsPerQuery(state.maxRows());
-        schemaTree.setDriver(driver);
+        this.sessions = new SessionManager(registry);
+        this.runConfigsPane = new RunConfigsPane(runConfigStore, profileManager);
+        schemaTree.setSessionManager(sessions);
         schemaTree.setProfileManager(profileManager);
-        editors.setSchemaCache(() -> schemaCache);
-        editors.setActiveCatalog(() -> driver.activeCatalog().orElse(null));
+        editors.setSchemaCache(() -> resolveSession(editors.activeEditor())
+                .map(ConnectionSession::schemaCache)
+                .orElseGet(SchemaCache::new));
+        editors.setActiveCatalog(() -> resolveSession(editors.activeEditor())
+                .map(s -> s.driver().activeCatalog().orElse(null))
+                .orElse(null));
+        sessions.addListener(this::onSessionsChanged);
     }
 
     // ---------------------------------------------------------------- view
@@ -153,9 +174,15 @@ public final class MainController {
         schemaTree.setOnTransferData(this::openTransferData);
         schemaTree.setOnUseDatabase(this::useDatabase);
         schemaTree.setOnInsertSql(sql -> editors.insertIntoActiveEditor(sql));
-        schemaTree.setOnOpenTemplate(editors::openGeneratedSql);
-        schemaTree.setOnNewQuery(editors::newTab);
-        schemaTree.setOnDisconnect(this::disconnect);
+        schemaTree.setOnOpenTemplate(template -> editors.openGeneratedSql(
+                template, sessions.focused().map(ConnectionSession::id).orElse(null)));
+        schemaTree.setOnNewQuery(sessionId -> editors.newTab(sessionId));
+        schemaTree.setOnDisconnect(this::disconnectSession);
+        schemaTree.setOnSessionFocused(sessionId -> {
+            sessions.focus(sessionId);
+            refreshStatusFromFocus();
+            updateActionStates();
+        });
         schemaTree.setOnRefreshSchema(this::refreshSchema);
         historyPane.setOnRerun(entry -> rerunHistory(entry.sql()));
         historyPane.setOnInsert(entry -> editors.insertIntoActiveEditor(entry.sql()));
@@ -164,42 +191,74 @@ public final class MainController {
             SqlEditorPane editor = editors.activeEditor();
             return editor == null ? "" : editor.getEffectiveSql();
         });
+        runConfigsPane.setSqlSupplier(() -> {
+            SqlEditorPane editor = editors.activeEditor();
+            return editor == null ? "" : editor.getEffectiveSql();
+        });
+        runConfigsPane.setProfileIdSupplier(() ->
+                sessions.focused().flatMap(ConnectionSession::profileId).orElse(""));
+        runConfigsPane.setOnOpen(this::openRunConfiguration);
+        runConfigsPane.setOnRun(this::runConfiguration);
         outcome.setOnExportToFile(this::exportResultToFile);
         outcome.setOnRefresh(this::rerunLastQuery);
         outcome.setOnActionsChanged(this::updateActionStates);
+        outcome.setScriptRunner(statements -> {
+            Optional<ConnectionSession> session = Optional.ofNullable(lastRunSessionId)
+                    .flatMap(sessions::find)
+                    .filter(ConnectionSession::isConnected)
+                    .or(() -> sessions.focused().filter(ConnectionSession::isConnected));
+            if (session.isEmpty()) {
+                return CompletableFuture.completedFuture(ScriptResult.ofSingle(
+                        QueryResult.ofError("Not connected", 0)));
+            }
+            return session.get().driver().executeScriptAsync(statements);
+        });
+        outcome.setBackgroundExecutor(backgroundTasks);
+        outcome.setEditableResultResolver(this::resolveEditableResult);
         outcome.setRefreshEnabled(false);
         outcome.toolbar().setStopAutoRefreshOnError(state.stopAutoRefreshOnError());
         outcome.toolbar().setOnStopOnErrorChanged(state::saveStopAutoRefreshOnError);
         outcome.toolbar().setMaxRows(state.maxRows());
         outcome.toolbar().setOnMaxRowsChanged(rows -> {
             state.saveMaxRows(rows);
-            driver.setMaxRowsPerQuery(rows);
+            sessions.connectedSessions().forEach(s -> s.driver().setMaxRowsPerQuery(rows));
         });
-        driver.setMaxRowsPerQuery(state.maxRows());
         editors.activeEditorProperty().addListener((observable, previous, current) -> {
             bindCaret(current);
             if (current != null) {
                 current.setOnSelectInDatabase(this::selectInDatabase);
             }
+            onSessionsChanged();
+            updateActionStates();
         });
         bindCaret(editors.activeEditor());
         if (editors.activeEditor() != null) {
             editors.activeEditor().setOnSelectInDatabase(this::selectInDatabase);
         }
 
+        onSessionsChanged();
         updateActionStates();
         return root;
     }
 
     private ToolBar buildToolBar() {
         Button sidebarToggle = iconButton(Icons.sidebar(), "Toggle Schema Explorer (Ctrl+1)", this::toggleSidebar);
-        Button newQuery = iconButton(Icons.newQuery(), "New Query (Ctrl+T)", editors::newTab);
+        Button newQuery = iconButton(Icons.newQuery(), "New Query (Ctrl+T)",
+                () -> editors.newTab(sessions.focused().map(ConnectionSession::id).orElse(null)));
         Button save = iconButton(Icons.save(), "Save Query (Ctrl+S)", () -> editors.saveActiveTab(owner()));
 
         connectButton = labelledButton(Icons.connect(), "Connect", "Connect to a database (Ctrl+K)",
                 this::openConnectionDialog);
         disconnectButton = iconButton(Icons.disconnect(), "Disconnect", this::disconnect);
         refreshButton = iconButton(Icons.refresh(), "Refresh Schema (Ctrl+R)", this::refreshSchema);
+        compareStructureButton = new Button("Struct");
+        compareStructureButton.getStyleClass().add("labelled-button");
+        compareStructureButton.setTooltip(new Tooltip("Compare table structure / generate ALTER"));
+        compareStructureButton.setOnAction(event -> openCompareStructure());
+        compareDataButton = new Button("Data");
+        compareDataButton.getStyleClass().add("labelled-button");
+        compareDataButton.setTooltip(new Tooltip("Compare pinned result sets"));
+        compareDataButton.setOnAction(event -> openCompareData());
 
         runButton = labelledButton(Icons.run(), "Run", "Execute (Ctrl+Enter)", this::runQuery);
         runButton.getStyleClass().add("run-button");
@@ -232,6 +291,7 @@ public final class MainController {
                 newQuery, save,
                 separator(),
                 connectButton, disconnectButton, refreshButton,
+                compareStructureButton, compareDataButton,
                 separator(),
                 runButton, stopButton, explainButton, explainAnalyzeButton, toolbarActivity,
                 separator(),
@@ -256,7 +316,9 @@ public final class MainController {
         historyTab.setClosable(false);
         Tab snippetsTab = new Tab("Snippets", snippetsPane);
         snippetsTab.setClosable(false);
-        sidebarTabs.getTabs().setAll(schemaTab, historyTab, snippetsTab);
+        Tab runConfigsTab = new Tab("Run Configs", runConfigsPane);
+        runConfigsTab.setClosable(false);
+        sidebarTabs.getTabs().setAll(schemaTab, historyTab, snippetsTab, runConfigsTab);
         sidebarTabs.getStyleClass().add("sidebar-tabs");
         sidebarTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
 
@@ -335,7 +397,8 @@ public final class MainController {
             } else if (toggleSidebar.match(event)) {
                 consumeAnd(event, this::toggleSidebar);
             } else if (newTab.match(event)) {
-                consumeAnd(event, editors::newTab);
+                consumeAnd(event, () -> editors.newTab(
+                        sessions.focused().map(ConnectionSession::id).orElse(null)));
             } else if (closeTab.match(event)) {
                 consumeAnd(event, editors::closeActiveTab);
             } else if (save.match(event)) {
@@ -375,7 +438,7 @@ public final class MainController {
 
     public void shutdown() {
         editors.dispose();
-        driver.close();
+        sessions.close();
         backgroundTasks.shutdownNow();
     }
 
@@ -402,15 +465,22 @@ public final class MainController {
     }
 
     private void openConnectionDialog(ConnectionProfile profile) {
+        DataSourceDriver probe = registry.create(DriverRegistry.DEFAULT_DRIVER_ID);
         ConnectionDialog dialog = new ConnectionDialog(
-                state.lastConnection(), driver, profileManager, profile);
+                state.lastConnection(), probe, profileManager, profile);
         dialog.initOwner(owner());
         dialog.showAndWait().ifPresent(config -> {
-            connect(config);
+            String profileId = dialog.selectedProfileId().orElse(
+                    profile == null ? null : profile.id());
+            String displayName = dialog.selectedProfileId()
+                    .flatMap(id -> profileManager.loadProfiles().stream().filter(p -> p.id().equals(id)).findFirst())
+                    .map(ConnectionProfile::displayName)
+                    .orElse(config.displayLabel());
+            connect(profileId, displayName, config);
             schemaTree.refreshSavedConnections();
         });
-        // Dialog may have deleted/saved profiles even on Cancel.
         schemaTree.refreshSavedConnections();
+        probe.close();
     }
 
     private void deleteSavedProfile(ConnectionProfile profile) {
@@ -421,14 +491,14 @@ public final class MainController {
         schemaTree.refreshSavedConnections();
     }
 
-    private void connect(ConnectionConfig config) {
+    private void connect(String profileId, String displayName, ConnectionConfig config) {
         if (activeTask != null && activeTask.isRunning()) {
             return;
         }
-        DataSourceDriver active = driver;
+        ConnectionSession session = sessions.open(profileId, displayName, config, state.maxRows());
         setConnecting(true);
         statusBar.setBusy("Connecting to " + config.displayLabel() + "\u2026");
-
+        DataSourceDriver active = session.driver();
         Task<Void> task = new Task<>() {
             @Override
             protected Void call() throws Exception {
@@ -445,89 +515,217 @@ public final class MainController {
                     : config.database();
             statusBar.setConnected(config.endpointLabel(), database);
             state.saveLastConnection(config);
+            sessions.focus(session.id());
             schemaTree.reload();
-            refreshSchemaCache();
-            applyPreferredAutoCommit();
+            refreshSchemaCache(session);
+            applyPreferredAutoCommit(session);
+            onSessionsChanged();
+            SqlEditorPane ed = editors.activeEditor();
+            if (ed != null && (ed.getBoundSessionId() == null || ed.getBoundSessionId().isBlank())) {
+                ed.setBoundSessionId(session.id());
+            }
             updateActionStates();
         });
         task.setOnFailed(event -> {
             activeTask = null;
             setConnecting(false);
-            String message = rootCauseMessage(task.getException());
-            statusBar.setConnectionError("Connection failed: " + message);
-            schemaTree.clear();
-            schemaCache.clear();
+            statusBar.setConnectionError("Connection failed: " + rootCauseMessage(task.getException()));
+            sessions.closeSession(session.id());
+            schemaTree.reload();
+            onSessionsChanged();
             updateActionStates();
         });
         backgroundTasks.execute(task);
     }
 
     private void disconnect() {
+        sessions.focused().map(ConnectionSession::id).ifPresent(this::disconnectSession);
+    }
+
+    private void disconnectSession(String sessionId) {
+        if (sessionId == null) {
+            return;
+        }
         cancelling = false;
-        DataSourceDriver retired = driver;
-        driver = registry.create(DriverRegistry.DEFAULT_DRIVER_ID);
-        driver.setMaxRowsPerQuery(state.maxRows());
-
-        schemaTree.setDriver(driver);
-        schemaTree.clear();
-        schemaCache.clear();
+        sessions.closeSession(sessionId);
         outcome.toolbar().stopAutoRefresh();
-        lastRerunStatements = List.of();
-        lastRerunHistorySql = "";
-        outcome.clear();
-        outcome.setRefreshEnabled(false);
-        statusBar.setDisconnected();
-        autoCommitToggle.setSelected(state.autoCommit());
+        if (sessions.connectedSessions().isEmpty()) {
+            lastRerunStatements = List.of();
+            lastRerunHistorySql = "";
+            lastRunSessionId = null;
+            outcome.clear();
+            outcome.setRefreshEnabled(false);
+            statusBar.setDisconnected();
+            autoCommitToggle.setSelected(state.autoCommit());
+        } else {
+            refreshStatusFromFocus();
+        }
+        schemaTree.reload();
+        onSessionsChanged();
         updateActionStates();
+    }
 
-        backgroundTasks.execute(retired::close);
+    private Optional<ConnectionSession> resolveSession(SqlEditorPane editor) {
+        if (editor != null) {
+            String id = editor.getBoundSessionId();
+            if (id != null && !id.isBlank()) {
+                Optional<ConnectionSession> bound = sessions.find(id).filter(ConnectionSession::isConnected);
+                if (bound.isPresent()) {
+                    return bound;
+                }
+            }
+        }
+        return sessions.focused().filter(ConnectionSession::isConnected);
+    }
+
+    private void onSessionsChanged() {
+        List<SqlEditorPane.SessionChoice> choices = new ArrayList<>();
+        for (ConnectionSession s : sessions.connectedSessions()) {
+            choices.add(new SqlEditorPane.SessionChoice(s.id(), s.comboLabel()));
+        }
+        String fallback = sessions.focused().map(ConnectionSession::id).orElse(null);
+        editors.refreshSessionChoices(choices, fallback);
+        editors.refreshAutocompleteEngines();
+        runConfigsPane.refresh();
+    }
+
+    private void refreshStatusFromFocus() {
+        sessions.focused().filter(ConnectionSession::isConnected).ifPresentOrElse(s -> {
+            ConnectionConfig c = s.config();
+            statusBar.setConnected(c.endpointLabel(), s.driver().activeCatalog().orElse(c.database()));
+            syncTransactionStatus(s);
+        }, statusBar::setDisconnected);
     }
 
     /** Reloads the tree and the client-side autocomplete/object-viewer cache. */
     private void refreshSchema() {
-        if (!driver.isConnected()) {
-            return;
-        }
-        schemaTree.reload();
-        refreshSchemaCache();
+        resolveSession(editors.activeEditor()).ifPresent(s -> {
+            schemaTree.reload();
+            refreshSchemaCache(s);
+        });
     }
 
     /**
-     * Pulls the full schema once into {@link #schemaCache}. Failures leave the
+     * Pulls the full schema once into the session's {@link SchemaCache}. Failures leave the
      * previous snapshot intact so typing is not disrupted by a flaky refresh.
      */
-    private void refreshSchemaCache() {
-        DataSourceDriver active = driver;
-        if (!active.isConnected()) {
-            schemaCache.clear();
+    private void refreshSchemaCache(ConnectionSession session) {
+        if (session == null || !session.isConnected()) {
             return;
         }
+        DataSourceDriver active = session.driver();
+        SchemaCache cache = session.schemaCache();
         active.getFullSchema().whenComplete((nodes, error) -> javafx.application.Platform.runLater(() -> {
             if (error != null || nodes == null) {
                 return;
             }
-            schemaCache.replace(nodes);
+            cache.replace(nodes);
             editors.refreshAutocompleteEngines();
         }));
     }
 
+    private void openCompareStructure() {
+        Window owner = owner();
+        CompareStructureDialog.showAndGetAlter(owner, sessions.connectedSessions())
+                .ifPresent(sql -> {
+                    editors.newTab(sessions.focused().map(ConnectionSession::id).orElse(null));
+                    SqlEditorPane ed = editors.activeEditor();
+                    if (ed != null) {
+                        ed.setSql(sql);
+                    }
+                });
+    }
+
+    private void openCompareData() {
+        List<CompareDataDialog.NamedResult> pinned = outcome.pinnedNamedResults();
+        if (pinned.size() < 2) {
+            Alert alert = new Alert(Alert.AlertType.INFORMATION);
+            alert.setTitle("Compare Data");
+            alert.setHeaderText("Pin two result tabs first");
+            alert.setContentText(
+                    "Pin at least two result tabs that contain query results, then open Compare Data again.");
+            if (owner() != null) {
+                alert.initOwner(owner());
+            }
+            alert.showAndWait();
+            return;
+        }
+        CompareDataDialog dialog = new CompareDataDialog(owner(), pinned);
+        dialog.showAndWait();
+    }
+
+    private void openRunConfiguration(RunConfiguration config) {
+        if (config == null) {
+            return;
+        }
+        Optional<ConnectionSession> session = sessions.findByProfileId(config.profileId())
+                .filter(ConnectionSession::isConnected);
+        String sessionId = session.map(ConnectionSession::id).orElse(null);
+        editors.newTab(sessionId);
+        SqlEditorPane ed = editors.activeEditor();
+        if (ed != null) {
+            ed.setSql(config.sql());
+            if (sessionId != null) {
+                ed.setBoundSessionId(sessionId);
+            }
+        }
+    }
+
+    private void runConfiguration(RunConfiguration config) {
+        if (config == null) {
+            return;
+        }
+        Optional<ConnectionSession> session = sessions.findByProfileId(config.profileId())
+                .filter(ConnectionSession::isConnected);
+        if (session.isEmpty()) {
+            profileManager.loadProfiles().stream()
+                    .filter(p -> p.id().equals(config.profileId()))
+                    .findFirst()
+                    .ifPresentOrElse(this::openConnectionDialog, this::openConnectionDialog);
+            return;
+        }
+        ConnectionSession s = session.get();
+        sessions.focus(s.id());
+        String sql = config.sql();
+        if (!config.defaultParams().isEmpty() && !SqlParameterParser.find(sql).isEmpty()) {
+            var substituted = ParameterPromptDialog.promptAndSubstitute(owner(), sql, config.defaultParams());
+            if (substituted.isEmpty()) {
+                return;
+            }
+            sql = substituted.get();
+        }
+        editors.newTab(s.id());
+        SqlEditorPane ed = editors.activeEditor();
+        if (ed != null) {
+            ed.setSql(sql);
+            ed.setBoundSessionId(s.id());
+        }
+        executeSql(null, false);
+    }
+
     private void openObjectViewer(SchemaNode node) {
-        // Prefer the richly populated cache entry over the thin tree node.
-        SchemaNode detailed = schemaCache.findTable(node.name()).orElse(node);
+        SchemaCache cache = resolveSession(editors.activeEditor())
+                .map(ConnectionSession::schemaCache)
+                .orElseGet(SchemaCache::new);
+        SchemaNode detailed = cache.findTable(node.name()).orElse(node);
         editors.openObjectViewer(detailed);
     }
 
     private void openTableData(SchemaNode node) {
-        if (node == null || !driver.isConnected()) {
+        Optional<ConnectionSession> sessionOpt = resolveSession(editors.activeEditor());
+        if (node == null || sessionOpt.isEmpty()) {
             return;
         }
+        ConnectionSession session = sessionOpt.get();
+        DataSourceDriver active = session.driver();
+        SchemaCache cache = session.schemaCache();
         useDatabase(node);
-        SchemaNode detailed = schemaCache.findTable(
+        SchemaNode detailed = cache.findTable(
                 node.name(),
                 node.metadata(SchemaNode.META_CATALOG)).orElse(node);
         String catalog = detailed.metadata(SchemaNode.META_CATALOG);
         if (catalog == null || catalog.isBlank()) {
-            catalog = driver.activeCatalog().orElse(null);
+            catalog = active.activeCatalog().orElse(null);
         }
         String qualified = catalog == null || catalog.isBlank()
                 ? detailed.name()
@@ -537,23 +735,25 @@ public final class MainController {
                 detailed,
                 qualified,
                 primaryKeys,
-                statements -> driver.executeScriptAsync(statements),
+                statements -> active.executeScriptAsync(statements),
                 backgroundTasks);
     }
 
     private void openImportData(SchemaNode node) {
-        if (node == null || !driver.isConnected()) {
+        Optional<ConnectionSession> sessionOpt = resolveSession(editors.activeEditor());
+        if (node == null || sessionOpt.isEmpty()) {
             return;
         }
+        ConnectionSession session = sessionOpt.get();
+        SchemaCache cache = session.schemaCache();
         useDatabase(node);
-        SchemaNode detailed = schemaCache.findTable(
+        SchemaNode detailed = cache.findTable(
                 node.name(),
                 node.metadata(SchemaNode.META_CATALOG)).orElse(node);
         List<String> columns = ImportDataDialog.columnsOf(detailed);
         if (columns.isEmpty()) {
-            // Fall back to cache entry which usually has column children loaded.
             columns = ImportDataDialog.columnsOf(
-                    schemaCache.findTable(detailed.name(), detailed.metadata(SchemaNode.META_CATALOG))
+                    cache.findTable(detailed.name(), detailed.metadata(SchemaNode.META_CATALOG))
                             .orElse(detailed));
         }
         Window owner = root.getScene() == null ? null : root.getScene().getWindow();
@@ -573,26 +773,30 @@ public final class MainController {
     }
 
     private void openTransferData(SchemaNode node) {
-        if (node == null || !driver.isConnected()) {
+        Optional<ConnectionSession> sessionOpt = resolveSession(editors.activeEditor());
+        if (node == null || sessionOpt.isEmpty()) {
             return;
         }
-        ConnectionConfig sourceConfig = driver.currentConfig().orElse(null);
+        ConnectionSession session = sessionOpt.get();
+        DataSourceDriver active = session.driver();
+        SchemaCache cache = session.schemaCache();
+        ConnectionConfig sourceConfig = active.currentConfig().orElse(null);
         if (sourceConfig == null) {
             return;
         }
         useDatabase(node);
-        SchemaNode detailed = schemaCache.findTable(
+        SchemaNode detailed = cache.findTable(
                 node.name(),
                 node.metadata(SchemaNode.META_CATALOG)).orElse(node);
         List<String> columns = ImportDataDialog.columnsOf(detailed);
         if (columns.isEmpty()) {
             columns = ImportDataDialog.columnsOf(
-                    schemaCache.findTable(detailed.name(), detailed.metadata(SchemaNode.META_CATALOG))
+                    cache.findTable(detailed.name(), detailed.metadata(SchemaNode.META_CATALOG))
                             .orElse(detailed));
         }
         String catalog = detailed.metadata(SchemaNode.META_CATALOG);
         if (catalog == null || catalog.isBlank()) {
-            catalog = driver.activeCatalog().orElse(null);
+            catalog = active.activeCatalog().orElse(null);
         }
         if (catalog != null && !catalog.isBlank()
                 && (detailed.metadata(SchemaNode.META_CATALOG) == null
@@ -717,9 +921,13 @@ public final class MainController {
 
     private void selectInDatabase() {
         SqlEditorPane editor = editors.activeEditor();
-        if (editor == null || !driver.isConnected()) {
+        Optional<ConnectionSession> sessionOpt = resolveSession(editor);
+        if (editor == null || sessionOpt.isEmpty()) {
             return;
         }
+        ConnectionSession session = sessionOpt.get();
+        DataSourceDriver active = session.driver();
+        SchemaCache schemaCache = session.schemaCache();
         var resolved = SqlIdentifierAtCaret.resolve(
                 editor.getSql(),
                 editor.getCodeArea().getCaretPosition(),
@@ -729,7 +937,7 @@ public final class MainController {
             return;
         }
         SqlIdentifierAtCaret.Ref ref = resolved.get();
-        String active = driver.activeCatalog().orElse(null);
+        String activeCatalog = active.activeCatalog().orElse(null);
         String catalog;
         String table;
         String column;
@@ -739,19 +947,19 @@ public final class MainController {
             table = ref.tableOrColumn();
             column = ref.column();
         } else if (ref.catalogOrSchema() != null) {
-            var asCatalogTable = schemaCache.resolveTable(ref.catalogOrSchema(), ref.tableOrColumn(), active);
+            var asCatalogTable = schemaCache.resolveTable(ref.catalogOrSchema(), ref.tableOrColumn(), activeCatalog);
             if (asCatalogTable.isPresent()) {
                 catalog = ref.catalogOrSchema();
                 table = ref.tableOrColumn();
                 column = null;
             } else {
-                var asTable = schemaCache.findTable(ref.catalogOrSchema(), active);
-                catalog = asTable.map(node -> node.metadata(SchemaNode.META_CATALOG)).orElse(active);
+                var asTable = schemaCache.findTable(ref.catalogOrSchema(), activeCatalog);
+                catalog = asTable.map(node -> node.metadata(SchemaNode.META_CATALOG)).orElse(activeCatalog);
                 table = ref.catalogOrSchema();
                 column = ref.tableOrColumn();
             }
         } else {
-            catalog = active;
+            catalog = activeCatalog;
             table = ref.tableOrColumn();
             column = null;
         }
@@ -788,9 +996,12 @@ public final class MainController {
      * when it is a database/schema, otherwise its {@link SchemaNode#META_CATALOG}.
      */
     private void useDatabase(SchemaNode node) {
-        if (node == null || !driver.isConnected()) {
+        Optional<ConnectionSession> sessionOpt = resolveSession(editors.activeEditor());
+        if (node == null || sessionOpt.isEmpty()) {
             return;
         }
+        ConnectionSession session = sessionOpt.get();
+        DataSourceDriver active = session.driver();
         String catalog = switch (node.type()) {
             case DATABASE, SCHEMA -> node.name();
             case TABLE, VIEW, COLUMN, FOLDER, KEY, INDEX -> {
@@ -803,13 +1014,12 @@ public final class MainController {
             return;
         }
 
-        String previous = driver.activeCatalog().orElse(null);
+        String previous = active.activeCatalog().orElse(null);
         if (catalog.equalsIgnoreCase(previous)) {
             statusBar.setActiveDatabase(previous);
             return;
         }
 
-        DataSourceDriver active = driver;
         statusBar.setBusy("Using database " + catalog + "\u2026");
         active.setActiveCatalog(catalog).whenComplete((ignored, error) -> javafx.application.Platform.runLater(() -> {
             if (error != null) {
@@ -836,11 +1046,15 @@ public final class MainController {
         if (activeTask != null && activeTask.isRunning()) {
             return;
         }
-        DataSourceDriver active = driver;
-        if (!active.isConnected()) {
+        Optional<ConnectionSession> sessionOpt = Optional.ofNullable(lastRunSessionId)
+                .flatMap(sessions::find)
+                .filter(ConnectionSession::isConnected)
+                .or(() -> resolveSession(editors.activeEditor()));
+        if (sessionOpt.isEmpty()) {
             outcome.present(QueryResult.ofError("Not connected. Use Connect or New Connection first.", 0));
             return;
         }
+        DataSourceDriver active = sessionOpt.get().driver();
         cancelling = false;
         setQueryRunning(true);
         final List<String> toRun = lastRerunStatements;
@@ -864,7 +1078,7 @@ public final class MainController {
             outcome.toolbar().notifyQueryFinished(script.errorCount() > 0);
             recordHistory(historySql, script);
             historyPane.refresh();
-            syncTransactionStatus();
+            syncTransactionStatus(sessionOpt.get());
             updateActionStates();
         });
         task.setOnFailed(event -> {
@@ -906,12 +1120,15 @@ public final class MainController {
         if (editor == null) {
             return;
         }
-        DataSourceDriver active = driver;
-        if (!active.isConnected()) {
+        Optional<ConnectionSession> sessionOpt = resolveSession(editor);
+        if (sessionOpt.isEmpty()) {
             outcome.present(QueryResult.ofError("Not connected. Use Connect or New Connection first.", 0));
             statusBar.setResult(QueryResult.ofError("Not connected", 0));
             return;
         }
+        ConnectionSession session = sessionOpt.get();
+        DataSourceDriver active = session.driver();
+        lastRunSessionId = session.id();
 
         List<String> statements = editor.getEffectiveStatements();
         if (statements.isEmpty()) {
@@ -920,21 +1137,42 @@ public final class MainController {
             return;
         }
 
+        Window owner = root.getScene() == null ? null : root.getScene().getWindow();
         ConnectionConfig.Driver dialect = active.currentConfig()
                 .map(ConnectionConfig::driver)
                 .orElse(ConnectionConfig.Driver.MYSQL);
 
         final List<String> toRun;
         final String historySql;
+        final List<String> sourceStatements;
         if (analyze == null) {
-            toRun = statements;
-            historySql = String.join(";\n", statements);
-            lastRerunStatements = List.copyOf(statements);
+            List<String> bound = new ArrayList<>(statements.size());
+            for (String statement : statements) {
+                if (SqlParameterParser.find(statement).isEmpty()) {
+                    bound.add(statement);
+                    continue;
+                }
+                var substituted = ParameterPromptDialog.promptAndSubstitute(owner, statement);
+                if (substituted.isEmpty()) {
+                    return;
+                }
+                bound.add(substituted.get());
+            }
+            toRun = bound;
+            historySql = String.join(";\n", bound);
+            lastRerunStatements = List.copyOf(bound);
             lastRerunHistorySql = historySql;
             outcome.setRefreshEnabled(true);
+            sourceStatements = List.copyOf(bound);
         } else {
-            // Explain always targets the caret/selection as one statement.
             String one = editor.getEffectiveSql();
+            if (!SqlParameterParser.find(one).isEmpty()) {
+                var substituted = ParameterPromptDialog.promptAndSubstitute(owner, one);
+                if (substituted.isEmpty()) {
+                    return;
+                }
+                one = substituted.get();
+            }
             String wrapped = ExplainSql.wrap(one, dialect, analyze);
             if (wrapped.isBlank()) {
                 outcome.present(QueryResult.ofError("Nothing to explain.", 0));
@@ -942,6 +1180,7 @@ public final class MainController {
             }
             toRun = List.of(wrapped);
             historySql = wrapped;
+            sourceStatements = List.of(one);
         }
 
         cancelling = false;
@@ -961,15 +1200,15 @@ public final class MainController {
             cancelling = false;
             setQueryRunning(false);
             ScriptResult script = task.getValue();
-            outcome.presentScript(script, preferPlan);
+            outcome.presentScript(script, preferPlan, sourceStatements);
             statusBar.setScriptSummary(script.summary(), script.errorCount() > 0);
             outcome.toolbar().notifyQueryFinished(script.errorCount() > 0);
             recordHistory(historySql, script);
             historyPane.refresh();
-            syncTransactionStatus();
+            syncTransactionStatus(session);
             if (analyze == null && script.errorCount() == 0) {
-                for (String statement : statements) {
-                    syncActiveCatalogFromSql(statement);
+                for (String statement : sourceStatements) {
+                    syncActiveCatalogFromSql(session, statement);
                 }
             }
         });
@@ -983,7 +1222,7 @@ public final class MainController {
             outcome.toolbar().notifyQueryFinished(true);
             recordHistory(historySql, ScriptResult.ofSingle(result));
             historyPane.refresh();
-            syncTransactionStatus();
+            syncTransactionStatus(session);
         });
         task.setOnCancelled(event -> {
             activeTask = null;
@@ -995,9 +1234,43 @@ public final class MainController {
             outcome.toolbar().notifyQueryFinished(true);
             recordHistory(historySql, ScriptResult.ofSingle(result));
             historyPane.refresh();
-            syncTransactionStatus();
+            syncTransactionStatus(session);
         });
         backgroundTasks.execute(task);
+    }
+
+    private java.util.Optional<QueryOutcomePane.EditableResultTarget> resolveEditableResult(String sql) {
+        Optional<ConnectionSession> sessionOpt = resolveSession(editors.activeEditor());
+        if (sessionOpt.isEmpty()) {
+            return java.util.Optional.empty();
+        }
+        ConnectionSession session = sessionOpt.get();
+        SchemaCache schemaCache = session.schemaCache();
+        DataSourceDriver active = session.driver();
+        var simple = SimpleSelectAnalyzer.tryAnalyze(sql);
+        if (simple.isEmpty()) {
+            return java.util.Optional.empty();
+        }
+        var info = simple.get();
+        SchemaNode table = schemaCache.findTable(info.table(), info.catalog())
+                .or(() -> schemaCache.findTable(info.table()))
+                .orElse(null);
+        if (table == null || table.type() != SchemaNode.NodeType.TABLE) {
+            return java.util.Optional.empty();
+        }
+        List<String> pks = primaryKeyColumns(table);
+        if (pks.isEmpty()) {
+            return java.util.Optional.empty();
+        }
+        String catalog = info.catalog();
+        if (catalog == null || catalog.isBlank()) {
+            catalog = table.metadata(SchemaNode.META_CATALOG);
+        }
+        if (catalog == null || catalog.isBlank()) {
+            catalog = active.activeCatalog().orElse(null);
+        }
+        String qualified = catalog == null || catalog.isBlank() ? table.name() : catalog + "." + table.name();
+        return java.util.Optional.of(new QueryOutcomePane.EditableResultTarget(table, qualified, pks));
     }
 
     private void rerunHistory(String sql) {
@@ -1005,7 +1278,8 @@ public final class MainController {
         if (editor != null) {
             editor.setSql(sql);
         }
-        if (!driver.isConnected()) {
+        Optional<ConnectionSession> sessionOpt = resolveSession(editor);
+        if (sessionOpt.isEmpty()) {
             outcome.present(QueryResult.ofError("Not connected. Use Connect or New Connection first.", 0));
             return;
         }
@@ -1017,7 +1291,9 @@ public final class MainController {
         if (statements.isEmpty()) {
             return;
         }
-        DataSourceDriver active = driver;
+        ConnectionSession session = sessionOpt.get();
+        DataSourceDriver active = session.driver();
+        lastRunSessionId = session.id();
         cancelling = false;
         setQueryRunning(true);
         outcome.showLoading(statements);
@@ -1039,7 +1315,7 @@ public final class MainController {
             outcome.toolbar().notifyQueryFinished(script.errorCount() > 0);
             recordHistory(sql, script);
             historyPane.refresh();
-            syncTransactionStatus();
+            syncTransactionStatus(session);
         });
         task.setOnFailed(event -> {
             activeTask = null;
@@ -1049,14 +1325,14 @@ public final class MainController {
             outcome.present(result);
             statusBar.setResult(result);
             outcome.toolbar().notifyQueryFinished(true);
-            syncTransactionStatus();
+            syncTransactionStatus(session);
         });
         task.setOnCancelled(event -> {
             activeTask = null;
             cancelling = false;
             setQueryRunning(false);
             outcome.toolbar().notifyQueryFinished(true);
-            syncTransactionStatus();
+            syncTransactionStatus(session);
         });
         backgroundTasks.execute(task);
     }
@@ -1153,7 +1429,17 @@ public final class MainController {
         cancelling = true;
         outcome.showCancelling();
         statusBar.setQueryRunning();
-        DataSourceDriver active = driver;
+        Optional<ConnectionSession> sessionOpt = Optional.ofNullable(lastRunSessionId)
+                .flatMap(sessions::find)
+                .or(() -> resolveSession(editors.activeEditor()));
+        DataSourceDriver active = sessionOpt.map(ConnectionSession::driver).orElse(null);
+        if (active == null) {
+            if (task.isRunning()) {
+                task.cancel(true);
+            }
+            updateActionStates();
+            return;
+        }
         active.cancelExecution().whenComplete((ignored, error) -> javafx.application.Platform.runLater(() -> {
             if (task.isRunning()) {
                 task.cancel(true);
@@ -1164,34 +1450,38 @@ public final class MainController {
     }
 
     private void toggleAutoCommit() {
-        if (!driver.isConnected() || !driver.capabilities().supportsTransactions()) {
+        Optional<ConnectionSession> sessionOpt = resolveSession(editors.activeEditor());
+        if (sessionOpt.isEmpty() || !sessionOpt.get().driver().capabilities().supportsTransactions()) {
             autoCommitToggle.setSelected(true);
             return;
         }
+        ConnectionSession session = sessionOpt.get();
+        DataSourceDriver active = session.driver();
         boolean enabled = autoCommitToggle.isSelected();
-        DataSourceDriver active = driver;
         statusBar.setBusy(enabled ? "Enabling auto-commit\u2026" : "Starting manual transaction\u2026");
         active.setAutoCommit(enabled).whenComplete((ignored, error) -> javafx.application.Platform.runLater(() -> {
             if (error != null) {
                 autoCommitToggle.setSelected(active.isAutoCommit());
                 statusBar.setConnectionError("Auto-commit: " + rootCauseMessage(error));
-                syncTransactionStatus();
+                syncTransactionStatus(session);
                 updateActionStates();
                 return;
             }
             state.saveAutoCommit(enabled);
             active.currentConfig().ifPresent(config ->
                     statusBar.setConnected(config.endpointLabel(), active.activeCatalog().orElse(null)));
-            syncTransactionStatus();
+            syncTransactionStatus(session);
             updateActionStates();
         }));
     }
 
     private void beginTransaction() {
-        if (!driver.isConnected()) {
+        Optional<ConnectionSession> sessionOpt = resolveSession(editors.activeEditor());
+        if (sessionOpt.isEmpty()) {
             return;
         }
-        DataSourceDriver active = driver;
+        ConnectionSession session = sessionOpt.get();
+        DataSourceDriver active = session.driver();
         statusBar.setBusy("Beginning transaction\u2026");
         active.beginTransaction().whenComplete((ignored, error) -> javafx.application.Platform.runLater(() -> {
             if (error != null) {
@@ -1202,16 +1492,18 @@ public final class MainController {
                 active.currentConfig().ifPresent(config ->
                         statusBar.setConnected(config.endpointLabel(), active.activeCatalog().orElse(null)));
             }
-            syncTransactionStatus();
+            syncTransactionStatus(session);
             updateActionStates();
         }));
     }
 
     private void commitTransaction() {
-        if (!driver.isConnected() || driver.isAutoCommit()) {
+        Optional<ConnectionSession> sessionOpt = resolveSession(editors.activeEditor());
+        if (sessionOpt.isEmpty() || sessionOpt.get().driver().isAutoCommit()) {
             return;
         }
-        DataSourceDriver active = driver;
+        ConnectionSession session = sessionOpt.get();
+        DataSourceDriver active = session.driver();
         statusBar.setBusy("Committing\u2026");
         active.commit().whenComplete((ignored, error) -> javafx.application.Platform.runLater(() -> {
             if (error != null) {
@@ -1223,16 +1515,18 @@ public final class MainController {
                 outcome.results().showMessage("Transaction committed.");
                 statusBar.clearResult();
             }
-            syncTransactionStatus();
+            syncTransactionStatus(session);
             updateActionStates();
         }));
     }
 
     private void rollbackTransaction() {
-        if (!driver.isConnected() || driver.isAutoCommit()) {
+        Optional<ConnectionSession> sessionOpt = resolveSession(editors.activeEditor());
+        if (sessionOpt.isEmpty() || sessionOpt.get().driver().isAutoCommit()) {
             return;
         }
-        DataSourceDriver active = driver;
+        ConnectionSession session = sessionOpt.get();
+        DataSourceDriver active = session.driver();
         statusBar.setBusy("Rolling back\u2026");
         active.rollback().whenComplete((ignored, error) -> javafx.application.Platform.runLater(() -> {
             if (error != null) {
@@ -1243,35 +1537,39 @@ public final class MainController {
                 outcome.showIdle();
                 outcome.results().showMessage("Transaction rolled back.");
             }
-            syncTransactionStatus();
+            syncTransactionStatus(session);
             updateActionStates();
         }));
     }
 
-    private void applyPreferredAutoCommit() {
+    private void applyPreferredAutoCommit(ConnectionSession session) {
         boolean preferred = state.autoCommit();
         autoCommitToggle.setSelected(preferred);
-        DataSourceDriver active = driver;
-        if (!active.isConnected() || !active.capabilities().supportsTransactions()) {
-            syncTransactionStatus();
+        if (session == null || !session.isConnected()) {
+            syncTransactionStatus(session);
+            return;
+        }
+        DataSourceDriver active = session.driver();
+        if (!active.capabilities().supportsTransactions()) {
+            syncTransactionStatus(session);
             return;
         }
         if (active.isAutoCommit() == preferred) {
-            syncTransactionStatus();
+            syncTransactionStatus(session);
             return;
         }
         active.setAutoCommit(preferred).whenComplete((ignored, error) -> javafx.application.Platform.runLater(() -> {
             if (error != null) {
                 autoCommitToggle.setSelected(active.isAutoCommit());
             }
-            syncTransactionStatus();
+            syncTransactionStatus(session);
             updateActionStates();
         }));
     }
 
-    private void syncTransactionStatus() {
-        boolean connected = driver.isConnected();
-        boolean auto = !connected || driver.isAutoCommit();
+    private void syncTransactionStatus(ConnectionSession session) {
+        boolean connected = session != null && session.isConnected();
+        boolean auto = !connected || session.driver().isAutoCommit();
         statusBar.setTransactionState(auto, connected);
         autoCommitToggle.setSelected(auto);
     }
@@ -1286,12 +1584,12 @@ public final class MainController {
     }
 
     /** Keeps the footer in sync when the user runs {@code USE db} from the editor. */
-    private void syncActiveCatalogFromSql(String sql) {
+    private void syncActiveCatalogFromSql(ConnectionSession session, String sql) {
         String catalog = parseUseCatalog(sql);
-        if (catalog == null) {
+        if (catalog == null || session == null) {
             return;
         }
-        DataSourceDriver active = driver;
+        DataSourceDriver active = session.driver();
         active.setActiveCatalog(catalog).whenComplete((ignored, error) -> javafx.application.Platform.runLater(() -> {
             if (error != null) {
                 return;
@@ -1330,10 +1628,12 @@ public final class MainController {
     }
 
     private void updateActionStates() {
-        boolean connected = driver.isConnected();
+        Optional<ConnectionSession> sessionOpt = resolveSession(editors.activeEditor());
+        boolean connected = sessionOpt.isPresent();
         boolean busy = activeTask != null && activeTask.isRunning();
-        boolean txn = connected && driver.capabilities().supportsTransactions();
-        boolean manual = txn && !driver.isAutoCommit();
+        DataSourceDriver active = sessionOpt.map(ConnectionSession::driver).orElse(null);
+        boolean txn = connected && active != null && active.capabilities().supportsTransactions();
+        boolean manual = txn && !active.isAutoCommit();
 
         runButton.setDisable(!connected || busy);
         stopButton.setDisable(!busy || cancelling);
@@ -1342,6 +1642,8 @@ public final class MainController {
         connectButton.setDisable(busy);
         disconnectButton.setDisable(!connected || busy);
         refreshButton.setDisable(!connected || busy);
+        compareStructureButton.setDisable(!connected || busy || sessions.connectedSessions().isEmpty());
+        compareDataButton.setDisable(busy);
 
         autoCommitToggle.setDisable(!txn || busy);
         beginButton.setDisable(!txn || busy || manual);

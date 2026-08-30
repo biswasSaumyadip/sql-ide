@@ -108,6 +108,11 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
         });
     }
 
+    /** Profile selected in the form when Connect was pressed (empty for ephemeral). */
+    public java.util.Optional<String> selectedProfileId() {
+        return java.util.Optional.ofNullable(editingProfileId).filter(id -> !id.isBlank());
+    }
+
     /** Selects a saved profile in the dropdown (password is cleared). */
     public void selectProfile(ConnectionProfile profile) {
         if (profile == null) {

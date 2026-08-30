@@ -801,6 +801,24 @@
 
 /* ---------------------------------------------------------------- editor tabs */
 
+.console-session-bar {
+    -fx-background-color: #1a1b1e;
+    -fx-border-color: transparent transparent #303237 transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.console-session-label {
+    -fx-text-fill: #8b919a;
+    -fx-font-size: 11px;
+}
+
+.console-session-box {
+    -fx-pref-width: 160px;
+    -fx-max-width: 200px;
+    -fx-min-width: 120px;
+    -fx-font-size: 11.5px;
+}
+
 .editor-tabs {
     -fx-background-color: #1e1f22;
 }
@@ -996,6 +1014,40 @@
     -fx-text-fill: #eceff4;
 }
 
+.explain-heat-badge {
+    -fx-font-size: 10px;
+    -fx-padding: 1 5 1 5;
+    -fx-background-radius: 3;
+    -fx-text-fill: #1e1f22;
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+}
+
+.explain-plan-tree .tree-cell.explain-heat-low {
+    -fx-background-color: #24352a;
+}
+.explain-plan-tree .tree-cell.explain-heat-low .explain-heat-badge {
+    -fx-background-color: #6aab73;
+}
+
+.explain-plan-tree .tree-cell.explain-heat-mid {
+    -fx-background-color: #3a3420;
+}
+.explain-plan-tree .tree-cell.explain-heat-mid .explain-heat-badge {
+    -fx-background-color: #d4a84b;
+}
+
+.explain-plan-tree .tree-cell.explain-heat-high {
+    -fx-background-color: #3a2226;
+}
+.explain-plan-tree .tree-cell.explain-heat-high .explain-heat-badge {
+    -fx-background-color: #e06c75;
+    -fx-text-fill: #1e1f22;
+}
+
+.explain-plan-tree .tree-cell.explain-heat-high .explain-node-label {
+    -fx-text-fill: #f0b4ba;
+}
+
 .query-error-panel {
     -fx-background-color: #2a1f22;
     -fx-border-color: #7a2e3a transparent #303237 transparent;
@@ -1125,6 +1177,56 @@
 }
 
 /* ---------------------------------------------------------------- dialogs */
+
+.parameter-prompt-dialog.dialog-pane {
+    -fx-background-color: -color-bg-default;
+    -fx-border-color: -color-border-subtle;
+    -fx-border-width: 1px;
+    -fx-border-radius: 8px;
+    -fx-background-radius: 8px;
+    -fx-padding: 0;
+}
+
+.parameter-prompt-dialog > .button-bar > .container {
+    -fx-padding: 8 16 14 16;
+}
+
+.parameter-prompt-header {
+    -fx-alignment: center-left;
+}
+
+.parameter-prompt-title {
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -color-fg-default;
+}
+
+.parameter-prompt-close {
+    -fx-font-size: 16px;
+    -fx-min-width: 28px;
+    -fx-min-height: 28px;
+    -fx-padding: 0;
+    -fx-text-fill: -color-fg-muted;
+}
+
+.parameter-prompt-close:hover {
+    -fx-text-fill: -color-fg-default;
+}
+
+.parameter-prompt-instruction {
+    -fx-text-fill: -color-fg-muted;
+    -fx-font-size: 12.5px;
+}
+
+.parameter-prompt-separator {
+    -fx-padding: 0;
+}
+
+.parameter-prompt-name {
+    -fx-text-fill: -color-fg-muted;
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 12px;
+}
 
 .connection-dialog {
     -fx-padding: 12px;

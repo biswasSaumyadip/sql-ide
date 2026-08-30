@@ -102,6 +102,7 @@ public final class ResultToolbar extends HBox {
     private final ToggleButton pinButton = new ToggleButton();
     private final Button refreshButton = new Button();
     private final Button clearButton = new Button();
+    private final Button compareButton = new Button();
     private final Button addRowButton = new Button();
     private final Button deleteRowsButton = new Button();
     private final Button submitEditsButton = new Button();
@@ -119,6 +120,7 @@ public final class ResultToolbar extends HBox {
     private Runnable onClear = () -> { };
     private Runnable onTogglePin = () -> { };
     private Runnable onToggleView = () -> { };
+    private Runnable onCompare = () -> { };
     private Runnable onAddRow = () -> { };
     private Runnable onDeleteRows = () -> { };
     private Runnable onSubmitEdits = () -> { };
@@ -195,6 +197,12 @@ public final class ResultToolbar extends HBox {
         clearButton.setTooltip(new Tooltip("Clear unpinned result tabs"));
         clearButton.setOnAction(event -> onClear.run());
 
+        compareButton.setGraphic(Icons.grid());
+        compareButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-icon-button");
+        compareButton.setTooltip(new Tooltip("Compare two pinned result tabs side by side"));
+        compareButton.setOnAction(event -> onCompare.run());
+        compareButton.setDisable(true);
+
         addRowButton.setGraphic(Icons.newQuery());
         addRowButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-icon-button");
         addRowButton.setTooltip(new Tooltip("Insert row"));
@@ -246,6 +254,7 @@ public final class ResultToolbar extends HBox {
                 pinButton,
                 refreshButton,
                 clearButton,
+                compareButton,
                 dataEditSeparator,
                 addRowButton,
                 deleteRowsButton,
@@ -284,6 +293,14 @@ public final class ResultToolbar extends HBox {
 
     public void setOnToggleView(Runnable action) {
         this.onToggleView = action == null ? () -> { } : action;
+    }
+
+    public void setOnCompare(Runnable action) {
+        this.onCompare = action == null ? () -> { } : action;
+    }
+
+    public void setCompareEnabled(boolean enabled) {
+        compareButton.setDisable(!enabled);
     }
 
     public void setOnAddRow(Runnable action) {

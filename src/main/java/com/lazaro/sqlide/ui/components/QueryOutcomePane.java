@@ -5,6 +5,7 @@ import com.lazaro.sqlide.core.db.SchemaNode;
 import com.lazaro.sqlide.core.db.ScriptResult;
 import com.lazaro.sqlide.core.explain.ExplainPlanNode;
 import com.lazaro.sqlide.core.explain.ExplainPlanParser;
+import com.lazaro.sqlide.ui.dialogs.CompareDataDialog;
 import javafx.geometry.Insets;
 import javafx.scene.control.Label;
 import javafx.scene.control.Tab;
@@ -42,6 +43,11 @@ public final class QueryOutcomePane extends VBox {
     private Consumer<QueryResult> onExportToFile = result -> { };
     private Runnable onRefresh = () -> { };
     private Runnable onActionsChanged = () -> { };
+    private Function<List<String>, CompletableFuture<ScriptResult>> scriptRunner = statements ->
+            CompletableFuture.completedFuture(ScriptResult.ofSingle(QueryResult.ofError("No runner", 0)));
+    private Executor background = Runnable::run;
+    private Function<String, java.util.Optional<EditableResultTarget>> editableResolver =
+            sql -> java.util.Optional.empty();
     private boolean awaitingRunResult;
 
     public QueryOutcomePane() {
@@ -57,6 +63,7 @@ public final class QueryOutcomePane extends VBox {
         toolbar.setOnClear(this::clearUnpinned);
         toolbar.setOnTogglePin(this::togglePinSelected);
         toolbar.setOnToggleView(this::toggleViewSelected);
+        toolbar.setOnCompare(this::comparePinnedResults);
         toolbar.setOnAddRow(() -> {
             TableDataEditSession session = activeEditSession();
             if (session != null) {
@@ -128,6 +135,28 @@ public final class QueryOutcomePane extends VBox {
         this.onActionsChanged = action == null ? () -> { } : action;
     }
 
+    public void setScriptRunner(Function<List<String>, CompletableFuture<ScriptResult>> runner) {
+        this.scriptRunner = runner == null
+                ? statements -> CompletableFuture.completedFuture(
+                ScriptResult.ofSingle(QueryResult.ofError("No runner", 0)))
+                : runner;
+    }
+
+    public void setBackgroundExecutor(Executor executor) {
+        this.background = executor == null ? Runnable::run : executor;
+    }
+
+    /**
+     * Resolves whether a statement's result grid can be edited (simple SELECT + PK).
+     */
+    public void setEditableResultResolver(Function<String, java.util.Optional<EditableResultTarget>> resolver) {
+        this.editableResolver = resolver == null ? sql -> java.util.Optional.empty() : resolver;
+    }
+
+    /** Target metadata for enabling edit mode on a query result tab. */
+    public record EditableResultTarget(SchemaNode table, String qualifiedName, List<String> primaryKeyColumns) {
+    }
+
     public void setRefreshEnabled(boolean enabled) {
         toolbar.setRefreshEnabled(enabled);
     }
@@ -146,6 +175,23 @@ public final class QueryOutcomePane extends VBox {
             return page.result();
         }
         return null;
+    }
+
+    /** Pinned result tabs that hold a {@link QueryResult}, for cross-connection data compare. */
+    public List<CompareDataDialog.NamedResult> pinnedNamedResults() {
+        List<CompareDataDialog.NamedResult> named = new ArrayList<>();
+        for (Tab tab : resultTabs.getTabs()) {
+            if (!isPinned(tab) || !(tab.getContent() instanceof ResultPage page)) {
+                continue;
+            }
+            QueryResult result = page.result();
+            if (result == null || !result.isResultSet() || result.isError()) {
+                continue;
+            }
+            String name = tab.getText() == null ? "Result" : tab.getText();
+            named.add(new CompareDataDialog.NamedResult(name, result));
+        }
+        return named;
     }
 
     /**
@@ -233,10 +279,14 @@ public final class QueryOutcomePane extends VBox {
     }
 
     public void presentScript(ScriptResult script) {
-        presentScript(script, false);
+        presentScript(script, false, List.of());
     }
 
     public void presentScript(ScriptResult script, boolean preferPlan) {
+        presentScript(script, preferPlan, List.of());
+    }
+
+    public void presentScript(ScriptResult script, boolean preferPlan, List<String> sourceStatements) {
         errorPanel.clear();
         if (script == null || script.isEmpty()) {
             if (!awaitingRunResult) {
@@ -255,6 +305,7 @@ public final class QueryOutcomePane extends VBox {
         awaitingRunResult = false;
 
         List<QueryResult> results = script.results();
+        List<String> statements = sourceStatements == null ? List.of() : sourceStatements;
         List<Tab> fresh = new ArrayList<>(results.size());
         QueryResult lastError = null;
         boolean hasResultSet = false;
@@ -268,13 +319,28 @@ public final class QueryOutcomePane extends VBox {
             }
             String title = results.size() == 1 ? tabTitle(result) : "Result " + (i + 1);
             ResultPage page = ResultPage.from(result, preferPlan && results.size() == 1, onExportToFile);
-            fresh.add(wrap(title, page, result.isError(), false));
+            String sql = i < statements.size() ? statements.get(i) : null;
+            maybeEnableEditing(page, result, sql);
+            Tab tab = wrap(title, page, result.isError(), false);
+            if (page.editSession() != null) {
+                tab.getStyleClass().add(DATA_TAB_STYLE);
+                page.editSession().setOnDirtyChanged(() -> {
+                    refreshEditableTitle(tab, page, title);
+                    syncToolbarState();
+                });
+                tab.setOnCloseRequest(event -> {
+                    if (page.editSession() != null && !page.editSession().confirmClose()) {
+                        event.consume();
+                    }
+                });
+                tab.setOnClosed(event -> page.disposeEditSession());
+            }
+            fresh.add(tab);
         }
         replaceTransientWith(fresh);
         if (lastError != null) {
             errorPanel.show(lastError.errorMessage());
         }
-        // JetBrains-style: focus Output when there is no grid to inspect.
         if (hasResultSet && !fresh.isEmpty()) {
             resultTabs.getSelectionModel().select(fresh.getFirst());
         } else {
@@ -283,6 +349,30 @@ public final class QueryOutcomePane extends VBox {
         toolbar.setSummary(script.summary());
         syncToolbarState();
         onActionsChanged.run();
+    }
+
+    private void maybeEnableEditing(ResultPage page, QueryResult result, String sql) {
+        if (sql == null || result == null || result.isError() || !result.isResultSet()) {
+            return;
+        }
+        java.util.Optional<EditableResultTarget> target = editableResolver.apply(sql);
+        if (target.isEmpty()) {
+            return;
+        }
+        EditableResultTarget edit = target.get();
+        if (edit.primaryKeyColumns() == null || edit.primaryKeyColumns().isEmpty()) {
+            return;
+        }
+        // PK columns must be present in the result set.
+        for (String pk : edit.primaryKeyColumns()) {
+            boolean found = result.columnNames().stream().anyMatch(c -> c.equalsIgnoreCase(pk));
+            if (!found) {
+                return;
+            }
+        }
+        page.enableEditing(edit.table(), edit.qualifiedName(), edit.primaryKeyColumns(),
+                scriptRunner, background, output);
+        page.editSession().bindLoadedResult(result);
     }
 
     public void clear() {
@@ -384,6 +474,72 @@ public final class QueryOutcomePane extends VBox {
         }
     }
 
+    /** Side-by-side compare of two pinned result grids. */
+    private void comparePinnedResults() {
+        List<Tab> pinned = new ArrayList<>();
+        for (Tab tab : resultTabs.getTabs()) {
+            if (isPinned(tab) && tab.getContent() instanceof ResultPage page
+                    && page.table() != null && page.table().hasExportableResult()) {
+                pinned.add(tab);
+            }
+        }
+        if (pinned.size() < 2) {
+            toolbar.setSummary("Pin at least two result tabs to compare");
+            return;
+        }
+        Tab leftTab;
+        Tab rightTab;
+        Tab selected = resultTabs.getSelectionModel().getSelectedItem();
+        if (pinned.size() > 2 && selected != null && pinned.contains(selected)) {
+            leftTab = selected;
+            rightTab = pinned.get(0) == selected ? pinned.get(1) : pinned.get(0);
+        } else {
+            leftTab = pinned.get(0);
+            rightTab = pinned.get(1);
+        }
+        ResultPage left = (ResultPage) leftTab.getContent();
+        ResultPage right = (ResultPage) rightTab.getContent();
+        for (Tab tab : resultTabs.getTabs()) {
+            if (tab.getStyleClass().contains("result-tab-compare")) {
+                resultTabs.getTabs().remove(tab);
+                break;
+            }
+        }
+        javafx.scene.control.SplitPane split = new javafx.scene.control.SplitPane();
+        split.setOrientation(javafx.geometry.Orientation.HORIZONTAL);
+        DynamicResultTable leftGrid = new DynamicResultTable();
+        DynamicResultTable rightGrid = new DynamicResultTable();
+        if (left.result() != null) {
+            leftGrid.setResult(left.result());
+        }
+        if (right.result() != null) {
+            rightGrid.setResult(right.result());
+        }
+        VBox leftBox = new VBox(4, new Label(leftTab.getText()), leftGrid);
+        VBox rightBox = new VBox(4, new Label(rightTab.getText()), rightGrid);
+        VBox.setVgrow(leftGrid, Priority.ALWAYS);
+        VBox.setVgrow(rightGrid, Priority.ALWAYS);
+        leftBox.setPadding(new Insets(6));
+        rightBox.setPadding(new Insets(6));
+        split.getItems().addAll(leftBox, rightBox);
+        split.setDividerPositions(0.5);
+        Tab compare = new Tab("Compare", split);
+        compare.getStyleClass().add("result-tab-compare");
+        compare.setClosable(true);
+        resultTabs.getTabs().add(compare);
+        resultTabs.getSelectionModel().select(compare);
+        toolbar.setSummary("Comparing " + leftTab.getText() + " | " + rightTab.getText());
+        syncToolbarState();
+    }
+
+    private static void refreshEditableTitle(Tab tab, ResultPage page, String baseTitle) {
+        if (page.editSession() != null && page.editSession().isDirty()) {
+            tab.setText(DIRTY_MARK + baseTitle);
+        } else {
+            tab.setText(baseTitle);
+        }
+    }
+
     private static boolean isPinned(Tab tab) {
         return tab != null && tab.getStyleClass().contains(PINNED_STYLE);
     }
@@ -409,6 +565,14 @@ public final class QueryOutcomePane extends VBox {
         DynamicResultTable table = hasPage ? ((ResultPage) selected.getContent()).table() : null;
         toolbar.bindActiveTable(table, hasPage);
         toolbar.setPinnedSelected(isPinned(selected) && !isOutputTab(selected));
+        int pinnedResults = 0;
+        for (Tab tab : resultTabs.getTabs()) {
+            if (isPinned(tab) && tab.getContent() instanceof ResultPage page
+                    && page.table() != null && page.table().hasExportableResult()) {
+                pinnedResults++;
+            }
+        }
+        toolbar.setCompareEnabled(pinnedResults >= 2);
         boolean hasClearable = false;
         for (Tab tab : resultTabs.getTabs()) {
             if (!isSticky(tab)) {
@@ -525,6 +689,25 @@ public final class QueryOutcomePane extends VBox {
             }
             page.table.setResult(result);
             return page;
+        }
+
+        void enableEditing(
+                SchemaNode node,
+                String qualifiedName,
+                List<String> primaryKeyColumns,
+                Function<List<String>, CompletableFuture<ScriptResult>> scriptRunner,
+                Executor background,
+                OutputConsoleView output) {
+            if (editSession != null) {
+                return;
+            }
+            TableDataEditSession session = new TableDataEditSession(
+                    table, node, qualifiedName, primaryKeyColumns, scriptRunner, background);
+            if (output != null) {
+                session.setOutputHooks(output::appendRunning, output::appendScript);
+            }
+            table.attachEditSession(session);
+            this.editSession = session;
         }
 
         static ResultPage forTableData(

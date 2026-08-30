@@ -133,6 +133,16 @@ public final class TableDataEditSession {
         this.onScriptLogged = onResult == null ? script -> { } : onResult;
     }
 
+    /** Binds an already-fetched result set for in-grid editing (simple SELECT path). */
+    public void bindLoadedResult(QueryResult result) {
+        Objects.requireNonNull(result, "result");
+        if (result.isError() || !result.isResultSet()) {
+            setStatus("Not an editable result set");
+            return;
+        }
+        present(result);
+    }
+
     public void reload() {
         setStatus("Loading\u2026");
         String sql = "SELECT * FROM " + qualifiedName + " LIMIT " + DEFAULT_LIMIT + ";";

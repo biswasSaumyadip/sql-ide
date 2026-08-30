@@ -1,5 +1,6 @@
 package com.lazaro.sqlide.ui.components;
 
+import com.lazaro.sqlide.core.explain.ExplainHeatmap;
 import com.lazaro.sqlide.core.explain.ExplainPlanNode;
 import javafx.scene.control.Label;
 import javafx.scene.control.TreeCell;
@@ -10,10 +11,11 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 
 /**
- * Renders an {@link ExplainPlanNode} tree in the outcome pane instead of a raw
- * text dump.
+ * Renders an {@link ExplainPlanNode} tree with cost/rows heatmap coloring.
  */
 public final class ExplainPlanTreeView extends TreeView<ExplainPlanNode> {
+
+    private ExplainPlanNode planRoot;
 
     public ExplainPlanTreeView() {
         getStyleClass().add("explain-plan-tree");
@@ -23,6 +25,7 @@ public final class ExplainPlanTreeView extends TreeView<ExplainPlanNode> {
     }
 
     public void setPlan(ExplainPlanNode plan) {
+        this.planRoot = plan;
         if (plan == null) {
             clear();
             return;
@@ -34,6 +37,7 @@ public final class ExplainPlanTreeView extends TreeView<ExplainPlanNode> {
     }
 
     public void clear() {
+        planRoot = null;
         setRoot(null);
     }
 
@@ -55,23 +59,27 @@ public final class ExplainPlanTreeView extends TreeView<ExplainPlanNode> {
         }
     }
 
-    private static final class PlanCell extends TreeCell<ExplainPlanNode> {
+    private final class PlanCell extends TreeCell<ExplainPlanNode> {
         private final Label label = new Label();
         private final Label detail = new Label();
+        private final Label heatBadge = new Label();
         private final HBox box = new HBox(8);
 
         PlanCell() {
             label.getStyleClass().add("explain-node-label");
             detail.getStyleClass().add("explain-node-detail");
+            heatBadge.getStyleClass().add("explain-heat-badge");
             Region spacer = new Region();
             HBox.setHgrow(spacer, Priority.ALWAYS);
-            box.getChildren().addAll(label, spacer, detail);
+            box.getChildren().addAll(heatBadge, label, spacer, detail);
             box.setFillHeight(true);
         }
 
         @Override
         protected void updateItem(ExplainPlanNode item, boolean empty) {
             super.updateItem(item, empty);
+            getStyleClass().removeAll(
+                    "explain-heat-none", "explain-heat-low", "explain-heat-mid", "explain-heat-high");
             if (empty || item == null) {
                 setGraphic(null);
                 setText(null);
@@ -81,6 +89,18 @@ public final class ExplainPlanTreeView extends TreeView<ExplainPlanNode> {
             detail.setText(item.detail());
             detail.setVisible(!item.detail().isBlank());
             detail.setManaged(!item.detail().isBlank());
+            double heat = planRoot == null ? 0 : ExplainHeatmap.heat(planRoot, item);
+            String heatClass = ExplainHeatmap.heatClass(heat);
+            getStyleClass().add(heatClass);
+            if (heat > 0) {
+                heatBadge.setText(String.format("%.0f%%", heat * 100));
+                heatBadge.setVisible(true);
+                heatBadge.setManaged(true);
+            } else {
+                heatBadge.setText("");
+                heatBadge.setVisible(false);
+                heatBadge.setManaged(false);
+            }
             setGraphic(box);
             setText(null);
         }
