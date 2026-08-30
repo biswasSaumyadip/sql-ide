@@ -24,12 +24,16 @@
     -fx-background-color: #1e1f22;
     -fx-border-color: transparent transparent #303237 transparent;
     -fx-border-width: 0 0 1 0;
-    -fx-padding: 5px 8px;
-    -fx-spacing: 3px;
+    -fx-padding: 3px 6px;
+    -fx-spacing: 2px;
+}
+
+.app-toolbar .container {
+    -fx-spacing: 2px;
 }
 
 .app-toolbar .toolbar-separator {
-    -fx-padding: 0 5px;
+    -fx-padding: 0 3px;
 }
 
 /* AtlantaFX draws the separator line almost black on this surface; lift it so the
@@ -42,9 +46,9 @@
 .icon-button,
 .labelled-button {
     -fx-background-color: transparent;
-    -fx-background-radius: 5px;
-    -fx-padding: 5px 8px;
-    -fx-graphic-text-gap: 7px;
+    -fx-background-radius: 4px;
+    -fx-padding: 2px 6px;
+    -fx-graphic-text-gap: 4px;
 }
 
 .icon-button:hover,
@@ -67,8 +71,8 @@
 
 .toolbar-toggle {
     -fx-background-color: transparent;
-    -fx-background-radius: 5px;
-    -fx-padding: 5px 10px;
+    -fx-background-radius: 4px;
+    -fx-padding: 2px 6px;
     -fx-text-fill: #a4acb9;
     -fx-font-size: 12px;
 }
@@ -238,8 +242,9 @@
     -fx-background-radius: 4px;
     -fx-border-color: transparent;
     -fx-border-width: 0;
-    -fx-padding: 3px 6px;
+    -fx-padding: 2px 6px;
     -fx-cursor: hand;
+    -fx-graphic-text-gap: 4px;
 }
 
 .result-toolbar .button:hover,
@@ -320,6 +325,99 @@
 
 .result-toolbar-find:focused {
     -fx-border-color: #4c7fad;
+}
+
+/* ---------------------------------------------------------------- editor find / replace */
+
+.editor-find-bar {
+    -fx-background-color: #25262b;
+    -fx-border-color: transparent transparent #303237 transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.editor-find-bar .label {
+    -fx-text-fill: #a4acb9;
+    -fx-font-size: 11px;
+}
+
+.editor-find-field {
+    -fx-background-color: #2b2d31;
+    -fx-background-radius: 4px;
+    -fx-border-color: #454951;
+    -fx-border-radius: 4px;
+    -fx-border-width: 1px;
+    -fx-text-fill: #d6d9de;
+    -fx-prompt-text-fill: #7f848e;
+    -fx-padding: 2px 6px;
+    -fx-font-size: 11px;
+    -fx-pref-height: 26px;
+}
+
+.editor-find-field:focused {
+    -fx-border-color: #4c7fad;
+}
+
+.editor-find-icon-button,
+.editor-find-text-button {
+    -fx-background-color: transparent;
+    -fx-text-fill: #d6d9de;
+    -fx-font-size: 11px;
+    -fx-padding: 3px 6px;
+    -fx-cursor: hand;
+}
+
+.editor-find-icon-button:hover,
+.editor-find-text-button:hover {
+    -fx-background-color: #2b2d31;
+}
+
+.editor-find-status {
+    -fx-text-fill: #7f848e;
+    -fx-font-size: 11px;
+}
+
+.editor-find-checkbox {
+    -fx-text-fill: #a4acb9;
+    -fx-font-size: 11px;
+}
+
+/* ---------------------------------------------------------------- table data editor */
+
+.table-data-toolbar {
+    -fx-background-color: #1e1f22;
+    -fx-border-color: transparent transparent #303237 transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.table-data-action {
+    -fx-background-color: transparent;
+    -fx-text-fill: #d6d9de;
+    -fx-font-size: 11px;
+    -fx-padding: 2px 6px;
+    -fx-cursor: hand;
+    -fx-background-radius: 4px;
+}
+
+.table-data-icon-button {
+    -fx-min-width: 26px;
+    -fx-min-height: 26px;
+    -fx-pref-width: 26px;
+    -fx-pref-height: 26px;
+    -fx-padding: 4px;
+}
+
+.table-data-action:hover {
+    -fx-background-color: #2b2d31;
+}
+
+.table-data-action:disabled {
+    -fx-opacity: 0.38;
+}
+
+.table-data-status {
+    -fx-text-fill: #7f848e;
+    -fx-font-size: 11px;
+    -fx-padding: 0 0 0 8px;
 }
 
 .result-tab-pinned {
@@ -529,8 +627,16 @@
     -fx-background-color: transparent;
     -fx-text-fill: #a4acb9;
     -fx-font-size: 11px;
-    -fx-padding: 2px 8px;
+    -fx-padding: 2px 6px;
     -fx-background-radius: 4px;
+}
+
+.panel-header-icon-action {
+    -fx-min-width: 22px;
+    -fx-min-height: 22px;
+    -fx-pref-width: 22px;
+    -fx-pref-height: 22px;
+    -fx-padding: 2px;
 }
 
 .panel-header-action:hover {

@@ -79,7 +79,7 @@ public final class ResultToolbar extends HBox {
     public ResultToolbar() {
         getStyleClass().add("result-toolbar");
         setAlignment(Pos.CENTER_LEFT);
-        setSpacing(4);
+        setSpacing(2);
         setPadding(new Insets(4, 8, 4, 8));
 
         Label title = new Label("Results");
@@ -87,6 +87,7 @@ public final class ResultToolbar extends HBox {
 
         buildExportMenu();
         exportButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-button");
+        exportButton.setGraphicTextGap(4);
         exportButton.setTooltip(new Tooltip("Export results (Ctrl+Shift+C / Ctrl+Shift+X)"));
 
         copyButton.setGraphic(Icons.copy());

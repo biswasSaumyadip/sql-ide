@@ -28,6 +28,7 @@ final class SchemaTreeContextMenus {
             Consumer<String> insertSql,
             Consumer<SqlTemplateGenerator.Template> openTemplate,
             Consumer<TreeItem<SchemaNode>> viewObject,
+            Consumer<TreeItem<SchemaNode>> openData,
             Consumer<TreeItem<SchemaNode>> refreshItem,
             Runnable refreshAll,
             Consumer<TreeItem<SchemaNode>> editConnection,
@@ -154,6 +155,7 @@ final class SchemaTreeContextMenus {
 
         return List.of(
                 neu,
+                action("Edit Data", null, () -> actions.openData.accept(item)),
                 action("Modify Table\u2026", new KeyCodeCombination(KeyCode.F6, KeyCombination.CONTROL_DOWN),
                         () -> open(SqlTemplateGenerator.modifyTable(
                                 SqlTemplateGenerator.schemaOf(item),
@@ -162,6 +164,7 @@ final class SchemaTreeContextMenus {
                         () -> actions.refreshItem.accept(item)),
                 new SeparatorMenuItem(),
                 action("Select First 1000 Rows", null, () -> insert(SchemaObjectNames.selectFirstRows(item, 1000))),
+                action("Jump to DDL", null, () -> actions.viewObject.accept(item)),
                 action("Copy Name", null, () -> copy(item.getValue().name())),
                 action("Copy Qualified Name", null, () -> copy(SchemaObjectNames.qualifiedName(item))),
                 scripts,
@@ -179,10 +182,12 @@ final class SchemaTreeContextMenus {
                 }));
 
         return List.of(
+                action("Browse Data", null, () -> actions.openData.accept(item)),
                 action("Refresh", new KeyCodeCombination(KeyCode.F5, KeyCombination.CONTROL_DOWN),
                         () -> actions.refreshItem.accept(item)),
                 new SeparatorMenuItem(),
                 action("Select First 1000 Rows", null, () -> insert(SchemaObjectNames.selectFirstRows(item, 1000))),
+                action("Jump to DDL", null, () -> actions.viewObject.accept(item)),
                 action("Copy Name", null, () -> copy(item.getValue().name())),
                 action("Copy Qualified Name", null, () -> copy(SchemaObjectNames.qualifiedName(item))),
                 scripts,

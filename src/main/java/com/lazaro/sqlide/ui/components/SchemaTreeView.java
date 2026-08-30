@@ -54,7 +54,6 @@ public final class SchemaTreeView extends VBox {
     private final Label emptyHint = new Label();
     private final Label loadingLabel = new Label("Loading schemas\u2026");
     private final ProgressIndicator loadingSpinner = new ProgressIndicator();
-    private final Button newConnectionButton = new Button("New Connection");
 
     private ConnectionProfileManager profileManager = new ConnectionProfileManager();
     private DataSourceDriver driver;
@@ -63,6 +62,7 @@ public final class SchemaTreeView extends VBox {
 
     private Consumer<SchemaNode> onActivate = node -> { };
     private Consumer<SchemaNode> onViewObject = node -> { };
+    private Consumer<SchemaNode> onOpenData = node -> { };
     private Consumer<SchemaNode> onUseDatabase = node -> { };
     private Runnable onConnectRequested = () -> { };
     private Consumer<ConnectionProfile> onConnectProfile = profile -> { };
@@ -78,7 +78,12 @@ public final class SchemaTreeView extends VBox {
         setMinWidth(170);
 
         headerLabel.getStyleClass().add("panel-header");
-        HBox header = new HBox(headerLabel);
+        Button addConnection = new Button();
+        addConnection.setGraphic(Icons.newQuery());
+        addConnection.getStyleClass().addAll("panel-header-action", "panel-header-icon-action");
+        addConnection.setTooltip(new Tooltip("New Connection"));
+        addConnection.setOnAction(event -> onConnectRequested.run());
+        HBox header = new HBox(4, headerLabel, addConnection);
         header.getStyleClass().add("panel-header-bar");
         header.setAlignment(Pos.CENTER_LEFT);
         HBox.setHgrow(headerLabel, Priority.ALWAYS);
@@ -101,10 +106,10 @@ public final class SchemaTreeView extends VBox {
             tree.refresh();
         });
         HBox.setHgrow(filterField, Priority.ALWAYS);
-        HBox filterBar = new HBox(8, filterField);
+        HBox filterBar = new HBox(4, filterField);
         filterBar.getStyleClass().add("schema-toolbar");
         filterBar.setAlignment(Pos.CENTER_LEFT);
-        filterBar.setPadding(new Insets(5));
+        filterBar.setPadding(new Insets(4, 6, 4, 6));
 
         tree.setShowRoot(false);
         tree.getStyleClass().add("schema-tree");
@@ -132,6 +137,11 @@ public final class SchemaTreeView extends VBox {
                                 onViewObject.accept(item.getValue());
                             }
                         },
+                        item -> {
+                            if (item != null && item.getValue() != null) {
+                                onOpenData.accept(item.getValue());
+                            }
+                        },
                         this::refreshTreeItem,
                         () -> onRefreshSchema.run(),
                         this::editConnectionFromItem,
@@ -150,12 +160,6 @@ public final class SchemaTreeView extends VBox {
         emptyHint.setPadding(new Insets(12));
         emptyHint.setMouseTransparent(true);
 
-        newConnectionButton.getStyleClass().add("empty-state-action");
-        newConnectionButton.setMaxWidth(Double.MAX_VALUE);
-        newConnectionButton.setOnAction(event -> onConnectRequested.run());
-        VBox footer = new VBox(newConnectionButton);
-        footer.setPadding(new Insets(8, 12, 12, 12));
-
         buildLoadingState();
 
         body.getChildren().addAll(tree, emptyHint, loadingState);
@@ -163,7 +167,7 @@ public final class SchemaTreeView extends VBox {
         StackPane.setAlignment(loadingState, Pos.CENTER);
         VBox.setVgrow(body, Priority.ALWAYS);
 
-        getChildren().addAll(header, filterBar, body, footer);
+        getChildren().addAll(header, filterBar, body);
         rebuildDataSources();
     }
 
@@ -278,6 +282,10 @@ public final class SchemaTreeView extends VBox {
         this.onViewObject = onViewObject == null ? node -> { } : onViewObject;
     }
 
+    public void setOnOpenData(Consumer<SchemaNode> onOpenData) {
+        this.onOpenData = onOpenData == null ? node -> { } : onOpenData;
+    }
+
     public void setOnUseDatabase(Consumer<SchemaNode> onUseDatabase) {
         this.onUseDatabase = onUseDatabase == null ? node -> { } : onUseDatabase;
     }
@@ -350,6 +358,195 @@ public final class SchemaTreeView extends VBox {
         rebuildDataSources();
     }
 
+    /**
+     * Expands the active data source and selects {@code catalog.table[.column]}.
+     * Returns {@code false} when the path cannot be started (no active connection).
+     */
+    public boolean revealObject(String catalog, String table, String column) {
+        if (table == null || table.isBlank()) {
+            return false;
+        }
+        filterField.clear();
+        TreeItem<SchemaNode> dataSource = findActiveDataSourceItem();
+        if (dataSource == null) {
+            return false;
+        }
+        dataSource.setExpanded(true);
+        revealStep(dataSource, catalog, table, column, 0);
+        return true;
+    }
+
+    private void revealStep(
+            TreeItem<SchemaNode> root, String catalog, String table, String column, int attempt) {
+        if (attempt > 40) {
+            return;
+        }
+        if (isStillLoading(root)) {
+            Platform.runLater(() -> revealStep(root, catalog, table, column, attempt + 1));
+            return;
+        }
+        TreeItem<SchemaNode> db = findChild(root, NodeType.DATABASE, catalog);
+        if (db == null) {
+            db = findChild(root, NodeType.SCHEMA, catalog);
+        }
+        if (db == null && (catalog == null || catalog.isBlank())) {
+            db = firstDatabase(root);
+        }
+        if (db == null) {
+            return;
+        }
+        db.setExpanded(true);
+        if (isStillLoading(db)) {
+            TreeItem<SchemaNode> dbRef = db;
+            Platform.runLater(() -> revealAfterDatabase(dbRef, table, column, 0));
+            return;
+        }
+        revealAfterDatabase(db, table, column, 0);
+    }
+
+    private void revealAfterDatabase(TreeItem<SchemaNode> db, String table, String column, int attempt) {
+        if (attempt > 40) {
+            return;
+        }
+        if (isStillLoading(db)) {
+            Platform.runLater(() -> revealAfterDatabase(db, table, column, attempt + 1));
+            return;
+        }
+        TreeItem<SchemaNode> tablesFolder = findFolder(db, SchemaNode.FOLDER_TABLES);
+        TreeItem<SchemaNode> viewsFolder = findFolder(db, SchemaNode.FOLDER_VIEWS);
+        if (tablesFolder != null) {
+            tablesFolder.setExpanded(true);
+        }
+        if (viewsFolder != null) {
+            viewsFolder.setExpanded(true);
+        }
+        TreeItem<SchemaNode> tableItem = findTableUnder(db, table);
+        if (tableItem == null) {
+            if ((tablesFolder != null && isStillLoading(tablesFolder))
+                    || (viewsFolder != null && isStillLoading(viewsFolder))) {
+                Platform.runLater(() -> revealAfterDatabase(db, table, column, attempt + 1));
+            }
+            return;
+        }
+        tableItem.setExpanded(true);
+        if (column == null || column.isBlank()) {
+            selectAndScroll(tableItem);
+            return;
+        }
+        revealColumn(tableItem, column, 0);
+    }
+
+    private void revealColumn(TreeItem<SchemaNode> tableItem, String column, int attempt) {
+        if (attempt > 40) {
+            selectAndScroll(tableItem);
+            return;
+        }
+        if (isStillLoading(tableItem)) {
+            Platform.runLater(() -> revealColumn(tableItem, column, attempt + 1));
+            return;
+        }
+        TreeItem<SchemaNode> columnsFolder = findFolder(tableItem, SchemaNode.FOLDER_COLUMNS);
+        if (columnsFolder != null) {
+            columnsFolder.setExpanded(true);
+            if (isStillLoading(columnsFolder)) {
+                Platform.runLater(() -> revealColumn(tableItem, column, attempt + 1));
+                return;
+            }
+            TreeItem<SchemaNode> columnItem = findChild(columnsFolder, NodeType.COLUMN, column);
+            if (columnItem != null) {
+                selectAndScroll(columnItem);
+                return;
+            }
+        }
+        TreeItem<SchemaNode> direct = findChild(tableItem, NodeType.COLUMN, column);
+        selectAndScroll(direct != null ? direct : tableItem);
+    }
+
+    private void selectAndScroll(TreeItem<SchemaNode> item) {
+        if (item == null) {
+            return;
+        }
+        tree.getSelectionModel().select(item);
+        int index = tree.getRow(item);
+        if (index >= 0) {
+            tree.scrollTo(index);
+        }
+        tree.requestFocus();
+    }
+
+    private static boolean isStillLoading(TreeItem<SchemaNode> item) {
+        if (!item.isLeaf() && item.getChildren().isEmpty()) {
+            return true;
+        }
+        if (item.getChildren().size() == 1) {
+            SchemaNode only = item.getChildren().getFirst().getValue();
+            return only != null && (isPlaceholder(only)
+                    || "Loading\u2026".equals(only.name())
+                    || (only.name() != null && only.name().startsWith("Could not load")));
+        }
+        return false;
+    }
+
+    private static TreeItem<SchemaNode> findFolder(TreeItem<SchemaNode> parent, String folderKind) {
+        for (TreeItem<SchemaNode> child : parent.getChildren()) {
+            SchemaNode node = child.getValue();
+            if (node != null && node.type() == NodeType.FOLDER && folderKind.equalsIgnoreCase(node.folderKind())) {
+                return child;
+            }
+        }
+        return null;
+    }
+
+    private static TreeItem<SchemaNode> findChild(TreeItem<SchemaNode> parent, NodeType type, String name) {
+        if (parent == null || name == null || name.isBlank()) {
+            return null;
+        }
+        for (TreeItem<SchemaNode> child : parent.getChildren()) {
+            SchemaNode node = child.getValue();
+            if (node != null && node.type() == type && name.equalsIgnoreCase(node.name())) {
+                return child;
+            }
+        }
+        return null;
+    }
+
+    private static TreeItem<SchemaNode> firstDatabase(TreeItem<SchemaNode> root) {
+        for (TreeItem<SchemaNode> child : root.getChildren()) {
+            SchemaNode node = child.getValue();
+            if (node != null && (node.type() == NodeType.DATABASE || node.type() == NodeType.SCHEMA)
+                    && !isPlaceholder(node)) {
+                return child;
+            }
+        }
+        return null;
+    }
+
+    private static TreeItem<SchemaNode> findTableUnder(TreeItem<SchemaNode> db, String table) {
+        TreeItem<SchemaNode> inTables = findFolder(db, SchemaNode.FOLDER_TABLES);
+        if (inTables != null) {
+            TreeItem<SchemaNode> hit = findChild(inTables, NodeType.TABLE, table);
+            if (hit != null) {
+                return hit;
+            }
+            hit = findChild(inTables, NodeType.VIEW, table);
+            if (hit != null) {
+                return hit;
+            }
+        }
+        TreeItem<SchemaNode> inViews = findFolder(db, SchemaNode.FOLDER_VIEWS);
+        if (inViews != null) {
+            TreeItem<SchemaNode> hit = findChild(inViews, NodeType.VIEW, table);
+            if (hit != null) {
+                return hit;
+            }
+        }
+        TreeItem<SchemaNode> direct = findChild(db, NodeType.TABLE, table);
+        if (direct != null) {
+            return direct;
+        }
+        return findChild(db, NodeType.VIEW, table);
+    }
+
     // ---------------------------------------------------------------- tree model
 
     private void rebuildDataSources() {
@@ -409,7 +606,7 @@ public final class SchemaTreeView extends VBox {
     private void updateEmptyHint() {
         boolean empty = allDataSources.isEmpty();
         if (empty) {
-            emptyHint.setText("No saved connections yet.\nUse New Connection and check Save.");
+            emptyHint.setText("No saved connections yet.\nUse + in the header and check Save.");
         }
         emptyHint.setVisible(empty && filterQuery.isBlank());
         emptyHint.setManaged(empty && filterQuery.isBlank());
@@ -526,7 +723,7 @@ public final class SchemaTreeView extends VBox {
             onUseDatabase.accept(node);
         } else if (node.type() == NodeType.TABLE || node.type() == NodeType.VIEW) {
             onUseDatabase.accept(node);
-            onViewObject.accept(node);
+            onOpenData.accept(node);
         } else {
             onActivate.accept(node);
         }

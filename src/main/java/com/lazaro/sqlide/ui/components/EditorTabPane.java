@@ -2,6 +2,7 @@ package com.lazaro.sqlide.ui.components;
 
 import com.lazaro.sqlide.core.db.SchemaCache;
 import com.lazaro.sqlide.core.db.SchemaNode;
+import com.lazaro.sqlide.core.db.ScriptResult;
 import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -20,6 +21,9 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -126,7 +130,6 @@ public final class EditorTabPane extends TabPane {
         if (node == null) {
             return;
         }
-        String title = node.name();
         for (Tab tab : getTabs()) {
             if (tab instanceof ObjectTab objectTab && objectTab.matches(node)) {
                 getSelectionModel().select(objectTab);
@@ -134,6 +137,32 @@ public final class EditorTabPane extends TabPane {
             }
         }
         ObjectTab tab = new ObjectTab(node);
+        getTabs().add(tab);
+        getSelectionModel().select(tab);
+    }
+
+    /**
+     * Opens (or focuses) a table data editor tab.
+     *
+     * @param scriptRunner executes SQL scripts asynchronously (load / submit)
+     * @param background   FX Task executor
+     */
+    public void openTableData(
+            SchemaNode node,
+            String qualifiedName,
+            List<String> primaryKeyColumns,
+            Function<List<String>, CompletableFuture<ScriptResult>> scriptRunner,
+            Executor background) {
+        if (node == null) {
+            return;
+        }
+        for (Tab tab : getTabs()) {
+            if (tab instanceof DataTab dataTab && dataTab.matches(node)) {
+                getSelectionModel().select(dataTab);
+                return;
+            }
+        }
+        DataTab tab = new DataTab(node, qualifiedName, primaryKeyColumns, scriptRunner, background);
         getTabs().add(tab);
         getSelectionModel().select(tab);
     }
@@ -314,6 +343,27 @@ public final class EditorTabPane extends TabPane {
         private static String keyOf(SchemaNode node) {
             String catalog = Objects.requireNonNullElse(node.metadata(SchemaNode.META_CATALOG), "");
             return catalog + "/" + node.name();
+        }
+    }
+
+    private static final class DataTab extends Tab {
+
+        private final TableDataEditorPane editor;
+
+        DataTab(
+                SchemaNode node,
+                String qualifiedName,
+                List<String> primaryKeyColumns,
+                Function<List<String>, CompletableFuture<ScriptResult>> scriptRunner,
+                Executor background) {
+            this.editor = new TableDataEditorPane(node, qualifiedName, primaryKeyColumns, scriptRunner, background);
+            setText(node.name() + " data");
+            setContent(editor);
+            getStyleClass().add("table-data-tab");
+        }
+
+        boolean matches(SchemaNode node) {
+            return editor.matches(node);
         }
     }
 }

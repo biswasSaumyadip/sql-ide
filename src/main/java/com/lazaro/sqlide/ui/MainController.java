@@ -51,6 +51,7 @@ import javafx.stage.Window;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -140,6 +141,7 @@ public final class MainController {
         schemaTree.setOnDeleteProfile(this::deleteSavedProfile);
         schemaTree.setOnActivate(this::insertNodeReference);
         schemaTree.setOnViewObject(this::openObjectViewer);
+        schemaTree.setOnOpenData(this::openTableData);
         schemaTree.setOnUseDatabase(this::useDatabase);
         schemaTree.setOnInsertSql(sql -> editors.insertIntoActiveEditor(sql));
         schemaTree.setOnOpenTemplate(editors::openGeneratedSql);
@@ -157,8 +159,16 @@ public final class MainController {
         outcome.setOnRefresh(this::rerunLastQuery);
         outcome.setOnActionsChanged(this::updateActionStates);
         outcome.setRefreshEnabled(false);
-        editors.activeEditorProperty().addListener((observable, previous, current) -> bindCaret(current));
+        editors.activeEditorProperty().addListener((observable, previous, current) -> {
+            bindCaret(current);
+            if (current != null) {
+                current.setOnSelectInDatabase(this::selectInDatabase);
+            }
+        });
         bindCaret(editors.activeEditor());
+        if (editors.activeEditor() != null) {
+            editors.activeEditor().setOnSelectInDatabase(this::selectInDatabase);
+        }
 
         updateActionStates();
         return root;
@@ -210,6 +220,8 @@ public final class MainController {
                 separator(),
                 autoCommitToggle, beginButton, commitButton, rollbackButton);
         toolBar.getStyleClass().add("app-toolbar");
+        // High-density IDE chrome: tight gaps between controls.
+        toolBar.setStyle("-fx-spacing: 2;");
         return toolBar;
     }
 
@@ -274,7 +286,9 @@ public final class MainController {
                 KeyCode.C, KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN);
         KeyCombination exportFile = new KeyCodeCombination(
                 KeyCode.X, KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN);
-        KeyCombination findInResults = new KeyCodeCombination(KeyCode.F, KeyCombination.SHORTCUT_DOWN);
+        KeyCombination find = new KeyCodeCombination(KeyCode.F, KeyCombination.SHORTCUT_DOWN);
+        KeyCombination replace = new KeyCodeCombination(KeyCode.H, KeyCombination.SHORTCUT_DOWN);
+        KeyCombination selectInDatabase = new KeyCodeCombination(KeyCode.F1, KeyCombination.ALT_DOWN);
 
         scene.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
             if (run.match(event) || runAlt.match(event)) {
@@ -289,8 +303,12 @@ public final class MainController {
                 consumeAnd(event, () -> copyActiveResult(ResultExporter.Format.TSV));
             } else if (exportFile.match(event)) {
                 consumeAnd(event, () -> exportActiveResult(false));
-            } else if (findInResults.match(event)) {
-                consumeAnd(event, () -> outcome.toolbar().focusFind());
+            } else if (find.match(event)) {
+                consumeAnd(event, this::findInContext);
+            } else if (replace.match(event)) {
+                consumeAnd(event, this::replaceInEditor);
+            } else if (selectInDatabase.match(event)) {
+                consumeAnd(event, this::selectInDatabase);
             } else if (toggleSidebar.match(event)) {
                 consumeAnd(event, this::toggleSidebar);
             } else if (newTab.match(event)) {
@@ -473,6 +491,142 @@ public final class MainController {
         // Prefer the richly populated cache entry over the thin tree node.
         SchemaNode detailed = schemaCache.findTable(node.name()).orElse(node);
         editors.openObjectViewer(detailed);
+    }
+
+    private void openTableData(SchemaNode node) {
+        if (node == null || !driver.isConnected()) {
+            return;
+        }
+        useDatabase(node);
+        SchemaNode detailed = schemaCache.findTable(
+                node.name(),
+                node.metadata(SchemaNode.META_CATALOG)).orElse(node);
+        String catalog = detailed.metadata(SchemaNode.META_CATALOG);
+        if (catalog == null || catalog.isBlank()) {
+            catalog = driver.activeCatalog().orElse(null);
+        }
+        String qualified = catalog == null || catalog.isBlank()
+                ? detailed.name()
+                : catalog + "." + detailed.name();
+        List<String> primaryKeys = primaryKeyColumns(detailed);
+        editors.openTableData(
+                detailed,
+                qualified,
+                primaryKeys,
+                statements -> driver.executeScriptAsync(statements),
+                backgroundTasks);
+    }
+
+    private static List<String> primaryKeyColumns(SchemaNode table) {
+        List<String> keys = new ArrayList<>();
+        if (table == null) {
+            return keys;
+        }
+        collectPrimaryKeys(table, keys);
+        return keys;
+    }
+
+    private static void collectPrimaryKeys(SchemaNode node, List<String> keys) {
+        if (node.type() == SchemaNode.NodeType.COLUMN && node.metadataFlag(SchemaNode.META_PRIMARY_KEY)) {
+            keys.add(node.name());
+            return;
+        }
+        for (SchemaNode child : node.children()) {
+            if (child.type() == SchemaNode.NodeType.FOLDER
+                    && SchemaNode.FOLDER_COLUMNS.equalsIgnoreCase(child.folderKind())) {
+                collectPrimaryKeys(child, keys);
+            } else if (child.type() == SchemaNode.NodeType.COLUMN) {
+                collectPrimaryKeys(child, keys);
+            }
+        }
+    }
+
+    private void findInContext() {
+        if (isFocusInside(outcome)) {
+            outcome.toolbar().focusFind();
+            return;
+        }
+        SqlEditorPane editor = editors.activeEditor();
+        if (editor != null) {
+            editor.showFind(false);
+        } else {
+            outcome.toolbar().focusFind();
+        }
+    }
+
+    private void replaceInEditor() {
+        SqlEditorPane editor = editors.activeEditor();
+        if (editor != null) {
+            editor.showFind(true);
+        }
+    }
+
+    private void selectInDatabase() {
+        SqlEditorPane editor = editors.activeEditor();
+        if (editor == null || !driver.isConnected()) {
+            return;
+        }
+        var resolved = SqlIdentifierAtCaret.resolve(
+                editor.getSql(),
+                editor.getCodeArea().getCaretPosition(),
+                editor.getCodeArea().getSelectedText());
+        if (resolved.isEmpty()) {
+            statusBar.setBusy("No identifier under caret");
+            return;
+        }
+        SqlIdentifierAtCaret.Ref ref = resolved.get();
+        String active = driver.activeCatalog().orElse(null);
+        String catalog;
+        String table;
+        String column;
+
+        if (ref.hasColumn()) {
+            catalog = ref.catalogOrSchema();
+            table = ref.tableOrColumn();
+            column = ref.column();
+        } else if (ref.catalogOrSchema() != null) {
+            var asCatalogTable = schemaCache.resolveTable(ref.catalogOrSchema(), ref.tableOrColumn(), active);
+            if (asCatalogTable.isPresent()) {
+                catalog = ref.catalogOrSchema();
+                table = ref.tableOrColumn();
+                column = null;
+            } else {
+                var asTable = schemaCache.findTable(ref.catalogOrSchema(), active);
+                catalog = asTable.map(node -> node.metadata(SchemaNode.META_CATALOG)).orElse(active);
+                table = ref.catalogOrSchema();
+                column = ref.tableOrColumn();
+            }
+        } else {
+            catalog = active;
+            table = ref.tableOrColumn();
+            column = null;
+        }
+
+        ensureSidebarVisible();
+        if (!schemaTree.revealObject(catalog, table, column)) {
+            statusBar.setBusy("Could not reveal " + table + " in Database tree");
+        }
+    }
+
+    private void ensureSidebarVisible() {
+        if (sidebarCollapsed) {
+            toggleSidebar();
+        }
+        sidebarTabs.getSelectionModel().select(0);
+    }
+
+    private static boolean isFocusInside(Node ancestor) {
+        if (ancestor == null || ancestor.getScene() == null) {
+            return false;
+        }
+        Node focus = ancestor.getScene().getFocusOwner();
+        while (focus != null) {
+            if (focus == ancestor) {
+                return true;
+            }
+            focus = focus.getParent();
+        }
+        return false;
     }
 
     /**
@@ -1061,6 +1215,7 @@ public final class MainController {
     private static Button iconButton(Node icon, String tooltip, Runnable action) {
         Button button = new Button();
         button.setGraphic(icon);
+        button.setGraphicTextGap(4);
         button.getStyleClass().add("icon-button");
         button.setTooltip(new Tooltip(tooltip));
         button.setOnAction(event -> action.run());
@@ -1070,6 +1225,7 @@ public final class MainController {
     private static Button labelledButton(Node icon, String text, String tooltip, Runnable action) {
         Button button = iconButton(icon, tooltip, action);
         button.setText(text);
+        button.setGraphicTextGap(4);
         button.getStyleClass().remove("icon-button");
         button.getStyleClass().add("labelled-button");
         return button;

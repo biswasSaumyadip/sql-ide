@@ -19,11 +19,15 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.geometry.Rectangle2D;
 import javafx.scene.Node;
+import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyCodeCombination;
+import javafx.scene.input.KeyCombination;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.BorderPane;
@@ -75,6 +79,7 @@ public final class SqlEditorPane extends BorderPane {
             -fx-padding: 0 10 0 8;""";
 
     private final CodeArea codeArea = new CodeArea();
+    private final EditorFindBar findBar;
     private final ExecutorService highlightExecutor;
     private final ExecutorService inspectionExecutor;
     private final Subscription highlightSubscription;
@@ -91,6 +96,7 @@ public final class SqlEditorPane extends BorderPane {
     private SqlAutocompleteEngine engine = new SqlAutocompleteEngine(new SchemaCache());
     /** Set when we insert '.' ourselves during chain-completion, so KEY_TYPED does not duplicate it. */
     private boolean suppressNextDotTyped;
+    private Runnable onSelectInDatabase = () -> { };
 
     private volatile StyleSpans<Collection<String>> lastHighlighting =
             StyleSpans.singleton(Collections.emptyList(), 0);
@@ -137,7 +143,11 @@ public final class SqlEditorPane extends BorderPane {
 
         getStyleClass().add("sql-editor-pane");
         getStylesheets().add(stylesheet());
+        EditorFindBar findBar = new EditorFindBar(codeArea);
+        this.findBar = findBar;
+        setTop(findBar);
         setCenter(new VirtualizedScrollPane<>(codeArea));
+        installEditorContextMenu();
 
         if (initialSql != null && !initialSql.isEmpty()) {
             setSql(initialSql);
@@ -145,6 +155,23 @@ public final class SqlEditorPane extends BorderPane {
     }
 
     // ---------------------------------------------------------------- public API
+
+    /** Shows the find strip; pass {@code true} for replace mode (Ctrl+H). */
+    public void showFind(boolean replaceMode) {
+        findBar.show(replaceMode);
+    }
+
+    public void hideFind() {
+        findBar.hide();
+    }
+
+    public boolean isFindShowing() {
+        return findBar.isShowing();
+    }
+
+    public void setOnSelectInDatabase(Runnable action) {
+        this.onSelectInDatabase = action == null ? () -> { } : action;
+    }
 
     /** Swaps the schema snapshot used for completions. Safe to call at any time. */
     public void setSchemaCache(Supplier<SchemaCache> schemaCache) {
@@ -257,6 +284,19 @@ public final class SqlEditorPane extends BorderPane {
         cancelActiveInspection();
         highlightExecutor.shutdownNow();
         inspectionExecutor.shutdownNow();
+    }
+
+    private void installEditorContextMenu() {
+        MenuItem selectInDatabase = new MenuItem("Select in Database");
+        selectInDatabase.setAccelerator(new KeyCodeCombination(KeyCode.F1, KeyCombination.ALT_DOWN));
+        selectInDatabase.setOnAction(event -> onSelectInDatabase.run());
+        MenuItem find = new MenuItem("Find\u2026");
+        find.setAccelerator(new KeyCodeCombination(KeyCode.F, KeyCombination.SHORTCUT_DOWN));
+        find.setOnAction(event -> showFind(false));
+        MenuItem replace = new MenuItem("Replace\u2026");
+        replace.setAccelerator(new KeyCodeCombination(KeyCode.H, KeyCombination.SHORTCUT_DOWN));
+        replace.setOnAction(event -> showFind(true));
+        codeArea.setContextMenu(new ContextMenu(selectInDatabase, find, replace));
     }
 
     // ---------------------------------------------------------------- autocomplete
