@@ -169,6 +169,11 @@ public final class SqlEditorPane extends BorderPane {
         return findBar.isShowing();
     }
 
+    /** F3 / Shift+F3 — next or previous match (opens the bar if needed). */
+    public void findNext(boolean forward) {
+        findBar.findNext(forward);
+    }
+
     public void setOnSelectInDatabase(Runnable action) {
         this.onSelectInDatabase = action == null ? () -> { } : action;
     }

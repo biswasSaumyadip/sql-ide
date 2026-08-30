@@ -74,6 +74,19 @@ public interface DataSourceDriver extends AutoCloseable {
     Optional<String> activeCatalog();
 
     /**
+     * Soft cap on rows materialised per query (Statement#setMaxRows). Default is
+     * driver-specific (typically 1000). Values below 1 are clamped to 1.
+     */
+    default int maxRowsPerQuery() {
+        return 1_000;
+    }
+
+    /** Overrides {@link #maxRowsPerQuery()} for subsequent statement executions. */
+    default void setMaxRowsPerQuery(int maxRows) {
+        // optional for drivers that ignore caps
+    }
+
+    /**
      * Whether subsequent statements auto-commit. Default {@code true}. When
      * {@code false}, statements share one session connection until
      * {@link #commit()} or {@link #rollback()}.

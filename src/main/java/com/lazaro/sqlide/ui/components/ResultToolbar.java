@@ -14,6 +14,7 @@ import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckMenuItem;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuButton;
 import javafx.scene.control.MenuItem;
@@ -29,6 +30,7 @@ import javafx.util.Duration;
 
 import java.util.Objects;
 import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 import java.util.function.Supplier;
 
 /**
@@ -59,6 +61,37 @@ public final class ResultToolbar extends HBox {
         }
     }
 
+    public enum MaxRowsOption {
+        R_100(100),
+        R_500(500),
+        R_1000(1_000),
+        R_5000(5_000),
+        R_10000(10_000);
+
+        private final int rows;
+
+        MaxRowsOption(int rows) {
+            this.rows = rows;
+        }
+
+        public int rows() {
+            return rows;
+        }
+
+        public static MaxRowsOption closest(int value) {
+            MaxRowsOption best = R_1000;
+            int bestDelta = Integer.MAX_VALUE;
+            for (MaxRowsOption option : values()) {
+                int delta = Math.abs(option.rows - value);
+                if (delta < bestDelta) {
+                    bestDelta = delta;
+                    best = option;
+                }
+            }
+            return best;
+        }
+    }
+
     private final MenuButton exportButton = new MenuButton("Export", Icons.export());
     private final Button copyButton = new Button();
     private final ToggleButton findButton = new ToggleButton();
@@ -69,16 +102,21 @@ public final class ResultToolbar extends HBox {
     private final Button refreshButton = new Button();
     private final Button clearButton = new Button();
     private final MenuButton autoRefreshButton = new MenuButton();
+    private final CheckMenuItem stopOnErrorItem = new CheckMenuItem("Stop on error");
+    private final MenuButton maxRowsButton = new MenuButton();
     private final Label summaryLabel = new Label();
 
     private final Timeline autoRefreshTimeline = new Timeline();
     private AutoRefreshInterval autoRefreshInterval = AutoRefreshInterval.OFF;
+    private MaxRowsOption maxRowsOption = MaxRowsOption.R_1000;
 
     private Runnable onRefresh = () -> { };
     private Runnable onClear = () -> { };
     private Runnable onTogglePin = () -> { };
     private Runnable onToggleView = () -> { };
     private Consumer<QueryResult> onExportToFile = result -> { };
+    private IntConsumer onMaxRowsChanged = rows -> { };
+    private Consumer<Boolean> onStopOnErrorChanged = stop -> { };
     private Supplier<DynamicResultTable> tableSupplier = () -> null;
 
     private DynamicResultTable boundTable;
@@ -151,6 +189,11 @@ public final class ResultToolbar extends HBox {
         autoRefreshButton.setTooltip(new Tooltip("Automatically re-run the last query on an interval"));
         updateAutoRefreshLabel();
 
+        buildMaxRowsMenu();
+        maxRowsButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-button");
+        maxRowsButton.setTooltip(new Tooltip("Maximum rows fetched per query"));
+        updateMaxRowsLabel();
+
         summaryLabel.getStyleClass().add("result-toolbar-summary");
         summaryLabel.setMaxWidth(Double.MAX_VALUE);
         HBox.setHgrow(summaryLabel, Priority.ALWAYS);
@@ -171,6 +214,7 @@ public final class ResultToolbar extends HBox {
                 clearButton,
                 subtleSeparator(),
                 autoRefreshButton,
+                maxRowsButton,
                 spacer,
                 summaryLabel);
 
@@ -201,6 +245,41 @@ public final class ResultToolbar extends HBox {
 
     public void setOnToggleView(Runnable action) {
         this.onToggleView = action == null ? () -> { } : action;
+    }
+
+    public void setOnMaxRowsChanged(IntConsumer action) {
+        this.onMaxRowsChanged = action == null ? rows -> { } : action;
+    }
+
+    public void setOnStopOnErrorChanged(Consumer<Boolean> action) {
+        this.onStopOnErrorChanged = action == null ? stop -> { } : action;
+    }
+
+    public void setStopAutoRefreshOnError(boolean stop) {
+        stopOnErrorItem.setSelected(stop);
+    }
+
+    public boolean stopAutoRefreshOnError() {
+        return stopOnErrorItem.isSelected();
+    }
+
+    public void setMaxRows(int rows) {
+        maxRowsOption = MaxRowsOption.closest(rows);
+        updateMaxRowsLabel();
+    }
+
+    public int maxRows() {
+        return maxRowsOption.rows();
+    }
+
+    /**
+     * Call after a query finishes. When auto-refresh is active and the run had an
+     * error, turns auto-refresh off if {@link #stopAutoRefreshOnError()} is set.
+     */
+    public void notifyQueryFinished(boolean hadError) {
+        if (hadError && stopOnErrorItem.isSelected() && autoRefreshInterval != AutoRefreshInterval.OFF) {
+            stopAutoRefresh();
+        }
     }
 
     public void setPinnedSelected(boolean pinned) {
@@ -441,10 +520,36 @@ public final class ResultToolbar extends HBox {
             });
             autoRefreshButton.getItems().add(item);
         }
+        stopOnErrorItem.setSelected(true);
+        stopOnErrorItem.setOnAction(event -> onStopOnErrorChanged.accept(stopOnErrorItem.isSelected()));
+        autoRefreshButton.getItems().addAll(new SeparatorMenuItem(), stopOnErrorItem);
+    }
+
+    private void buildMaxRowsMenu() {
+        for (MaxRowsOption option : MaxRowsOption.values()) {
+            MenuItem item = new MenuItem(formatRows(option.rows()));
+            item.setOnAction(event -> {
+                maxRowsOption = option;
+                updateMaxRowsLabel();
+                onMaxRowsChanged.accept(option.rows());
+            });
+            maxRowsButton.getItems().add(item);
+        }
     }
 
     private void updateAutoRefreshLabel() {
         autoRefreshButton.setText("Auto: " + autoRefreshInterval.menuLabel());
+    }
+
+    private void updateMaxRowsLabel() {
+        maxRowsButton.setText("Rows: " + formatRows(maxRowsOption.rows()));
+    }
+
+    private static String formatRows(int rows) {
+        if (rows >= 1000 && rows % 1000 == 0) {
+            return (rows / 1000) + "k";
+        }
+        return Integer.toString(rows);
     }
 
     private void exportSlice(boolean selectionOnly) {

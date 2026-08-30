@@ -30,6 +30,8 @@ public final class WorkspaceState {
     private static final String LAST_DATABASE = "connection.database";
     private static final String LAST_USER = "connection.user";
     private static final String AUTO_COMMIT = "execution.autoCommit";
+    private static final String STOP_AUTO_REFRESH_ON_ERROR = "results.stopAutoRefreshOnError";
+    private static final String MAX_ROWS = "results.maxRows";
 
     private static final double DEFAULT_WIDTH = 1280;
     private static final double DEFAULT_HEIGHT = 800;
@@ -134,5 +136,21 @@ public final class WorkspaceState {
 
     public void saveAutoCommit(boolean autoCommit) {
         preferences.putBoolean(AUTO_COMMIT, autoCommit);
+    }
+
+    public boolean stopAutoRefreshOnError() {
+        return preferences.getBoolean(STOP_AUTO_REFRESH_ON_ERROR, true);
+    }
+
+    public void saveStopAutoRefreshOnError(boolean stop) {
+        preferences.putBoolean(STOP_AUTO_REFRESH_ON_ERROR, stop);
+    }
+
+    public int maxRows() {
+        return preferences.getInt(MAX_ROWS, 1_000);
+    }
+
+    public void saveMaxRows(int maxRows) {
+        preferences.putInt(MAX_ROWS, Math.max(1, maxRows));
     }
 }

@@ -122,6 +122,7 @@ public final class MainController {
         this.registry = registry;
         this.state = state;
         this.driver = registry.create(DriverRegistry.DEFAULT_DRIVER_ID);
+        this.driver.setMaxRowsPerQuery(state.maxRows());
         schemaTree.setDriver(driver);
         schemaTree.setProfileManager(profileManager);
         editors.setSchemaCache(() -> schemaCache);
@@ -159,6 +160,14 @@ public final class MainController {
         outcome.setOnRefresh(this::rerunLastQuery);
         outcome.setOnActionsChanged(this::updateActionStates);
         outcome.setRefreshEnabled(false);
+        outcome.toolbar().setStopAutoRefreshOnError(state.stopAutoRefreshOnError());
+        outcome.toolbar().setOnStopOnErrorChanged(state::saveStopAutoRefreshOnError);
+        outcome.toolbar().setMaxRows(state.maxRows());
+        outcome.toolbar().setOnMaxRowsChanged(rows -> {
+            state.saveMaxRows(rows);
+            driver.setMaxRowsPerQuery(rows);
+        });
+        driver.setMaxRowsPerQuery(state.maxRows());
         editors.activeEditorProperty().addListener((observable, previous, current) -> {
             bindCaret(current);
             if (current != null) {
@@ -288,6 +297,8 @@ public final class MainController {
                 KeyCode.X, KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN);
         KeyCombination find = new KeyCodeCombination(KeyCode.F, KeyCombination.SHORTCUT_DOWN);
         KeyCombination replace = new KeyCodeCombination(KeyCode.H, KeyCombination.SHORTCUT_DOWN);
+        KeyCombination findNext = new KeyCodeCombination(KeyCode.F3);
+        KeyCombination findPrevious = new KeyCodeCombination(KeyCode.F3, KeyCombination.SHIFT_DOWN);
         KeyCombination selectInDatabase = new KeyCodeCombination(KeyCode.F1, KeyCombination.ALT_DOWN);
 
         scene.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
@@ -307,6 +318,10 @@ public final class MainController {
                 consumeAnd(event, this::findInContext);
             } else if (replace.match(event)) {
                 consumeAnd(event, this::replaceInEditor);
+            } else if (findPrevious.match(event)) {
+                consumeAnd(event, () -> findStep(false));
+            } else if (findNext.match(event)) {
+                consumeAnd(event, () -> findStep(true));
             } else if (selectInDatabase.match(event)) {
                 consumeAnd(event, this::selectInDatabase);
             } else if (toggleSidebar.match(event)) {
@@ -443,6 +458,7 @@ public final class MainController {
         cancelling = false;
         DataSourceDriver retired = driver;
         driver = registry.create(DriverRegistry.DEFAULT_DRIVER_ID);
+        driver.setMaxRowsPerQuery(state.maxRows());
 
         schemaTree.setDriver(driver);
         schemaTree.clear();
@@ -558,6 +574,18 @@ public final class MainController {
         SqlEditorPane editor = editors.activeEditor();
         if (editor != null) {
             editor.showFind(true);
+        }
+    }
+
+    private void findStep(boolean forward) {
+        if (isFocusInside(outcome)) {
+            // Results find is a filter, not a stepper — open/focus it instead.
+            outcome.toolbar().focusFind();
+            return;
+        }
+        SqlEditorPane editor = editors.activeEditor();
+        if (editor != null) {
+            editor.findNext(forward);
         }
     }
 
@@ -707,6 +735,7 @@ public final class MainController {
             ScriptResult script = task.getValue();
             outcome.presentScript(script, false);
             statusBar.setScriptSummary(script.summary(), script.errorCount() > 0);
+            outcome.toolbar().notifyQueryFinished(script.errorCount() > 0);
             recordHistory(historySql, script);
             historyPane.refresh();
             syncTransactionStatus();
@@ -719,6 +748,7 @@ public final class MainController {
             QueryResult result = QueryResult.ofError(rootCauseMessage(task.getException()), 0);
             outcome.present(result);
             statusBar.setResult(result);
+            outcome.toolbar().notifyQueryFinished(true);
             updateActionStates();
         });
         task.setOnCancelled(event -> {
@@ -728,6 +758,7 @@ public final class MainController {
             QueryResult result = QueryResult.ofError("Query cancelled", 0);
             outcome.present(result);
             statusBar.setResult(result);
+            outcome.toolbar().notifyQueryFinished(true);
             updateActionStates();
         });
         backgroundTasks.execute(task);
@@ -806,6 +837,7 @@ public final class MainController {
             ScriptResult script = task.getValue();
             outcome.presentScript(script, preferPlan);
             statusBar.setScriptSummary(script.summary(), script.errorCount() > 0);
+            outcome.toolbar().notifyQueryFinished(script.errorCount() > 0);
             recordHistory(historySql, script);
             historyPane.refresh();
             syncTransactionStatus();
@@ -822,6 +854,7 @@ public final class MainController {
             QueryResult result = QueryResult.ofError(rootCauseMessage(task.getException()), 0);
             outcome.present(result);
             statusBar.setResult(result);
+            outcome.toolbar().notifyQueryFinished(true);
             recordHistory(historySql, ScriptResult.ofSingle(result));
             historyPane.refresh();
             syncTransactionStatus();
@@ -833,6 +866,7 @@ public final class MainController {
             QueryResult result = QueryResult.ofError("Query cancelled", 0);
             outcome.present(result);
             statusBar.setResult(result);
+            outcome.toolbar().notifyQueryFinished(true);
             recordHistory(historySql, ScriptResult.ofSingle(result));
             historyPane.refresh();
             syncTransactionStatus();
@@ -876,6 +910,7 @@ public final class MainController {
             ScriptResult script = task.getValue();
             outcome.presentScript(script, false);
             statusBar.setScriptSummary(script.summary(), script.errorCount() > 0);
+            outcome.toolbar().notifyQueryFinished(script.errorCount() > 0);
             recordHistory(sql, script);
             historyPane.refresh();
             syncTransactionStatus();
@@ -887,12 +922,14 @@ public final class MainController {
             QueryResult result = QueryResult.ofError(rootCauseMessage(task.getException()), 0);
             outcome.present(result);
             statusBar.setResult(result);
+            outcome.toolbar().notifyQueryFinished(true);
             syncTransactionStatus();
         });
         task.setOnCancelled(event -> {
             activeTask = null;
             cancelling = false;
             setQueryRunning(false);
+            outcome.toolbar().notifyQueryFinished(true);
             syncTransactionStatus();
         });
         backgroundTasks.execute(task);

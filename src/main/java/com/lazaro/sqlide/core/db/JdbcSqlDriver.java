@@ -39,7 +39,7 @@ public final class JdbcSqlDriver implements DataSourceDriver {
     /** Registry key under which this driver is published. */
     public static final String ID = "jdbc-mysql";
 
-    /** Hard cap on rows materialised per query, to bound memory. */
+    /** Hard cap default on rows materialised per query, to bound memory. */
     public static final int MAX_ROWS = 1_000;
 
     private static final DriverCapabilities CAPABILITIES = new DriverCapabilities(
@@ -62,6 +62,8 @@ public final class JdbcSqlDriver implements DataSourceDriver {
     /** Applied to every borrowed connection before statement execution. */
     private volatile String activeCatalog;
     private volatile boolean autoCommit = true;
+    /** Soft row cap for user queries; defaults to {@link #MAX_ROWS}. */
+    private volatile int queryMaxRows = MAX_ROWS;
     /** Held only while {@link #autoCommit} is {@code false}. */
     private volatile Connection sessionConnection;
     private volatile Statement activeStatement;
@@ -273,12 +275,13 @@ public final class JdbcSqlDriver implements DataSourceDriver {
             }
 
             // Allow one extra row so ResultSetMapper can detect truncation.
-            statement.setMaxRows(MAX_ROWS + 1);
+            int maxRows = Math.max(1, queryMaxRows);
+            statement.setMaxRows(maxRows + 1);
             boolean producedResultSet = statement.execute(sql);
 
             if (producedResultSet) {
                 try (ResultSet resultSet = statement.getResultSet()) {
-                    return ResultSetMapper.drain(resultSet, MAX_ROWS, startNanos);
+                    return ResultSetMapper.drain(resultSet, maxRows, startNanos);
                 }
             }
             return QueryResult.ofUpdate(statement.getUpdateCount(), elapsedMs(startNanos));
@@ -310,6 +313,16 @@ public final class JdbcSqlDriver implements DataSourceDriver {
     @Override
     public boolean isAutoCommit() {
         return autoCommit;
+    }
+
+    @Override
+    public int maxRowsPerQuery() {
+        return queryMaxRows;
+    }
+
+    @Override
+    public void setMaxRowsPerQuery(int maxRows) {
+        queryMaxRows = Math.max(1, maxRows);
     }
 
     @Override
