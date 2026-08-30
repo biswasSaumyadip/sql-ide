@@ -50,7 +50,9 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
     private static final PseudoClass EMPTY_GRID = PseudoClass.getPseudoClass("empty-grid");
 
     private final Label placeholder = new Label(PLACEHOLDER_IDLE);
+    private final ObservableList<ObservableList<String>> allRows = FXCollections.observableArrayList();
     private QueryResult currentResult;
+    private String rowFilter = "";
     private Consumer<QueryResult> onExportToFile = result -> { };
 
     public DynamicResultTable() {
@@ -157,14 +159,57 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
 
         buildColumns(result);
 
-        ObservableList<ObservableList<String>> rows = FXCollections.observableArrayList();
+        allRows.clear();
         for (List<String> row : result.rows()) {
-            rows.add(FXCollections.observableArrayList(row));
+            allRows.add(FXCollections.observableArrayList(row));
         }
-        setItems(rows);
+        applyRowFilter(rowFilter);
 
-        if (rows.isEmpty()) {
+        if (allRows.isEmpty()) {
             placeholder.setText("Query OK \u2014 no rows returned (%d ms)".formatted(result.executionTimeMs()));
+        }
+    }
+
+    /**
+     * Case-insensitive substring filter across all cells. Blank clears the filter.
+     */
+    public void applyRowFilter(String query) {
+        rowFilter = query == null ? "" : query.strip();
+        if (rowFilter.isEmpty()) {
+            setItems(allRows);
+            return;
+        }
+        String needle = rowFilter.toLowerCase();
+        ObservableList<ObservableList<String>> filtered = FXCollections.observableArrayList();
+        for (ObservableList<String> row : allRows) {
+            if (rowMatches(row, needle)) {
+                filtered.add(row);
+            }
+        }
+        setItems(filtered);
+        if (filtered.isEmpty() && !allRows.isEmpty()) {
+            placeholder.setText("No rows match \u201c" + rowFilter + "\u201d");
+        }
+    }
+
+    public String rowFilter() {
+        return rowFilter;
+    }
+
+    /** Re-estimates preferred widths from headers and sampled cell values. */
+    public void fitColumnWidths() {
+        if (currentResult == null || !currentResult.isResultSet()) {
+            return;
+        }
+        List<String> names = currentResult.columnNames();
+        // Skip the leading "#" column.
+        for (int i = 0; i < names.size(); i++) {
+            int tableColumnIndex = i + 1;
+            if (tableColumnIndex >= getColumns().size()) {
+                break;
+            }
+            TableColumn<ObservableList<String>, ?> column = getColumns().get(tableColumnIndex);
+            column.setPrefWidth(estimateWidth(names.get(i), currentResult.rows(), i));
         }
     }
 
@@ -191,9 +236,20 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
     /** Drops all columns and rows and restores the idle placeholder. */
     public void clear() {
         currentResult = null;
+        rowFilter = "";
+        allRows.clear();
         setItems(FXCollections.observableArrayList());
         getColumns().clear();
         placeholder.setText(PLACEHOLDER_IDLE);
+    }
+
+    private static boolean rowMatches(ObservableList<String> row, String needleLower) {
+        for (String cell : row) {
+            if (cell != null && cell.toLowerCase().contains(needleLower)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Shows a message in place of results, e.g. while a query is running. */

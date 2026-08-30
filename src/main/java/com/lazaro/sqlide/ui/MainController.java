@@ -274,6 +274,7 @@ public final class MainController {
                 KeyCode.C, KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN);
         KeyCombination exportFile = new KeyCodeCombination(
                 KeyCode.X, KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN);
+        KeyCombination findInResults = new KeyCodeCombination(KeyCode.F, KeyCombination.SHORTCUT_DOWN);
 
         scene.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
             if (run.match(event) || runAlt.match(event)) {
@@ -288,6 +289,8 @@ public final class MainController {
                 consumeAnd(event, () -> copyActiveResult(ResultExporter.Format.TSV));
             } else if (exportFile.match(event)) {
                 consumeAnd(event, () -> exportActiveResult(false));
+            } else if (findInResults.match(event)) {
+                consumeAnd(event, () -> outcome.toolbar().focusFind());
             } else if (toggleSidebar.match(event)) {
                 consumeAnd(event, this::toggleSidebar);
             } else if (newTab.match(event)) {

@@ -46,6 +46,7 @@ public final class QueryOutcomePane extends VBox {
         toolbar.setOnRefresh(() -> onRefresh.run());
         toolbar.setOnClear(this::clearUnpinned);
         toolbar.setOnTogglePin(this::togglePinSelected);
+        toolbar.setOnToggleView(this::toggleViewSelected);
         resultTabs.getSelectionModel().selectedItemProperty().addListener((observable, previous, current) -> {
             syncToolbarState();
             onActionsChanged.run();
@@ -203,6 +204,14 @@ public final class QueryOutcomePane extends VBox {
         onActionsChanged.run();
     }
 
+    private void toggleViewSelected() {
+        Tab selected = resultTabs.getSelectionModel().getSelectedItem();
+        if (selected != null && selected.getContent() instanceof ResultPage page) {
+            page.toggleView();
+            syncToolbarState();
+        }
+    }
+
     private static boolean isPinned(Tab tab) {
         return tab != null && tab.getStyleClass().contains(PINNED_STYLE);
     }
@@ -227,6 +236,13 @@ public final class QueryOutcomePane extends VBox {
         boolean hasPage = selected != null && selected.getContent() instanceof ResultPage;
         toolbar.setActionsEnabled(hasPage);
         toolbar.setPinnedSelected(isPinned(selected));
+        if (hasPage) {
+            ResultPage page = (ResultPage) selected.getContent();
+            toolbar.setViewToggleAvailable(page.hasPlan(), page.showingPlan());
+        } else {
+            toolbar.setViewToggleAvailable(false, false);
+        }
+        toolbar.reapplyFindIfOpen();
     }
 
     private static Tab wrap(String title, ResultPage page, boolean error, boolean pinned) {
@@ -263,6 +279,8 @@ public final class QueryOutcomePane extends VBox {
         private final DynamicResultTable table = new DynamicResultTable();
         private final ExplainPlanTreeView planTree = new ExplainPlanTreeView();
         private QueryResult result;
+        private ExplainPlanNode plan;
+        private boolean showingPlan;
 
         private ResultPage() {
             truncationBanner.getStyleClass().add("result-truncation-banner");
@@ -295,13 +313,15 @@ public final class QueryOutcomePane extends VBox {
                 page.table.showMessage("Fix the statement above and run again.");
                 return page;
             }
-            if (preferPlan && result.isResultSet()) {
-                page.showPlan(ExplainPlanParser.parse(result));
-                return page;
-            }
-            var plan = ExplainPlanParser.tryParse(result);
-            if (plan.isPresent() && looksUseful(plan.get())) {
-                page.showPlan(plan.get());
+            if (result.isResultSet()) {
+                page.table.setResult(result);
+                ExplainPlanNode parsed = preferPlan
+                        ? ExplainPlanParser.parse(result)
+                        : ExplainPlanParser.tryParse(result).orElse(null);
+                if (parsed != null && looksUseful(parsed)) {
+                    page.plan = parsed;
+                    page.showPlan(parsed);
+                }
                 return page;
             }
             page.table.setResult(result);
@@ -314,6 +334,25 @@ public final class QueryOutcomePane extends VBox {
 
         QueryResult result() {
             return result;
+        }
+
+        boolean hasPlan() {
+            return plan != null;
+        }
+
+        boolean showingPlan() {
+            return showingPlan;
+        }
+
+        void toggleView() {
+            if (plan == null) {
+                return;
+            }
+            if (showingPlan) {
+                showGrid();
+            } else {
+                showPlan(plan);
+            }
         }
 
         private void applyTruncationBanner(QueryResult result) {
@@ -330,11 +369,21 @@ public final class QueryOutcomePane extends VBox {
         }
 
         private void showPlan(ExplainPlanNode plan) {
+            this.plan = plan;
+            showingPlan = true;
             table.setVisible(false);
             table.setManaged(false);
             planTree.setVisible(true);
             planTree.setManaged(true);
             planTree.setPlan(plan);
+        }
+
+        private void showGrid() {
+            showingPlan = false;
+            planTree.setVisible(false);
+            planTree.setManaged(false);
+            table.setVisible(true);
+            table.setManaged(true);
         }
 
         private static boolean looksUseful(ExplainPlanNode plan) {

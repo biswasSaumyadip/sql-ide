@@ -297,6 +297,31 @@
     -fx-stroke: #a4acb9;
 }
 
+.icon-find,
+.icon-copy,
+.icon-fit,
+.icon-grid,
+.icon-plan {
+    -fx-stroke: #a4acb9;
+}
+
+.result-toolbar-find {
+    -fx-background-color: #2b2d31;
+    -fx-background-radius: 4px;
+    -fx-border-color: #454951;
+    -fx-border-radius: 4px;
+    -fx-border-width: 1px;
+    -fx-text-fill: #d6d9de;
+    -fx-prompt-text-fill: #7f848e;
+    -fx-padding: 2px 6px;
+    -fx-font-size: 11px;
+    -fx-pref-height: 26px;
+}
+
+.result-toolbar-find:focused {
+    -fx-border-color: #4c7fad;
+}
+
 .result-tab-pinned {
     -fx-opacity: 1.0;
 }

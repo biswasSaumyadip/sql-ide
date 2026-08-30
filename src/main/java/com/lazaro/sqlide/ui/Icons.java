@@ -274,6 +274,56 @@ public final class Icons {
         return group(funnel);
     }
 
+    /** Magnifying glass for find-in-results. */
+    public static Node find() {
+        Circle lens = outlined(new Circle(6.0, 6.0, 3.8), "icon-find");
+        Line handle = outlined(new Line(8.8, 8.8, 12.0, 12.0), "icon-find");
+        return group(lens, handle);
+    }
+
+    /** Two overlapping sheets for quick copy. */
+    public static Node copy() {
+        Rectangle back = outlined(new Rectangle(4.0, 2.0, 7.0, 8.0), "icon-copy");
+        Rectangle front = outlined(new Rectangle(2.5, 4.0, 7.0, 8.0), "icon-copy");
+        return group(back, front);
+    }
+
+    /** Horizontal arrows for fit-column-widths. */
+    public static Node fitColumns() {
+        Line leftShaft = outlined(new Line(1.5, 7.0, 5.5, 7.0), "icon-fit");
+        Polygon leftHead = new Polygon(1.5, 7.0, 4.0, 4.8, 4.0, 9.2);
+        leftHead.setFill(null);
+        leftHead.setStrokeWidth(STROKE);
+        leftHead.getStyleClass().addAll(BASE_CLASS, "icon-fit");
+        Line rightShaft = outlined(new Line(8.5, 7.0, 12.5, 7.0), "icon-fit");
+        Polygon rightHead = new Polygon(12.5, 7.0, 10.0, 4.8, 10.0, 9.2);
+        rightHead.setFill(null);
+        rightHead.setStrokeWidth(STROKE);
+        rightHead.getStyleClass().addAll(BASE_CLASS, "icon-fit");
+        Line mid = outlined(new Line(6.2, 3.5, 6.2, 10.5), "icon-fit");
+        Line mid2 = outlined(new Line(7.8, 3.5, 7.8, 10.5), "icon-fit");
+        return group(leftShaft, leftHead, rightShaft, rightHead, mid, mid2);
+    }
+
+    /** Compact grid for result-table view. */
+    public static Node grid() {
+        Rectangle frame = outlined(new Rectangle(2.0, 2.5, 10.0, 9.0), "icon-grid");
+        Line v = outlined(new Line(7.0, 2.5, 7.0, 11.5), "icon-grid");
+        Line h = outlined(new Line(2.0, 7.0, 12.0, 7.0), "icon-grid");
+        return group(frame, v, h);
+    }
+
+    /** Branching tree for EXPLAIN plan view. */
+    public static Node planTree() {
+        Line trunk = outlined(new Line(4.0, 3.0, 4.0, 11.0), "icon-plan");
+        Line branch = outlined(new Line(4.0, 7.0, 10.0, 7.0), "icon-plan");
+        Line leaf = outlined(new Line(10.0, 7.0, 10.0, 11.0), "icon-plan");
+        Circle root = outlined(new Circle(4.0, 3.0, 1.4), "icon-plan");
+        Circle mid = outlined(new Circle(10.0, 7.0, 1.4), "icon-plan");
+        Circle tip = outlined(new Circle(10.0, 11.0, 1.4), "icon-plan");
+        return group(trunk, branch, leaf, root, mid, tip);
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private static <T extends Shape> T outlined(T shape, String variantClass) {

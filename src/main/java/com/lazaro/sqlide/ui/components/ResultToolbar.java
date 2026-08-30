@@ -14,6 +14,7 @@ import javafx.scene.control.MenuButton;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.Separator;
 import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.HBox;
@@ -54,6 +55,11 @@ public final class ResultToolbar extends HBox {
     }
 
     private final MenuButton exportButton = new MenuButton("Export", Icons.export());
+    private final Button copyButton = new Button();
+    private final ToggleButton findButton = new ToggleButton();
+    private final TextField findField = new TextField();
+    private final Button fitColumnsButton = new Button();
+    private final ToggleButton viewToggle = new ToggleButton();
     private final ToggleButton pinButton = new ToggleButton();
     private final Button refreshButton = new Button();
     private final Button clearButton = new Button();
@@ -66,6 +72,7 @@ public final class ResultToolbar extends HBox {
     private Runnable onRefresh = () -> { };
     private Runnable onClear = () -> { };
     private Runnable onTogglePin = () -> { };
+    private Runnable onToggleView = () -> { };
     private Consumer<QueryResult> onExportToFile = result -> { };
     private Supplier<DynamicResultTable> tableSupplier = () -> null;
 
@@ -81,6 +88,40 @@ public final class ResultToolbar extends HBox {
         buildExportMenu();
         exportButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-button");
         exportButton.setTooltip(new Tooltip("Export results (Ctrl+Shift+C / Ctrl+Shift+X)"));
+
+        copyButton.setGraphic(Icons.copy());
+        copyButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-icon-button");
+        copyButton.setTooltip(new Tooltip("Copy as TSV (selection if any)"));
+        copyButton.setOnAction(event -> copyAsTsv());
+
+        findButton.setGraphic(Icons.find());
+        findButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-icon-button");
+        findButton.setTooltip(new Tooltip("Find in results (Ctrl+F)"));
+        findButton.setOnAction(event -> toggleFindBar(findButton.isSelected()));
+
+        findField.getStyleClass().add("result-toolbar-find");
+        findField.setPromptText("Find in results\u2026");
+        findField.setPrefWidth(160);
+        findField.setMaxWidth(220);
+        findField.setVisible(false);
+        findField.setManaged(false);
+        findField.textProperty().addListener((observable, previous, next) -> applyFind(next));
+        findField.setOnAction(event -> applyFind(findField.getText()));
+
+        fitColumnsButton.setGraphic(Icons.fitColumns());
+        fitColumnsButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-icon-button");
+        fitColumnsButton.setTooltip(new Tooltip("Fit column widths to content"));
+        fitColumnsButton.setOnAction(event -> {
+            DynamicResultTable table = tableSupplier.get();
+            if (table != null) {
+                table.fitColumnWidths();
+            }
+        });
+
+        viewToggle.setGraphic(Icons.planTree());
+        viewToggle.getStyleClass().addAll(Styles.FLAT, "result-toolbar-icon-button");
+        viewToggle.setTooltip(new Tooltip("Toggle grid / execution plan"));
+        viewToggle.setOnAction(event -> onToggleView.run());
 
         pinButton.setGraphic(Icons.pin());
         pinButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-icon-button");
@@ -113,6 +154,12 @@ public final class ResultToolbar extends HBox {
                 title,
                 subtleSeparator(),
                 exportButton,
+                copyButton,
+                findButton,
+                findField,
+                fitColumnsButton,
+                viewToggle,
+                subtleSeparator(),
                 pinButton,
                 refreshButton,
                 clearButton,
@@ -123,6 +170,7 @@ public final class ResultToolbar extends HBox {
 
         autoRefreshTimeline.setCycleCount(Timeline.INDEFINITE);
         setActionsEnabled(false);
+        setViewToggleAvailable(false, false);
     }
 
     public void setTableSupplier(Supplier<DynamicResultTable> tableSupplier) {
@@ -145,8 +193,21 @@ public final class ResultToolbar extends HBox {
         this.onTogglePin = action == null ? () -> { } : action;
     }
 
+    public void setOnToggleView(Runnable action) {
+        this.onToggleView = action == null ? () -> { } : action;
+    }
+
     public void setPinnedSelected(boolean pinned) {
         pinButton.setSelected(pinned);
+    }
+
+    public void setViewToggleAvailable(boolean available, boolean showingPlan) {
+        viewToggle.setDisable(!available);
+        viewToggle.setSelected(showingPlan);
+        viewToggle.setGraphic(showingPlan ? Icons.grid() : Icons.planTree());
+        viewToggle.setTooltip(new Tooltip(showingPlan
+                ? "Show result grid"
+                : "Show execution plan"));
     }
 
     public void setSummary(String text) {
@@ -155,8 +216,15 @@ public final class ResultToolbar extends HBox {
 
     public void setActionsEnabled(boolean enabled) {
         exportButton.setDisable(!enabled);
+        copyButton.setDisable(!enabled);
+        findButton.setDisable(!enabled);
+        fitColumnsButton.setDisable(!enabled);
         pinButton.setDisable(!enabled);
         clearButton.setDisable(!enabled);
+        if (!enabled) {
+            toggleFindBar(false);
+            findButton.setSelected(false);
+        }
     }
 
     public void setRefreshEnabled(boolean enabled) {
@@ -181,6 +249,24 @@ public final class ResultToolbar extends HBox {
         updateAutoRefreshLabel();
     }
 
+    /** Opens the find field and focuses it (e.g. Ctrl+F). */
+    public void focusFind() {
+        if (findButton.isDisabled()) {
+            return;
+        }
+        findButton.setSelected(true);
+        toggleFindBar(true);
+        findField.requestFocus();
+        findField.selectAll();
+    }
+
+    /** Re-applies the find filter after switching result tabs. */
+    public void reapplyFindIfOpen() {
+        if (findField.isVisible()) {
+            applyFind(findField.getText());
+        }
+    }
+
     public boolean copyAsTsv() {
         DynamicResultTable table = tableSupplier.get();
         return table != null && table.copyAsTsv();
@@ -189,6 +275,25 @@ public final class ResultToolbar extends HBox {
     public boolean copyAsCsv() {
         DynamicResultTable table = tableSupplier.get();
         return table != null && table.copyAsCsv();
+    }
+
+    private void toggleFindBar(boolean show) {
+        findField.setVisible(show);
+        findField.setManaged(show);
+        if (show) {
+            findField.requestFocus();
+            applyFind(findField.getText());
+        } else {
+            findField.clear();
+            applyFind("");
+        }
+    }
+
+    private void applyFind(String query) {
+        DynamicResultTable table = tableSupplier.get();
+        if (table != null) {
+            table.applyRowFilter(query);
+        }
     }
 
     private void buildExportMenu() {
