@@ -54,7 +54,14 @@ public final class SqlAutocompleteEngine {
             "INTO", "VALUES", "SET", "AS", "UNION", "ALL", "WITH",
             "CREATE", "ALTER", "DROP", "TRUNCATE", "TABLE", "VIEW", "INDEX",
             "AND", "OR", "NOT", "IN", "EXISTS", "BETWEEN", "LIKE", "IS", "NULL",
-            "CASE", "WHEN", "THEN", "ELSE", "END", "ASC", "DESC"
+            "CASE", "WHEN", "THEN", "ELSE", "END", "ASC", "DESC",
+            "BEGIN", "START", "TRANSACTION", "COMMIT", "ROLLBACK"
+    };
+
+    /** Multi-word keywords offered as a single insert (e.g. typing {@code STAR} → {@code START TRANSACTION}). */
+    private static final String[] KEYWORD_PHRASES = {
+            "START TRANSACTION",
+            "BEGIN TRANSACTION"
     };
 
     /** Keywords that read more naturally with a trailing space. */
@@ -63,7 +70,8 @@ public final class SqlAutocompleteEngine {
             "RIGHT", "FULL", "OUTER", "CROSS", "ON", "GROUP", "ORDER", "BY", "HAVING",
             "LIMIT", "OFFSET", "INTO", "VALUES", "SET", "AS", "UNION", "WITH", "CREATE",
             "ALTER", "DROP", "TRUNCATE", "TABLE", "AND", "OR", "NOT", "IN", "EXISTS",
-            "BETWEEN", "LIKE", "IS", "CASE", "WHEN", "THEN", "ELSE");
+            "BETWEEN", "LIKE", "IS", "CASE", "WHEN", "THEN", "ELSE",
+            "BEGIN", "START", "TRANSACTION");
 
     private static final Pattern WORD = Pattern.compile("[A-Za-z0-9_]*$");
     private static final Pattern DOT_QUALIFIER = Pattern.compile("([A-Za-z0-9_]+)\\.\\s*([A-Za-z0-9_]*)$");
@@ -251,6 +259,27 @@ public final class SqlAutocompleteEngine {
             out.add(new Suggestion(
                     keyword, keyword, "keyword", Kind.KEYWORD, start, end, score + 10,
                     SPACE_AFTER.contains(keyword)));
+        }
+        if (only == null) {
+            for (String phrase : KEYWORD_PHRASES) {
+                // Only when the typed prefix starts the phrase (e.g. "STAR" → full
+                // "START TRANSACTION"). After "START ", plain TRANSACTION covers the rest.
+                int score = matchScore(phrase, prefix);
+                if (score < 0) {
+                    // Allow matching through the space: "start t" is not a single WORD,
+                    // but "startt"-style isn't typed — rely on first-word prefixes only.
+                    String firstWord = phrase.split("\\s+")[0];
+                    score = matchScore(firstWord, prefix);
+                    if (score < 0 || prefix.length() < 2) {
+                        continue;
+                    }
+                    // First word matched; boost the full phrase over the bare word.
+                    score = Math.max(score - 5, 40);
+                }
+                out.add(new Suggestion(
+                        phrase, phrase, "keyword", Kind.KEYWORD, start, end, score + 25,
+                        false));
+            }
         }
         return out;
     }

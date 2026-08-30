@@ -189,6 +189,17 @@ class SqlAutocompleteEngineTest {
                 > SqlAutocompleteEngine.matchScore("status", "us"));
     }
 
+    @Test
+    @DisplayName("transaction keywords are suggested")
+    void suggestsTransactionKeywords() {
+        assertTrue(engine.suggest("COM", 3).stream().anyMatch(s -> s.insertText().equals("COMMIT")));
+        assertTrue(engine.suggest("ROL", 3).stream().anyMatch(s -> s.insertText().equals("ROLLBACK")));
+        assertTrue(engine.suggest("STAR", 4).stream()
+                .anyMatch(s -> s.insertText().equals("START TRANSACTION")));
+        assertTrue(engine.suggest("START TRA", "START TRA".length()).stream()
+                .anyMatch(s -> s.insertText().equals("TRANSACTION")));
+    }
+
     private static int indexOf(List<Suggestion> suggestions, String insertText) {
         for (int i = 0; i < suggestions.size(); i++) {
             if (suggestions.get(i).insertText().equals(insertText)) {
