@@ -1448,6 +1448,42 @@
     -fx-text-fill: #e06c75;
 }
 
+/* ---------------------------------------------------------------- modify table */
+
+.modify-table-dialog.dialog-pane {
+    -fx-background-color: #1e1f22;
+}
+
+.modify-table-tabs .tab-header-background {
+    -fx-background-color: #17181b;
+}
+
+.modify-table-toolbar {
+    -fx-padding: 0 0 2 0;
+}
+
+.modify-table-hint {
+    -fx-text-fill: #7f848e;
+    -fx-font-size: 12px;
+}
+
+.modify-table-preview {
+    -fx-control-inner-background: #17181b;
+    -fx-text-fill: #d6d9de;
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 12px;
+    -fx-background-color: #17181b;
+}
+
+.modify-table-dialog .dropped-row .text {
+    -fx-strikethrough: true;
+    -fx-fill: #7f848e;
+}
+
+.modify-table-dialog .added-row .text {
+    -fx-fill: #8fbf7f;
+}
+
 /* ---------------------------------------------------------------- object viewer */
 
 .object-viewer {

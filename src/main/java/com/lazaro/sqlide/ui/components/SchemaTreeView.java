@@ -66,6 +66,7 @@ public final class SchemaTreeView extends VBox {
     private Consumer<SchemaNode> onOpenData = node -> { };
     private Consumer<SchemaNode> onImportData = node -> { };
     private Consumer<SchemaNode> onTransferData = node -> { };
+    private Consumer<SchemaNode> onModifyTable = node -> { };
     private Consumer<SchemaNode> onUseDatabase = node -> { };
     private Runnable onConnectRequested = () -> { };
     private Consumer<ConnectionProfile> onConnectProfile = profile -> { };
@@ -161,6 +162,11 @@ public final class SchemaTreeView extends VBox {
                         item -> {
                             if (item != null && item.getValue() != null) {
                                 onTransferData.accept(item.getValue());
+                            }
+                        },
+                        item -> {
+                            if (item != null && item.getValue() != null) {
+                                onModifyTable.accept(item.getValue());
                             }
                         },
                         this::refreshTreeItem,
@@ -326,6 +332,10 @@ public final class SchemaTreeView extends VBox {
         this.onTransferData = onTransferData == null ? node -> { } : onTransferData;
     }
 
+    public void setOnModifyTable(Consumer<SchemaNode> onModifyTable) {
+        this.onModifyTable = onModifyTable == null ? node -> { } : onModifyTable;
+    }
+
     public void setOnUseDatabase(Consumer<SchemaNode> onUseDatabase) {
         this.onUseDatabase = onUseDatabase == null ? node -> { } : onUseDatabase;
     }
@@ -356,6 +366,19 @@ public final class SchemaTreeView extends VBox {
 
     public void setOnSessionFocused(Consumer<String> onSessionFocused) {
         this.onSessionFocused = onSessionFocused == null ? sessionId -> { } : onSessionFocused;
+    }
+
+    /** Nearest TABLE ancestor of the current selection, if any. Views are ignored. */
+    public Optional<SchemaNode> selectedTable() {
+        TreeItem<SchemaNode> item = tree.getSelectionModel().getSelectedItem();
+        while (item != null) {
+            SchemaNode node = item.getValue();
+            if (node != null && node.type() == NodeType.TABLE) {
+                return Optional.of(node);
+            }
+            item = item.getParent();
+        }
+        return Optional.empty();
     }
 
     public void refreshSavedConnections() {

@@ -26,6 +26,7 @@ import com.lazaro.sqlide.ui.components.RunConfigsPane;
 import com.lazaro.sqlide.ui.components.SchemaTreeView;
 import com.lazaro.sqlide.ui.components.SnippetsPane;
 import com.lazaro.sqlide.ui.components.SqlEditorPane;
+import com.lazaro.sqlide.ui.components.SqlTemplateGenerator;
 import com.lazaro.sqlide.ui.components.StatusBar;
 import com.lazaro.sqlide.core.transfer.TransferRequest;
 import com.lazaro.sqlide.core.transfer.TransferResult;
@@ -37,6 +38,7 @@ import com.lazaro.sqlide.ui.dialogs.ConnectionDialog;
 import com.lazaro.sqlide.ui.dialogs.SchemaDiagramDialog;
 import com.lazaro.sqlide.ui.dialogs.SettingsDialog;
 import com.lazaro.sqlide.ui.dialogs.ImportDataDialog;
+import com.lazaro.sqlide.ui.dialogs.ModifyTableDialog;
 import com.lazaro.sqlide.ui.dialogs.ParameterPromptDialog;
 import com.lazaro.sqlide.ui.dialogs.TableDataTransferDialog;
 import com.lazaro.sqlide.ui.dialogs.TransferProgressDialog;
@@ -185,6 +187,7 @@ public final class MainController {
         schemaTree.setOnOpenData(this::openTableData);
         schemaTree.setOnImportData(this::openImportData);
         schemaTree.setOnTransferData(this::openTransferData);
+        schemaTree.setOnModifyTable(this::openModifyTable);
         schemaTree.setOnUseDatabase(this::useDatabase);
         schemaTree.setOnInsertSql(sql -> editors.insertIntoActiveEditor(sql));
         schemaTree.setOnOpenTemplate(template -> editors.openGeneratedSql(
@@ -396,6 +399,7 @@ public final class MainController {
         KeyCombination formatCode = new KeyCodeCombination(
                 KeyCode.L, KeyCombination.SHORTCUT_DOWN, KeyCombination.ALT_DOWN);
         KeyCombination settings = new KeyCodeCombination(KeyCode.COMMA, KeyCombination.SHORTCUT_DOWN);
+        KeyCombination modifyTable = new KeyCodeCombination(KeyCode.F6, KeyCombination.CONTROL_DOWN);
 
         scene.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
             if (run.match(event) || runAlt.match(event)) {
@@ -437,6 +441,8 @@ public final class MainController {
                 consumeAnd(event, this::openConnectionDialog);
             } else if (refresh.match(event)) {
                 consumeAnd(event, this::refreshSchema);
+            } else if (modifyTable.match(event)) {
+                consumeAnd(event, () -> schemaTree.selectedTable().ifPresent(this::openModifyTable));
             }
         });
     }
@@ -798,6 +804,31 @@ public final class MainController {
                 state,
                 this::openObjectViewer);
         dialog.showAndWait();
+    }
+
+    private void openModifyTable(SchemaNode node) {
+        if (node == null || node.type() != SchemaNode.NodeType.TABLE) {
+            return;
+        }
+        Optional<ConnectionSession> sessionOpt = sessions.focused()
+                .filter(ConnectionSession::isConnected)
+                .or(() -> resolveSession(editors.activeEditor()).filter(ConnectionSession::isConnected));
+        if (sessionOpt.isEmpty()) {
+            return;
+        }
+        ConnectionSession session = sessionOpt.get();
+        SchemaCache cache = session.schemaCache();
+        SchemaNode detailed = cache.findTable(node.name(), node.metadata(SchemaNode.META_CATALOG)).orElse(node);
+        String catalog = detailed.metadata(SchemaNode.META_CATALOG);
+        List<String> tableNames = ModifyTableDialog.tableNames(cache, catalog);
+        ModifyTableDialog dialog = new ModifyTableDialog(
+                owner(),
+                detailed,
+                session.config().driver(),
+                tableNames);
+        dialog.showAndWait().ifPresent(sql -> editors.openGeneratedSql(
+                new SqlTemplateGenerator.Template(sql, "", "query-modify-table.sql"),
+                session.id()));
     }
 
     private void openTablePreviewFromDoc(SqlDocResolver.Doc doc) {
