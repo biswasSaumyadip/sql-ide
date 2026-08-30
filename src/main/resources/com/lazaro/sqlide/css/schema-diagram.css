@@ -1,0 +1,98 @@
+.schema-diagram-dialog.dialog-pane {
+    -fx-background-color: #1e1f22;
+}
+
+.schema-diagram-canvas {
+    -fx-background-color: #1e1f22;
+}
+
+.schema-diagram-toolbar {
+    -fx-background-color: #2b2d30;
+    -fx-border-color: transparent transparent #3c3f41 transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.schema-diagram-filter {
+    -fx-pref-width: 220;
+}
+
+.schema-diagram-status {
+    -fx-text-fill: #8b919a;
+    -fx-font-size: 12px;
+}
+
+.schema-diagram-host,
+.schema-diagram-viewport {
+    -fx-background-color: #1a1b1e;
+}
+
+.schema-diagram-table {
+    -fx-background-color: #2b2d30;
+    -fx-border-color: #4a4e56;
+    -fx-border-width: 1;
+    -fx-border-radius: 4;
+    -fx-background-radius: 4;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.35), 8, 0.2, 0, 2);
+    -fx-cursor: hand;
+}
+
+.schema-diagram-table.selected {
+    -fx-border-color: #4fa6ee;
+    -fx-border-width: 2;
+}
+
+.schema-diagram-table.related {
+    -fx-border-color: #6aa9d8;
+}
+
+.schema-diagram-table.dimmed {
+    -fx-opacity: 0.4;
+}
+
+.schema-diagram-view {
+    -fx-border-style: dashed;
+}
+
+.schema-diagram-table-header {
+    -fx-background-color: #32353b;
+    -fx-background-radius: 4 4 0 0;
+    -fx-border-color: transparent transparent #3c3f41 transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.schema-diagram-table-title {
+    -fx-text-fill: #e8eaed;
+    -fx-font-size: 12px;
+}
+
+.schema-diagram-column-name {
+    -fx-text-fill: #d0d4db;
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 11px;
+}
+
+.schema-diagram-column-type {
+    -fx-text-fill: #8b919a;
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 10px;
+}
+
+.schema-diagram-key {
+    -fx-text-fill: #8b919a;
+    -fx-font-size: 10px;
+    -fx-font-weight: bold;
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+}
+
+.schema-diagram-key.pk {
+    -fx-text-fill: #e2b340;
+}
+
+.schema-diagram-key.fk {
+    -fx-text-fill: #6cb6ff;
+}
+
+.schema-diagram-more {
+    -fx-text-fill: #8b919a;
+    -fx-font-size: 10px;
+}

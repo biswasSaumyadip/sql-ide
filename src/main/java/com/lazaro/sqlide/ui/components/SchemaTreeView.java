@@ -62,6 +62,7 @@ public final class SchemaTreeView extends VBox {
 
     private Consumer<SchemaNode> onActivate = node -> { };
     private Consumer<SchemaNode> onViewObject = node -> { };
+    private Consumer<SchemaNode> onShowDiagram = node -> { };
     private Consumer<SchemaNode> onOpenData = node -> { };
     private Consumer<SchemaNode> onImportData = node -> { };
     private Consumer<SchemaNode> onTransferData = node -> { };
@@ -140,6 +141,11 @@ public final class SchemaTreeView extends VBox {
                         item -> {
                             if (item != null && item.getValue() != null) {
                                 onViewObject.accept(item.getValue());
+                            }
+                        },
+                        item -> {
+                            if (item != null && item.getValue() != null) {
+                                onShowDiagram.accept(item.getValue());
                             }
                         },
                         item -> {
@@ -302,6 +308,10 @@ public final class SchemaTreeView extends VBox {
 
     public void setOnViewObject(Consumer<SchemaNode> onViewObject) {
         this.onViewObject = onViewObject == null ? node -> { } : onViewObject;
+    }
+
+    public void setOnShowDiagram(Consumer<SchemaNode> onShowDiagram) {
+        this.onShowDiagram = onShowDiagram == null ? node -> { } : onShowDiagram;
     }
 
     public void setOnOpenData(Consumer<SchemaNode> onOpenData) {

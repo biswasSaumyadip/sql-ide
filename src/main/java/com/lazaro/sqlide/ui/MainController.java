@@ -34,6 +34,7 @@ import com.lazaro.sqlide.core.sql.SqlParameterParser;
 import com.lazaro.sqlide.ui.dialogs.CompareDataDialog;
 import com.lazaro.sqlide.ui.dialogs.CompareStructureDialog;
 import com.lazaro.sqlide.ui.dialogs.ConnectionDialog;
+import com.lazaro.sqlide.ui.dialogs.SchemaDiagramDialog;
 import com.lazaro.sqlide.ui.dialogs.SettingsDialog;
 import com.lazaro.sqlide.ui.dialogs.ImportDataDialog;
 import com.lazaro.sqlide.ui.dialogs.ParameterPromptDialog;
@@ -180,6 +181,7 @@ public final class MainController {
         schemaTree.setOnDeleteProfile(this::deleteSavedProfile);
         schemaTree.setOnActivate(this::insertNodeReference);
         schemaTree.setOnViewObject(this::openObjectViewer);
+        schemaTree.setOnShowDiagram(this::openSchemaDiagram);
         schemaTree.setOnOpenData(this::openTableData);
         schemaTree.setOnImportData(this::openImportData);
         schemaTree.setOnTransferData(this::openTransferData);
@@ -753,6 +755,43 @@ public final class MainController {
                 .orElseGet(SchemaCache::new);
         SchemaNode detailed = cache.findTable(node.name()).orElse(node);
         editors.openObjectViewer(detailed);
+    }
+
+    private void openSchemaDiagram(SchemaNode node) {
+        Optional<ConnectionSession> sessionOpt = sessions.focused()
+                .filter(ConnectionSession::isConnected)
+                .or(() -> resolveSession(editors.activeEditor()).filter(ConnectionSession::isConnected));
+        if (node == null || sessionOpt.isEmpty()) {
+            return;
+        }
+        ConnectionSession session = sessionOpt.get();
+        SchemaCache cache = session.schemaCache();
+        if (!cache.isReady()) {
+            refreshSchemaCache(session);
+        }
+
+        String catalog;
+        String focusTable = null;
+        SchemaNode.NodeType type = node.type();
+        if (type == SchemaNode.NodeType.DATABASE || type == SchemaNode.NodeType.SCHEMA) {
+            catalog = node.name();
+        } else if (type == SchemaNode.NodeType.TABLE || type == SchemaNode.NodeType.VIEW) {
+            catalog = node.metadata(SchemaNode.META_CATALOG);
+            if (catalog == null || catalog.isBlank()) {
+                catalog = session.driver().activeCatalog().orElse(null);
+            }
+            focusTable = node.name();
+        } else {
+            catalog = session.driver().activeCatalog().orElse(null);
+        }
+
+        SchemaDiagramDialog dialog = new SchemaDiagramDialog(
+                owner(),
+                cache,
+                catalog,
+                focusTable,
+                this::openObjectViewer);
+        dialog.showAndWait();
     }
 
     private void openTablePreviewFromDoc(SqlDocResolver.Doc doc) {

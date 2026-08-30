@@ -28,6 +28,7 @@ final class SchemaTreeContextMenus {
             Consumer<String> insertSql,
             Consumer<SqlTemplateGenerator.Template> openTemplate,
             Consumer<TreeItem<SchemaNode>> viewObject,
+            Consumer<TreeItem<SchemaNode>> showDiagram,
             Consumer<TreeItem<SchemaNode>> openData,
             Consumer<TreeItem<SchemaNode>> importData,
             Consumer<TreeItem<SchemaNode>> transferData,
@@ -123,6 +124,10 @@ final class SchemaTreeContextMenus {
                     }
                 }));
 
+        Menu diagrams = new Menu("Diagrams");
+        diagrams.getItems().add(
+                action("Show Visualization\u2026", null, () -> actions.showDiagram.accept(item)));
+
         return List.of(
                 neu,
                 action("Refresh", new KeyCodeCombination(KeyCode.F5, KeyCombination.CONTROL_DOWN),
@@ -131,6 +136,7 @@ final class SchemaTreeContextMenus {
                 action("Copy Name", null, () -> copy(item.getValue().name())),
                 action("Copy Qualified Name", null, () -> copy(SchemaObjectNames.qualifiedName(item))),
                 scripts,
+                diagrams,
                 new SeparatorMenuItem(),
                 danger("Drop Database\u2026", () -> insert(SchemaObjectNames.dropStatement(item))));
     }
@@ -155,6 +161,10 @@ final class SchemaTreeContextMenus {
                     }
                 }));
 
+        Menu diagrams = new Menu("Diagrams");
+        diagrams.getItems().add(
+                action("Show Visualization\u2026", null, () -> actions.showDiagram.accept(item)));
+
         return List.of(
                 neu,
                 action("Edit Data", null, () -> actions.openData.accept(item)),
@@ -172,6 +182,7 @@ final class SchemaTreeContextMenus {
                 action("Copy Name", null, () -> copy(item.getValue().name())),
                 action("Copy Qualified Name", null, () -> copy(SchemaObjectNames.qualifiedName(item))),
                 scripts,
+                diagrams,
                 new SeparatorMenuItem(),
                 danger("Truncate Table\u2026", () -> insert(SchemaObjectNames.truncateStatement(item))),
                 danger("Drop Table\u2026", () -> insert(SchemaObjectNames.dropStatement(item))));
@@ -185,6 +196,10 @@ final class SchemaTreeContextMenus {
                     actions.viewObject.accept(item);
                 }));
 
+        Menu diagrams = new Menu("Diagrams");
+        diagrams.getItems().add(
+                action("Show Visualization\u2026", null, () -> actions.showDiagram.accept(item)));
+
         return List.of(
                 action("Browse Data", null, () -> actions.openData.accept(item)),
                 action("Refresh", new KeyCodeCombination(KeyCode.F5, KeyCombination.CONTROL_DOWN),
@@ -195,6 +210,7 @@ final class SchemaTreeContextMenus {
                 action("Copy Name", null, () -> copy(item.getValue().name())),
                 action("Copy Qualified Name", null, () -> copy(SchemaObjectNames.qualifiedName(item))),
                 scripts,
+                diagrams,
                 new SeparatorMenuItem(),
                 danger("Drop View\u2026", () -> insert(SchemaObjectNames.dropStatement(item))));
     }
