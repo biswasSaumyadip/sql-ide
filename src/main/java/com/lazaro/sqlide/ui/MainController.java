@@ -6,10 +6,16 @@ import com.lazaro.sqlide.core.db.DriverRegistry;
 import com.lazaro.sqlide.core.db.QueryResult;
 import com.lazaro.sqlide.core.db.SchemaCache;
 import com.lazaro.sqlide.core.db.SchemaNode;
+import com.lazaro.sqlide.core.db.ScriptResult;
 import com.lazaro.sqlide.core.explain.ExplainSql;
+import com.lazaro.sqlide.core.export.ResultExporter;
+import com.lazaro.sqlide.core.history.QueryHistoryStore;
+import com.lazaro.sqlide.core.snippets.SnippetStore;
 import com.lazaro.sqlide.ui.components.EditorTabPane;
+import com.lazaro.sqlide.ui.components.QueryHistoryPane;
 import com.lazaro.sqlide.ui.components.QueryOutcomePane;
 import com.lazaro.sqlide.ui.components.SchemaTreeView;
+import com.lazaro.sqlide.ui.components.SnippetsPane;
 import com.lazaro.sqlide.ui.components.SqlEditorPane;
 import com.lazaro.sqlide.ui.components.StatusBar;
 import com.lazaro.sqlide.ui.dialogs.ConnectionDialog;
@@ -20,9 +26,13 @@ import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.ChoiceDialog;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.Separator;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.Tab;
+import javafx.scene.control.TabPane;
+import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToolBar;
 import javafx.scene.control.Tooltip;
@@ -32,9 +42,13 @@ import javafx.scene.input.KeyCombination;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.VBox;
+import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import javafx.stage.Window;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -62,6 +76,11 @@ public final class MainController {
     });
 
     private final SchemaTreeView schemaTree = new SchemaTreeView();
+    private final QueryHistoryStore historyStore = new QueryHistoryStore();
+    private final SnippetStore snippetStore = new SnippetStore();
+    private final QueryHistoryPane historyPane = new QueryHistoryPane(historyStore);
+    private final SnippetsPane snippetsPane = new SnippetsPane(snippetStore);
+    private final TabPane sidebarTabs = new TabPane();
     private final EditorTabPane editors = new EditorTabPane();
     private final QueryOutcomePane outcome = new QueryOutcomePane();
     private final StatusBar statusBar = new StatusBar();
@@ -112,6 +131,14 @@ public final class MainController {
         schemaTree.setOnActivate(this::insertNodeReference);
         schemaTree.setOnViewObject(this::openObjectViewer);
         schemaTree.setOnUseDatabase(this::useDatabase);
+        historyPane.setOnRerun(entry -> rerunHistory(entry.sql()));
+        historyPane.setOnInsert(entry -> editors.insertIntoActiveEditor(entry.sql()));
+        snippetsPane.setOnInsert(snippet -> editors.insertIntoActiveEditor(snippet.sql()));
+        snippetsPane.setSqlSupplier(() -> {
+            SqlEditorPane editor = editors.activeEditor();
+            return editor == null ? "" : editor.getEffectiveSql();
+        });
+        outcome.setOnExportRequest(this::exportActiveResult);
         editors.activeEditorProperty().addListener((observable, previous, current) -> bindCaret(current));
         bindCaret(editors.activeEditor());
 
@@ -176,9 +203,19 @@ public final class MainController {
         rail.setPrefWidth(RAIL_WIDTH);
         rail.setMaxWidth(RAIL_WIDTH);
 
+        Tab schemaTab = new Tab("Database", schemaTree);
+        schemaTab.setClosable(false);
+        Tab historyTab = new Tab("History", historyPane);
+        historyTab.setClosable(false);
+        Tab snippetsTab = new Tab("Snippets", snippetsPane);
+        snippetsTab.setClosable(false);
+        sidebarTabs.getTabs().setAll(schemaTab, historyTab, snippetsTab);
+        sidebarTabs.getStyleClass().add("sidebar-tabs");
+        sidebarTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+
         sidebar.getStyleClass().add("sidebar");
         sidebar.setLeft(rail);
-        sidebar.setCenter(schemaTree);
+        sidebar.setCenter(sidebarTabs);
         sidebar.setMinWidth(RAIL_WIDTH);
 
         outcome.setMinHeight(80);
@@ -276,14 +313,14 @@ public final class MainController {
 
     private void toggleSidebar() {
         if (sidebarCollapsed) {
-            schemaTree.setVisible(true);
-            schemaTree.setManaged(true);
+            sidebarTabs.setVisible(true);
+            sidebarTabs.setManaged(true);
             mainSplit.setDividerPositions(expandedMainDivider);
             sidebarCollapsed = false;
         } else {
             expandedMainDivider = mainSplit.getDividerPositions()[0];
-            schemaTree.setVisible(false);
-            schemaTree.setManaged(false);
+            sidebarTabs.setVisible(false);
+            sidebarTabs.setManaged(false);
             double width = Math.max(mainSplit.getWidth(), 1);
             mainSplit.setDividerPositions(RAIL_WIDTH / width);
             sidebarCollapsed = true;
@@ -454,8 +491,8 @@ public final class MainController {
             return;
         }
 
-        String sql = editor.getEffectiveSql();
-        if (sql.isBlank()) {
+        List<String> statements = editor.getEffectiveStatements();
+        if (statements.isEmpty()) {
             outcome.present(QueryResult.ofError("Nothing to run. Type a statement or select one.", 0));
             statusBar.setResult(QueryResult.ofError("Nothing to run", 0));
             return;
@@ -464,15 +501,22 @@ public final class MainController {
         ConnectionConfig.Driver dialect = active.currentConfig()
                 .map(ConnectionConfig::driver)
                 .orElse(ConnectionConfig.Driver.MYSQL);
-        final String toRun;
+
+        final List<String> toRun;
+        final String historySql;
         if (analyze == null) {
-            toRun = sql;
+            toRun = statements;
+            historySql = String.join(";\n", statements);
         } else {
-            toRun = ExplainSql.wrap(sql, dialect, analyze);
-            if (toRun.isBlank()) {
+            // Explain always targets the caret/selection as one statement.
+            String one = editor.getEffectiveSql();
+            String wrapped = ExplainSql.wrap(one, dialect, analyze);
+            if (wrapped.isBlank()) {
                 outcome.present(QueryResult.ofError("Nothing to explain.", 0));
                 return;
             }
+            toRun = List.of(wrapped);
+            historySql = wrapped;
         }
 
         cancelling = false;
@@ -480,10 +524,10 @@ public final class MainController {
         outcome.showLoading();
         statusBar.setQueryRunning();
 
-        Task<QueryResult> task = new Task<>() {
+        Task<ScriptResult> task = new Task<>() {
             @Override
-            protected QueryResult call() throws Exception {
-                return active.executeQueryAsync(toRun).get();
+            protected ScriptResult call() throws Exception {
+                return active.executeScriptAsync(toRun).get();
             }
         };
         activeTask = task;
@@ -491,13 +535,82 @@ public final class MainController {
             activeTask = null;
             cancelling = false;
             setQueryRunning(false);
-            QueryResult result = task.getValue();
-            outcome.present(result, preferPlan);
-            statusBar.setResult(result);
+            ScriptResult script = task.getValue();
+            outcome.presentScript(script, preferPlan);
+            statusBar.setScriptSummary(script.summary(), script.errorCount() > 0);
+            recordHistory(historySql, script);
+            historyPane.refresh();
             syncTransactionStatus();
-            if (!result.isError() && analyze == null) {
-                syncActiveCatalogFromSql(sql);
+            if (analyze == null && script.errorCount() == 0) {
+                for (String statement : statements) {
+                    syncActiveCatalogFromSql(statement);
+                }
             }
+        });
+        task.setOnFailed(event -> {
+            activeTask = null;
+            cancelling = false;
+            setQueryRunning(false);
+            QueryResult result = QueryResult.ofError(rootCauseMessage(task.getException()), 0);
+            outcome.present(result);
+            statusBar.setResult(result);
+            recordHistory(historySql, ScriptResult.ofSingle(result));
+            historyPane.refresh();
+            syncTransactionStatus();
+        });
+        task.setOnCancelled(event -> {
+            activeTask = null;
+            cancelling = false;
+            setQueryRunning(false);
+            QueryResult result = QueryResult.ofError("Query cancelled", 0);
+            outcome.present(result);
+            statusBar.setResult(result);
+            recordHistory(historySql, ScriptResult.ofSingle(result));
+            historyPane.refresh();
+            syncTransactionStatus();
+        });
+        backgroundTasks.execute(task);
+    }
+
+    private void rerunHistory(String sql) {
+        SqlEditorPane editor = editors.activeEditor();
+        if (editor != null) {
+            editor.setSql(sql);
+        }
+        if (!driver.isConnected()) {
+            outcome.present(QueryResult.ofError("Not connected. Use Connect or New Connection first.", 0));
+            return;
+        }
+        // Run the restored text as a script (may be multi-statement).
+        if (activeTask != null && activeTask.isRunning()) {
+            return;
+        }
+        List<String> statements = com.lazaro.sqlide.ui.components.SqlStatementExtractor.statements(sql);
+        if (statements.isEmpty()) {
+            return;
+        }
+        DataSourceDriver active = driver;
+        cancelling = false;
+        setQueryRunning(true);
+        outcome.showLoading();
+        statusBar.setQueryRunning();
+        Task<ScriptResult> task = new Task<>() {
+            @Override
+            protected ScriptResult call() throws Exception {
+                return active.executeScriptAsync(statements).get();
+            }
+        };
+        activeTask = task;
+        task.setOnSucceeded(event -> {
+            activeTask = null;
+            cancelling = false;
+            setQueryRunning(false);
+            ScriptResult script = task.getValue();
+            outcome.presentScript(script, false);
+            statusBar.setScriptSummary(script.summary(), script.errorCount() > 0);
+            recordHistory(sql, script);
+            historyPane.refresh();
+            syncTransactionStatus();
         });
         task.setOnFailed(event -> {
             activeTask = null;
@@ -512,12 +625,67 @@ public final class MainController {
             activeTask = null;
             cancelling = false;
             setQueryRunning(false);
-            QueryResult result = QueryResult.ofError("Query cancelled", 0);
-            outcome.present(result);
-            statusBar.setResult(result);
             syncTransactionStatus();
         });
         backgroundTasks.execute(task);
+    }
+
+    private void recordHistory(String sql, ScriptResult script) {
+        if (sql == null || sql.isBlank() || script == null) {
+            return;
+        }
+        historyStore.record(sql, script.summary(), script.errorCount() == 0, script.totalTimeMs());
+    }
+
+    private void exportActiveResult() {
+        QueryResult result = outcome.activeResult();
+        if (result == null || result.isError() || !result.isResultSet()) {
+            return;
+        }
+        ChoiceDialog<ResultExporter.Format> formatDialog = new ChoiceDialog<>(
+                ResultExporter.Format.CSV,
+                ResultExporter.Format.CSV,
+                ResultExporter.Format.JSON,
+                ResultExporter.Format.SQL_INSERT);
+        formatDialog.setTitle("Export results");
+        formatDialog.setHeaderText("Choose an export format");
+        formatDialog.setContentText("Format:");
+        formatDialog.initOwner(owner());
+        var format = formatDialog.showAndWait();
+        if (format.isEmpty()) {
+            return;
+        }
+
+        String tableName = "exported_table";
+        if (format.get() == ResultExporter.Format.SQL_INSERT) {
+            TextInputDialog tableDialog = new TextInputDialog(tableName);
+            tableDialog.setTitle("Export as INSERT");
+            tableDialog.setHeaderText("Target table name");
+            tableDialog.setContentText("Table:");
+            tableDialog.initOwner(owner());
+            tableName = tableDialog.showAndWait().orElse(tableName);
+        }
+
+        String extension = switch (format.get()) {
+            case CSV -> "*.csv";
+            case JSON -> "*.json";
+            case SQL_INSERT -> "*.sql";
+        };
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Export results");
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(format.get().name(), extension));
+        chooser.setInitialFileName("results" + extension.substring(1));
+        var file = chooser.showSaveDialog(owner());
+        if (file == null) {
+            return;
+        }
+        try {
+            String body = ResultExporter.export(result, format.get(), tableName);
+            Files.writeString(file.toPath(), body, StandardCharsets.UTF_8);
+            statusBar.setScriptSummary("Exported " + file.getName(), false);
+        } catch (Exception e) {
+            statusBar.setScriptSummary("Export failed: " + rootCauseMessage(e), true);
+        }
     }
 
     private void cancelQuery() {

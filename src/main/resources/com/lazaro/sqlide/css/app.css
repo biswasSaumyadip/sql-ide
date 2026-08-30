@@ -208,6 +208,101 @@
     -fx-background-color: #1b1c1f;
 }
 
+.sidebar-tabs {
+    -fx-background-color: #1b1c1f;
+}
+
+.sidebar-tabs > .tab-header-area .tab-header-background {
+    -fx-background-color: #1e1f22;
+    -fx-border-color: transparent transparent #303237 transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.sidebar-tabs .tab {
+    -fx-background-color: transparent;
+    -fx-background-radius: 5px 5px 0 0;
+    -fx-padding: 4px 10px;
+}
+
+.sidebar-tabs .tab:selected {
+    -fx-background-color: #2f5d8c;
+}
+
+.sidebar-tabs .tab .tab-label {
+    -fx-text-fill: #b6bcc6;
+    -fx-font-size: 11px;
+}
+
+.sidebar-tabs .tab:selected .tab-label {
+    -fx-text-fill: #eceff4;
+    -fx-font-weight: bold;
+}
+
+.sidebar-search {
+    -fx-background-color: #17181b;
+    -fx-text-fill: #d6d9de;
+    -fx-prompt-text-fill: #7f848e;
+    -fx-background-radius: 4px;
+    -fx-border-color: #303237;
+    -fx-border-radius: 4px;
+}
+
+.panel-header-action {
+    -fx-background-color: transparent;
+    -fx-text-fill: #a4acb9;
+    -fx-font-size: 11px;
+    -fx-padding: 2px 8px;
+    -fx-background-radius: 4px;
+}
+
+.panel-header-action:hover {
+    -fx-background-color: #2b2d31;
+    -fx-text-fill: #eceff4;
+}
+
+.history-list,
+.snippets-list {
+    -fx-background-color: transparent;
+    -fx-border-width: 0;
+    -fx-padding: 0 4px 8px 4px;
+}
+
+.history-list .list-cell,
+.snippets-list .list-cell {
+    -fx-background-color: transparent;
+    -fx-background-radius: 4px;
+    -fx-padding: 6px 8px;
+}
+
+.history-list .list-cell:hover,
+.snippets-list .list-cell:hover {
+    -fx-background-color: #262a32;
+}
+
+.history-list .list-cell:selected,
+.snippets-list .list-cell:selected {
+    -fx-background-color: #2f5d8c;
+}
+
+.history-sql,
+.snippet-name {
+    -fx-text-fill: #d6d9de;
+    -fx-font-size: 12px;
+}
+
+.history-meta,
+.snippet-preview {
+    -fx-text-fill: #7f848e;
+    -fx-font-size: 11px;
+}
+
+.history-list .list-cell:selected .history-sql,
+.history-list .list-cell:selected .history-meta,
+.snippets-list .list-cell:selected .snippet-name,
+.snippets-list .list-cell:selected .snippet-preview {
+    -fx-text-fill: #eceff4;
+}
+
 .schema-tree {
     -fx-background-color: transparent;
     -fx-border-width: 0;
@@ -329,6 +424,40 @@
 
 .query-outcome-pane {
     -fx-background-color: #17181b;
+}
+
+.result-tabs {
+    -fx-background-color: #17181b;
+}
+
+.result-tabs > .tab-header-area .tab-header-background {
+    -fx-background-color: #1e1f22;
+    -fx-border-color: transparent transparent #303237 transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.result-tabs .tab {
+    -fx-background-color: transparent;
+    -fx-background-radius: 5px 5px 0 0;
+    -fx-padding: 4px 10px;
+}
+
+.result-tabs .tab:selected {
+    -fx-background-color: #2f5d8c;
+}
+
+.result-tabs .tab .tab-label {
+    -fx-text-fill: #b6bcc6;
+    -fx-font-size: 11px;
+}
+
+.result-tabs .tab:selected .tab-label {
+    -fx-text-fill: #eceff4;
+    -fx-font-weight: bold;
+}
+
+.result-tab-error .tab-label {
+    -fx-text-fill: #e06c75;
 }
 
 .explain-plan-tree {

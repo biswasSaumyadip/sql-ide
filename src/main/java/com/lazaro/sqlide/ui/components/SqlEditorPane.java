@@ -145,6 +145,20 @@ public final class SqlEditorPane extends BorderPane {
         return SqlStatementExtractor.statementAt(codeArea.getText(), codeArea.getCaretPosition());
     }
 
+    /**
+     * Statements to execute: splits a multi-statement selection, otherwise the
+     * single caret statement.
+     */
+    public java.util.List<String> getEffectiveStatements() {
+        String selection = codeArea.getSelectedText();
+        if (selection != null && !selection.isBlank()) {
+            java.util.List<String> parts = SqlStatementExtractor.statements(selection);
+            return parts.isEmpty() ? java.util.List.of(selection.strip()) : parts;
+        }
+        String one = SqlStatementExtractor.statementAt(codeArea.getText(), codeArea.getCaretPosition());
+        return one.isBlank() ? java.util.List.of() : java.util.List.of(one);
+    }
+
     public String getSql() {
         return codeArea.getText();
     }

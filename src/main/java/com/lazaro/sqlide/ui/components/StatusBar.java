@@ -188,6 +188,14 @@ public final class StatusBar extends HBox {
         resultLabel.pseudoClassStateChanged(ERROR, result.isError());
     }
 
+    public void setScriptSummary(String summary, boolean hasError) {
+        clearQueryRunning();
+        String text = summary == null ? "" : summary;
+        resultLabel.setText(abbreviate(text, MAX_RESULT_CHARS));
+        resultLabel.setTooltip(text.equals(resultLabel.getText()) ? null : new Tooltip(text));
+        resultLabel.pseudoClassStateChanged(ERROR, hasError);
+    }
+
     public void clearResult() {
         clearQueryRunning();
         resultLabel.setText("");

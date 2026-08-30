@@ -8,6 +8,7 @@ import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -176,10 +177,31 @@ public final class JdbcSqlDriver implements DataSourceDriver {
         return CompletableFuture.supplyAsync(() -> execute(statement), executor);
     }
 
-    private QueryResult execute(String sql) {
+    @Override
+    public CompletableFuture<ScriptResult> executeScriptAsync(List<String> statements) {
+        List<String> cleaned = new ArrayList<>();
+        if (statements != null) {
+            for (String sql : statements) {
+                if (sql != null && !sql.isBlank()) {
+                    cleaned.add(sql.trim());
+                }
+            }
+        }
+        if (cleaned.isEmpty()) {
+            return CompletableFuture.completedFuture(
+                    new ScriptResult(List.of(QueryResult.ofError(
+                            "Nothing to execute: the script is empty.", 0L)), 0L, true));
+        }
+        if (cleaned.size() == 1) {
+            return executeQueryAsync(cleaned.getFirst()).thenApply(ScriptResult::ofSingle);
+        }
+        return CompletableFuture.supplyAsync(() -> executeScript(cleaned), executor);
+    }
+
+    private ScriptResult executeScript(List<String> statements) {
         long startNanos = System.nanoTime();
+        List<QueryResult> results = new ArrayList<>();
         Connection connection = null;
-        Statement statement = null;
         boolean releaseToPool = false;
         try {
             synchronized (sessionLock) {
@@ -190,6 +212,61 @@ public final class JdbcSqlDriver implements DataSourceDriver {
                     connection = ensureSessionConnectionLocked();
                 }
                 applyActiveCatalog(connection);
+            }
+            for (String sql : statements) {
+                QueryResult result = executeOn(connection, sql);
+                results.add(result);
+                if (result.isError()) {
+                    return new ScriptResult(results, elapsedMs(startNanos), true);
+                }
+            }
+            return new ScriptResult(results, elapsedMs(startNanos), false);
+        } catch (SQLException e) {
+            results.add(QueryResult.ofError(describe(e), elapsedMs(startNanos)));
+            return new ScriptResult(results, elapsedMs(startNanos), true);
+        } finally {
+            if (releaseToPool && connection != null) {
+                try {
+                    connection.close();
+                } catch (SQLException ignored) {
+                    // pool reclaim best-effort
+                }
+            }
+        }
+    }
+
+    private QueryResult execute(String sql) {
+        Connection connection = null;
+        boolean releaseToPool = false;
+        try {
+            synchronized (sessionLock) {
+                if (autoCommit) {
+                    connection = getConnection();
+                    releaseToPool = true;
+                } else {
+                    connection = ensureSessionConnectionLocked();
+                }
+                applyActiveCatalog(connection);
+            }
+            return executeOn(connection, sql);
+        } catch (SQLException e) {
+            return QueryResult.ofError(describe(e), 0L);
+        } finally {
+            if (releaseToPool && connection != null) {
+                try {
+                    connection.close();
+                } catch (SQLException ignored) {
+                    // pool reclaim best-effort
+                }
+            }
+        }
+    }
+
+    private QueryResult executeOn(Connection connection, String sql) {
+        long startNanos = System.nanoTime();
+        Statement statement = null;
+        try {
+            synchronized (sessionLock) {
                 statement = connection.createStatement();
                 activeStatement = statement;
                 executing = true;
@@ -222,13 +299,6 @@ public final class JdbcSqlDriver implements DataSourceDriver {
                     statement.close();
                 } catch (SQLException ignored) {
                     // already closing
-                }
-            }
-            if (releaseToPool && connection != null) {
-                try {
-                    connection.close();
-                } catch (SQLException ignored) {
-                    // pool reclaim best-effort
                 }
             }
         }

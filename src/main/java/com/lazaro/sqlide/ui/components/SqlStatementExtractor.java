@@ -1,11 +1,14 @@
 package com.lazaro.sqlide.ui.components;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
- * Picks the SQL statement under the caret, the way DataGrip / IntelliJ do when
- * nothing is selected. JDBC drivers reject multi-statement strings by default, so
- * sending the whole buffer would make the second statement look like a syntax error.
+ * Splits SQL text into statements the way DataGrip / IntelliJ do: on {@code ;}
+ * outside quotes and comments. Also picks the single statement under the caret
+ * when nothing is selected.
  */
-final class SqlStatementExtractor {
+public final class SqlStatementExtractor {
 
     private SqlStatementExtractor() {
     }
@@ -15,7 +18,7 @@ final class SqlStatementExtractor {
      * @param caret caret offset (clamped to {@code [0, sql.length()]})
      * @return the statement containing the caret, trimmed; empty when there is none
      */
-    static String statementAt(String sql, int caret) {
+    public static String statementAt(String sql, int caret) {
         if (sql == null || sql.isBlank()) {
             return "";
         }
@@ -43,7 +46,6 @@ final class SqlStatementExtractor {
             if (c == ';') {
                 String statement = trimStatement(sql.substring(start, i));
                 if (pos <= i) {
-                    // Caret on this statement or on its terminating semicolon.
                     return statement.isEmpty() ? lastNonEmpty : statement;
                 }
                 if (!statement.isEmpty()) {
@@ -58,9 +60,50 @@ final class SqlStatementExtractor {
         if (!trailing.isEmpty()) {
             return trailing;
         }
-        // Caret sits after a trailing semicolon / blank lines — run the previous statement,
-        // matching DataGrip when you hit Run at the end of `USE warcraft;`.
         return lastNonEmpty;
+    }
+
+    /**
+     * All non-empty statements in {@code sql}, in order. Trailing semicolons and
+     * blank fragments are dropped.
+     */
+    public static List<String> statements(String sql) {
+        if (sql == null || sql.isBlank()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>();
+        int start = 0;
+        int i = 0;
+        while (i < sql.length()) {
+            char c = sql.charAt(i);
+            char next = i + 1 < sql.length() ? sql.charAt(i + 1) : 0;
+
+            if (c == '-' && next == '-') {
+                i = skipLine(sql, i + 2);
+                continue;
+            }
+            if (c == '/' && next == '*') {
+                i = skipBlockComment(sql, i + 2);
+                continue;
+            }
+            if (c == '\'' || c == '"' || c == '`') {
+                i = skipQuoted(sql, i, c);
+                continue;
+            }
+            if (c == ';') {
+                String statement = trimStatement(sql.substring(start, i));
+                if (!statement.isEmpty()) {
+                    out.add(statement);
+                }
+                start = i + 1;
+            }
+            i++;
+        }
+        String trailing = trimStatement(sql.substring(start));
+        if (!trailing.isEmpty()) {
+            out.add(trailing);
+        }
+        return List.copyOf(out);
     }
 
     private static String trimStatement(String fragment) {

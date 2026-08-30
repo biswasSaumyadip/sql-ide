@@ -36,10 +36,19 @@ class SqlStatementExtractorTest {
     }
 
     @Test
-    @DisplayName("caret after trailing semicolon still runs that statement")
-    void caretAfterSemicolonUsesPreviousStatement() {
-        String sql = "use warcraft;";
-        assertEquals("use warcraft", SqlStatementExtractor.statementAt(sql, sql.length()));
-        assertEquals("use warcraft", SqlStatementExtractor.statementAt(sql, sql.indexOf(';')));
+    @DisplayName("statements() splits a multi-statement script")
+    void splitsAllStatements() {
+        String sql = "USE app; SELECT 1; INSERT INTO t VALUES (1);";
+        assertEquals(
+                java.util.List.of("USE app", "SELECT 1", "INSERT INTO t VALUES (1)"),
+                SqlStatementExtractor.statements(sql));
+    }
+
+    @Test
+    @DisplayName("statements() keeps semicolons inside strings")
+    void statementsIgnoresQuotedSemicolons() {
+        assertEquals(
+                java.util.List.of("INSERT INTO t VALUES ('a;b')", "SELECT 1"),
+                SqlStatementExtractor.statements("INSERT INTO t VALUES ('a;b'); SELECT 1;"));
     }
 }

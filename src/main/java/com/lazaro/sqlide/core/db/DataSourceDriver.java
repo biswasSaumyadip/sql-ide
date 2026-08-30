@@ -42,6 +42,12 @@ public interface DataSourceDriver extends AutoCloseable {
     CompletableFuture<QueryResult> executeQueryAsync(String sql);
 
     /**
+     * Runs {@code statements} in order on the interactive session. Stops after the
+     * first error; earlier successes remain in the returned {@link ScriptResult}.
+     */
+    CompletableFuture<ScriptResult> executeScriptAsync(List<String> statements);
+
+    /**
      * Top level of the structure tree, with children left unloaded so that a large
      * server does not have to be introspected in full before anything appears.
      * Expand a node with {@link #getChildren(SchemaNode)}.

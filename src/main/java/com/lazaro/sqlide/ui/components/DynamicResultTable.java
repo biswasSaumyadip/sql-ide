@@ -9,7 +9,9 @@ import javafx.collections.FXCollections;
 import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
 import javafx.css.PseudoClass;
+import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
@@ -39,6 +41,8 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
     private static final PseudoClass EMPTY_GRID = PseudoClass.getPseudoClass("empty-grid");
 
     private final Label placeholder = new Label(PLACEHOLDER_IDLE);
+    private QueryResult currentResult;
+    private Runnable onExportRequest = () -> { };
 
     public DynamicResultTable() {
         getStyleClass().add("result-table");
@@ -54,6 +58,15 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
         setColumnResizePolicy(TableView.UNCONSTRAINED_RESIZE_POLICY);
         getSelectionModel().setCellSelectionEnabled(true);
         getSelectionModel().setSelectionMode(javafx.scene.control.SelectionMode.MULTIPLE);
+        setContextMenu(buildExportMenu());
+    }
+
+    public void setOnExportRequest(Runnable action) {
+        this.onExportRequest = action == null ? () -> { } : action;
+    }
+
+    public QueryResult currentResult() {
+        return currentResult;
     }
 
     // ---------------------------------------------------------------- public API
@@ -65,6 +78,7 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
     public void setResult(QueryResult result) {
         Objects.requireNonNull(result, "result must not be null");
         clear();
+        currentResult = result;
 
         if (result.isError()) {
             throw new IllegalArgumentException(
@@ -114,6 +128,7 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
 
     /** Drops all columns and rows and restores the idle placeholder. */
     public void clear() {
+        currentResult = null;
         setItems(FXCollections.observableArrayList());
         getColumns().clear();
         placeholder.setText(PLACEHOLDER_IDLE);
@@ -126,6 +141,15 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
     }
 
     // ---------------------------------------------------------------- internals
+
+    private ContextMenu buildExportMenu() {
+        MenuItem export = new MenuItem("Export results\u2026");
+        export.setOnAction(event -> onExportRequest.run());
+        ContextMenu menu = new ContextMenu(export);
+        menu.setOnShowing(event -> export.setDisable(
+                currentResult == null || currentResult.isError() || !currentResult.isResultSet()));
+        return menu;
+    }
 
     private void buildColumns(QueryResult result) {
         getColumns().add(rowNumberColumn());

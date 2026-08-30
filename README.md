@@ -56,11 +56,15 @@ com.lazaro.sqlide
 │   ├── ExplainSql                  dialect-aware EXPLAIN wrapping
 │   ├── ExplainPlanParser           tabular / text plan → tree
 │   └── ExplainPlanNode             one node in a plan tree
+├── core.history / core.snippets    JSON stores under ~/.sql-ide
+├── core.export.ResultExporter      CSV / JSON / SQL INSERT
 └── ui.components
     ├── SqlEditorPane               RichTextFX editor, line numbers
     ├── SqlSyntaxHighlighter        pure regex tokeniser (no JavaFX types)
     ├── DynamicResultTable          grid built from result metadata
-    └── ExplainPlanTreeView         readable EXPLAIN tree
+    ├── ExplainPlanTreeView         readable EXPLAIN tree
+    ├── QueryHistoryPane            searchable re-runnable history
+    └── SnippetsPane                saved SQL templates
 ```
 
 `core.db` has no JavaFX imports at all and is covered by its own tests, so it can
@@ -132,3 +136,5 @@ delete files the running server holds open.
 - [x] **Phase 6** — Schema-aware autocomplete, object viewer, active database
 - [x] **Phase 7** — Transactions & execution control: auto-commit / begin / commit / rollback,
   cancellable queries (`Statement.cancel`), EXPLAIN / EXPLAIN ANALYZE plan tree
+- [x] **Phase 8** — Query history & snippets (`~/.sql-ide`), multi-statement scripts with
+  result tabs, export results as CSV / JSON / SQL INSERT
