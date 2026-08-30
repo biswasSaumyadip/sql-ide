@@ -201,6 +201,22 @@ public final class SqlEditorPane extends BorderPane {
         codeArea.requestFollowCaret();
     }
 
+    /** Replaces editor content and selects the first occurrence of {@code placeholder}. */
+    public void setSqlSelecting(String sql, String placeholder) {
+        String text = Objects.requireNonNullElse(sql, "");
+        codeArea.replaceText(text);
+        if (placeholder != null && !placeholder.isEmpty()) {
+            int start = text.indexOf(placeholder);
+            if (start >= 0) {
+                codeArea.selectRange(start, start + placeholder.length());
+                codeArea.requestFollowCaret();
+                return;
+            }
+        }
+        codeArea.moveTo(0);
+        codeArea.requestFollowCaret();
+    }
+
     public void insertAtCaret(String text) {
         if (text != null && !text.isEmpty()) {
             codeArea.insertText(codeArea.getCaretPosition(), text);

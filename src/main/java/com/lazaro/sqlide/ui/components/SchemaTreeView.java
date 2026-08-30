@@ -68,6 +68,7 @@ public final class SchemaTreeView extends VBox {
     private Consumer<ConnectionProfile> onConnectProfile = profile -> { };
     private Consumer<ConnectionProfile> onDeleteProfile = profile -> { };
     private Consumer<String> onInsertSql = sql -> { };
+    private Consumer<SqlTemplateGenerator.Template> onOpenTemplate = template -> { };
     private Runnable onNewQuery = () -> { };
     private Runnable onDisconnect = () -> { };
     private Runnable onRefreshSchema = () -> { };
@@ -125,6 +126,7 @@ public final class SchemaTreeView extends VBox {
                         () -> onNewQuery.run(),
                         () -> onConnectRequested.run(),
                         sql -> onInsertSql.accept(sql),
+                        template -> onOpenTemplate.accept(template),
                         item -> {
                             if (item != null && item.getValue() != null) {
                                 onViewObject.accept(item.getValue());
@@ -283,6 +285,11 @@ public final class SchemaTreeView extends VBox {
     /** Inserts generated SQL into the active editor. */
     public void setOnInsertSql(Consumer<String> onInsertSql) {
         this.onInsertSql = onInsertSql == null ? sql -> { } : onInsertSql;
+    }
+
+    /** Opens a new query tab with a generated CREATE/ALTER template. */
+    public void setOnOpenTemplate(Consumer<SqlTemplateGenerator.Template> onOpenTemplate) {
+        this.onOpenTemplate = onOpenTemplate == null ? template -> { } : onOpenTemplate;
     }
 
     public void setOnNewQuery(Runnable onNewQuery) {

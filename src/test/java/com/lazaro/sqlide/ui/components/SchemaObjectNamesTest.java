@@ -91,9 +91,9 @@ class SchemaObjectNamesTest {
         TreeItem<SchemaNode> table = new TreeItem<>(SchemaNode.of("users", NodeType.TABLE));
         catalog.getChildren().add(table);
 
-        assertEquals("CREATE DATABASE new_schema;", SchemaObjectNames.createSchemaTemplate());
-        assertTrue(SchemaObjectNames.createTableTemplate(catalog).contains("app.new_table"));
+        assertTrue(SchemaObjectNames.createSchemaTemplate().contains("CREATE SCHEMA"));
+        assertTrue(SchemaObjectNames.createTableTemplate(catalog).contains("app.new_table_name"));
         assertTrue(SchemaObjectNames.createColumnTemplate(table).contains("ALTER TABLE users"));
-        assertTrue(SchemaObjectNames.modifyTableTemplate(table).startsWith("ALTER TABLE users"));
+        assertTrue(SchemaObjectNames.modifyTableTemplate(table).contains("Altering table:"));
     }
 }

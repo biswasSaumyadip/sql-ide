@@ -133,26 +133,15 @@ public final class SchemaObjectNames {
     }
 
     public static String createTableTemplate(TreeItem<SchemaNode> schemaItem) {
-        String schema = schemaItem == null || schemaItem.getValue() == null
-                ? "new_table"
-                : schemaItem.getValue().name() + ".new_table";
-        return """
-                CREATE TABLE %s (
-                    id INT PRIMARY KEY,
-                    name VARCHAR(255) NOT NULL
-                );
-                """.formatted(schema).strip();
+        return SqlTemplateGenerator.newTable(SqlTemplateGenerator.schemaOf(schemaItem)).sql();
     }
 
     public static String createViewTemplate(TreeItem<SchemaNode> schemaItem) {
-        String schema = schemaItem == null || schemaItem.getValue() == null
-                ? ""
-                : schemaItem.getValue().name() + ".";
-        return "CREATE VIEW " + schema + "new_view AS\nSELECT * FROM ...;";
+        return SqlTemplateGenerator.newView(SqlTemplateGenerator.schemaOf(schemaItem)).sql();
     }
 
     public static String createSchemaTemplate() {
-        return "CREATE DATABASE new_schema;";
+        return SqlTemplateGenerator.newSchema().sql();
     }
 
     public static String createColumnTemplate(TreeItem<SchemaNode> tableItem) {
@@ -175,8 +164,9 @@ public final class SchemaObjectNames {
     }
 
     public static String modifyTableTemplate(TreeItem<SchemaNode> tableItem) {
-        String table = tableItem == null ? "table_name" : qualifiedName(tableItem);
-        return "ALTER TABLE " + table + "\n    -- ADD / DROP / MODIFY COLUMN\n;";
+        return SqlTemplateGenerator.modifyTable(
+                SqlTemplateGenerator.schemaOf(tableItem),
+                SqlTemplateGenerator.tableOf(tableItem)).sql();
     }
 
     private static List<String> columnNames(TreeItem<SchemaNode> tableItem) {

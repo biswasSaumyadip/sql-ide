@@ -138,6 +138,7 @@ public final class MainController {
         schemaTree.setOnViewObject(this::openObjectViewer);
         schemaTree.setOnUseDatabase(this::useDatabase);
         schemaTree.setOnInsertSql(sql -> editors.insertIntoActiveEditor(sql));
+        schemaTree.setOnOpenTemplate(editors::openGeneratedSql);
         schemaTree.setOnNewQuery(editors::newTab);
         schemaTree.setOnDisconnect(this::disconnect);
         schemaTree.setOnRefreshSchema(this::refreshSchema);

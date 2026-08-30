@@ -69,6 +69,32 @@ public final class EditorTabPane extends TabPane {
         tab.editor().requestFocus();
     }
 
+    /**
+     * Opens a new query tab filled with generated SQL and selects the first
+     * placeholder so the user can overwrite it immediately.
+     */
+    public void openGeneratedSql(SqlTemplateGenerator.Template template) {
+        if (template == null || template.sql().isBlank()) {
+            newTab();
+            return;
+        }
+        String title = template.tabTitle();
+        if (title.startsWith("query-new") || title.startsWith("query-modify")) {
+            // Keep titles unique when opening several templates in a row.
+            int dot = title.lastIndexOf('.');
+            String base = dot > 0 ? title.substring(0, dot) : title;
+            String ext = dot > 0 ? title.substring(dot) : ".sql";
+            title = base + "-" + (++untitledCounter) + ext;
+        } else {
+            untitledCounter++;
+        }
+        QueryTab tab = new QueryTab(title, schemaCache, activeCatalog);
+        getTabs().add(tab);
+        getSelectionModel().select(tab);
+        tab.editor().setSqlSelecting(template.sql(), template.placeholder());
+        tab.editor().requestFocus();
+    }
+
     /** Supplies the live schema snapshot to every editor for autocomplete. */
     public void setSchemaCache(Supplier<SchemaCache> schemaCache) {
         this.schemaCache = schemaCache == null ? SchemaCache::new : schemaCache;

@@ -26,6 +26,7 @@ final class SchemaTreeContextMenus {
             Runnable newQueryConsole,
             Runnable newDataSource,
             Consumer<String> insertSql,
+            Consumer<SqlTemplateGenerator.Template> openTemplate,
             Consumer<TreeItem<SchemaNode>> viewObject,
             Consumer<TreeItem<SchemaNode>> refreshItem,
             Runnable refreshAll,
@@ -81,7 +82,7 @@ final class SchemaTreeContextMenus {
         neu.getItems().addAll(
                 action("Query Console", new KeyCodeCombination(KeyCode.Q, KeyCombination.CONTROL_DOWN, KeyCombination.SHIFT_DOWN),
                         actions.newQueryConsole),
-                action("Schema / Database", null, () -> actions.insertSql.accept(SchemaObjectNames.createSchemaTemplate())),
+                action("Schema / Database", null, () -> open(SqlTemplateGenerator.newSchema())),
                 action("Data Source", null, actions.newDataSource));
 
         List<MenuItem> items = new ArrayList<>();
@@ -105,9 +106,9 @@ final class SchemaTreeContextMenus {
         neu.getItems().addAll(
                 action("Query Console", new KeyCodeCombination(KeyCode.Q, KeyCombination.CONTROL_DOWN, KeyCombination.SHIFT_DOWN),
                         actions.newQueryConsole),
-                action("Table", null, () -> actions.insertSql.accept(SchemaObjectNames.createTableTemplate(item))),
-                action("View", null, () -> actions.insertSql.accept(SchemaObjectNames.createViewTemplate(item))),
-                action("Schema", null, () -> actions.insertSql.accept(SchemaObjectNames.createSchemaTemplate())));
+                action("Table", null, () -> open(SqlTemplateGenerator.newTable(SqlTemplateGenerator.schemaOf(item)))),
+                action("View", null, () -> open(SqlTemplateGenerator.newView(SqlTemplateGenerator.schemaOf(item)))),
+                action("Schema", null, () -> open(SqlTemplateGenerator.newSchema())));
 
         Menu scripts = new Menu("SQL Scripts");
         scripts.getItems().addAll(
@@ -154,7 +155,9 @@ final class SchemaTreeContextMenus {
         return List.of(
                 neu,
                 action("Modify Table\u2026", new KeyCodeCombination(KeyCode.F6, KeyCombination.CONTROL_DOWN),
-                        () -> actions.insertSql.accept(SchemaObjectNames.modifyTableTemplate(item))),
+                        () -> open(SqlTemplateGenerator.modifyTable(
+                                SqlTemplateGenerator.schemaOf(item),
+                                SqlTemplateGenerator.tableOf(item)))),
                 action("Refresh", new KeyCodeCombination(KeyCode.F5, KeyCombination.CONTROL_DOWN),
                         () -> actions.refreshItem.accept(item)),
                 new SeparatorMenuItem(),
@@ -214,6 +217,12 @@ final class SchemaTreeContextMenus {
     private void insert(String sql) {
         if (sql != null && !sql.isBlank()) {
             actions.insertSql.accept(sql);
+        }
+    }
+
+    private void open(SqlTemplateGenerator.Template template) {
+        if (template != null && !template.sql().isBlank()) {
+            actions.openTemplate.accept(template);
         }
     }
 
