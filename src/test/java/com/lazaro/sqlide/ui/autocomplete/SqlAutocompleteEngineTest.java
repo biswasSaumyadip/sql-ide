@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -417,6 +418,71 @@ class SqlAutocompleteEngineTest {
         List<Suggestion> suggestions = suggest("SEL");
         assertTrue(suggestions.stream().anyMatch(s ->
                 s.kind() == Kind.KEYWORD && s.insertText().equals("select")), suggestions.toString());
+    }
+
+    @Test
+    @DisplayName("INSERT INTO known table ( offers all columns comma-separated")
+    void insertAllColumnsCsvForKnownTable() {
+        String sql = "INSERT INTO users (";
+        List<Suggestion> suggestions = suggest(sql);
+        assertTrue(suggestions.stream().anyMatch(s ->
+                s.kind() == Kind.COLUMN
+                        && s.insertText().contains("id")
+                        && s.insertText().contains("email")
+                        && s.insertText().contains(",")),
+                "expected CSV of all columns: " + suggestions);
+        assertEquals(Kind.COLUMN, suggestions.getFirst().kind());
+        assertTrue(suggestions.getFirst().insertText().contains(","));
+    }
+
+    @Test
+    @DisplayName("INSERT INTO unknown table ( does not invent an all-columns CSV")
+    void insertAllColumnsRequiresResolvedTable() {
+        String sql = "INSERT INTO no_such_table (";
+        List<Suggestion> suggestions = suggest(sql);
+        assertTrue(suggestions.stream().noneMatch(s ->
+                s.insertText().contains(",") && s.kind() == Kind.COLUMN),
+                "must not expand columns for unknown table: " + suggestions);
+    }
+
+    @Test
+    @DisplayName("INSERT all-columns CSV skips already-listed columns")
+    void insertAllColumnsSkipsUsed() {
+        String sql = "INSERT INTO users (id, ";
+        List<Suggestion> suggestions = suggest(sql);
+        Optional<Suggestion> expand = suggestions.stream()
+                .filter(s -> "remaining columns".equals(s.detail()) || "all columns".equals(s.detail()))
+                .findFirst();
+        assertTrue(expand.isPresent(), "expected remaining-columns suggestion: " + suggestions);
+        assertFalse(expand.get().insertText().toLowerCase().startsWith("id"),
+                "should not re-list id: " + expand.get().insertText());
+        assertTrue(expand.get().insertText().contains("email"));
+    }
+
+    @Test
+    @DisplayName("SELECT * expands to column CSV when FROM table is known")
+    void selectStarExpandsToColumnCsv() {
+        String sql = "SELECT * FROM users";
+        int caret = sql.indexOf('*') + 1;
+        List<Suggestion> suggestions = engine.suggest(sql, caret).items();
+        assertTrue(suggestions.stream().anyMatch(s ->
+                s.kind() == Kind.COLUMN
+                        && s.insertText().contains("id")
+                        && s.insertText().contains("email")
+                        && s.insertText().contains(",")),
+                "expected expand-* CSV: " + suggestions);
+    }
+
+    @Test
+    @DisplayName("SELECT * does not expand columns without a known FROM table")
+    void selectStarWithoutKnownTableKeepsStarOnly() {
+        String sql = "SELECT * FROM no_such_table";
+        int caret = sql.indexOf('*') + 1;
+        List<Suggestion> suggestions = engine.suggest(sql, caret).items();
+        assertTrue(suggestions.stream().anyMatch(s -> s.insertText().equals("*")));
+        assertTrue(suggestions.stream().noneMatch(s ->
+                s.kind() == Kind.COLUMN && s.insertText().contains(",")),
+                "must not expand for unknown FROM table: " + suggestions);
     }
 
     private static int indexOf(List<Suggestion> suggestions, String insertText) {

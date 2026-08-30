@@ -17,6 +17,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
@@ -112,6 +113,13 @@ public final class SqlAutocompleteEngine {
     /** Open SELECT list: {@code SELECT …} before FROM / clause keywords. */
     private static final Pattern SELECT_LIST = Pattern.compile(
             "(?i)\\bSELECT\\s+(DISTINCT\\s+)?([^;]*?)$");
+    /** {@code SELECT [*]} optionally DISTINCT, caret on / after the star. */
+    private static final Pattern SELECT_STAR = Pattern.compile(
+            "(?i)\\bSELECT\\s+(?:DISTINCT\\s+)?(\\*)\\s*$");
+    /** First FROM table in a statement fragment (look-ahead past the caret). */
+    private static final Pattern FROM_TABLE = Pattern.compile(
+            "(?i)\\bFROM\\s+(?:[`\"\\[]?[A-Za-z0-9_]+[`\"\\]]?\\s*\\.\\s*)?"
+                    + "([`\"\\[]?[A-Za-z0-9_]+[`\"\\]]?)");
 
     private static final Set<String> TABLE_CONTEXTS = Set.of(
             "FROM", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "OUTER", "CROSS",
@@ -217,10 +225,31 @@ public final class SqlAutocompleteEngine {
         String previousUpper = previous.toUpperCase(Locale.ROOT);
 
         // INSERT INTO t (col…) — only columns of that table, already-typed demoted.
+        // When t resolves in the schema (or as a CTE), also offer all columns CSV.
         String insertTable = insertColumnListTable(before);
         if (insertTable != null) {
             Set<String> used = usedInsertColumns(before);
-            return rank(columnSuggestions(insertTable, prefix, replaceStart, caret, used, scope));
+            List<Suggestion> out = new ArrayList<>();
+            allColumnsSuggestion(insertTable, used, prefix, replaceStart, caret, scope, true)
+                    .ifPresent(out::add);
+            out.addAll(columnSuggestions(insertTable, prefix, replaceStart, caret, used, scope));
+            return rank(out);
+        }
+
+        // SELECT * → expand to col1, col2, … when FROM names a known table (look-ahead).
+        Matcher selectStar = SELECT_STAR.matcher(before);
+        if (selectStar.find()) {
+            int starStart = selectStar.start(1);
+            int starEnd = selectStar.end(1);
+            String fromTable = fromTableAroundCaret(sql, caret);
+            List<Suggestion> out = new ArrayList<>();
+            if (fromTable != null) {
+                allColumnsSuggestion(fromTable, Set.of(), "", starStart, starEnd, scope, false)
+                        .ifPresent(out::add);
+            }
+            out.add(suggestion("*", "*", "all columns", Kind.KEYWORD, starStart, starEnd, 900, true,
+                    "Select every column from the FROM clause.", List.of()));
+            return rank(out);
         }
 
         if (!invoked && !shouldAutoPopup(before, prefix, previousUpper)) {
@@ -264,15 +293,26 @@ public final class SqlAutocompleteEngine {
             Set<String> usedInSelect = "SELECT".equals(previousUpper)
                     ? usedSelectColumns(before)
                     : Set.of();
+            // SELECT␣ with a known FROM table ahead → offer comma-separated columns.
+            if ("SELECT".equals(previousUpper) && (prefix.isEmpty() || "*".equals(prefix) || "*".startsWith(prefix))) {
+                String fromTable = fromTableAroundCaret(sql, caret);
+                if (fromTable != null) {
+                    int starReplaceStart = "*".equals(prefix) ? replaceStart : replaceStart;
+                    int starReplaceEnd = caret;
+                    allColumnsSuggestion(
+                            fromTable, usedInSelect, prefix, starReplaceStart, starReplaceEnd, scope, false)
+                            .ifPresent(out::add);
+                }
+                if (prefix.isEmpty() || "*".startsWith(prefix)) {
+                    out.add(suggestion("*", "*", "all columns", Kind.KEYWORD, replaceStart, caret, 1_000, true,
+                            "Select every column from the FROM clause.", List.of()));
+                }
+            }
             if (cache.isReady() || !scope.virtualColumns().isEmpty()) {
                 out.addAll(columnsInScope(aliases, prefix, replaceStart, caret, usedInSelect, scope));
                 if (aliases.isEmpty() && ("SELECT".equals(previousUpper) || invoked)) {
                     out.addAll(allColumnSuggestions(prefix, replaceStart, caret, usedInSelect));
                 }
-            }
-            if ("SELECT".equals(previousUpper) && (prefix.isEmpty() || "*".startsWith(prefix))) {
-                out.add(0, suggestion("*", "*", "all columns", Kind.KEYWORD, replaceStart, caret, 1_000, true,
-                        "Select every column from the FROM clause.", List.of()));
             }
             if (invoked || prefix.length() >= 2) {
                 out.addAll(functionSuggestions(prefix, replaceStart, caret));
@@ -572,6 +612,114 @@ public final class SqlAutocompleteEngine {
                     columnDoc(table, column), List.of()));
         }
         return out;
+    }
+
+    /**
+     * Comma-separated column list for a resolved table (INSERT list or SELECT * expand).
+     * Empty when the table name does not resolve in the schema / CTE scope.
+     */
+    private Optional<Suggestion> allColumnsSuggestion(
+            String table,
+            Set<String> usedLower,
+            String prefix,
+            int start,
+            int end,
+            ResolvedScope scope,
+            boolean insertContext) {
+        if (table == null || table.isBlank() || !tableResolves(table, scope)) {
+            return Optional.empty();
+        }
+        // Only offer when the typed prefix is empty, "*", or a prefix of the CSV / "all".
+        String p = prefix == null ? "" : prefix;
+        if (!p.isEmpty() && !"*".equals(p) && !"all".regionMatches(true, 0, p, 0, p.length())
+                && !matchColumnsCsvPrefix(table, scope, usedLower, p)) {
+            return Optional.empty();
+        }
+
+        List<String> names = columnNamesOf(table, scope);
+        if (names.isEmpty()) {
+            return Optional.empty();
+        }
+        ConnectionConfig.Driver driver = currentDialect();
+        List<String> inserts = new ArrayList<>();
+        for (String name : names) {
+            if (usedLower.contains(name.toLowerCase(Locale.ROOT))) {
+                continue;
+            }
+            inserts.add(SqlCompletionHygiene.finalizeInsert(name, name, Kind.COLUMN, driver, style));
+        }
+        if (inserts.isEmpty()) {
+            return Optional.empty();
+        }
+        String csv = String.join(", ", inserts);
+        String label = inserts.size() == names.size() ? "*" : "…";
+        String detail = insertContext
+                ? (inserts.size() == names.size() ? "all columns" : "remaining columns")
+                : "expand *";
+        String doc = insertContext
+                ? "Insert all columns of `" + table + "` as a comma-separated list."
+                : "Expand * to all columns of `" + table + "`.";
+        return Optional.of(suggestion(
+                csv, label, detail, Kind.COLUMN, start, end, 1_200, false, doc, List.of()));
+    }
+
+    private boolean matchColumnsCsvPrefix(
+            String table, ResolvedScope scope, Set<String> usedLower, String prefix) {
+        List<String> names = columnNamesOf(table, scope);
+        ConnectionConfig.Driver driver = currentDialect();
+        StringBuilder csv = new StringBuilder();
+        for (String name : names) {
+            if (usedLower.contains(name.toLowerCase(Locale.ROOT))) {
+                continue;
+            }
+            if (csv.length() > 0) {
+                csv.append(", ");
+            }
+            csv.append(SqlCompletionHygiene.finalizeInsert(name, name, Kind.COLUMN, driver, style));
+        }
+        return csv.toString().regionMatches(true, 0, prefix, 0, prefix.length());
+    }
+
+    private boolean tableResolves(String table, ResolvedScope scope) {
+        if (scope != null && scope.isVirtual(table)) {
+            return !scope.columnsOf(table).isEmpty() || scope.cteNames().contains(table.toLowerCase(Locale.ROOT));
+        }
+        if (!cache.isReady()) {
+            return false;
+        }
+        return cache.findTable(table, activeCatalog()).isPresent();
+    }
+
+    private List<String> columnNamesOf(String table, ResolvedScope scope) {
+        if (scope != null && scope.isVirtual(table)) {
+            return scope.columnsOf(table);
+        }
+        List<String> names = new ArrayList<>();
+        for (SchemaNode column : cache.columnsOf(table, activeCatalog())) {
+            names.add(column.name());
+        }
+        return names;
+    }
+
+    /**
+     * First FROM table in the current statement, searching both sides of the caret
+     * so {@code SELECT *|} can see {@code FROM users}.
+     */
+    static String fromTableAroundCaret(String sql, int caret) {
+        if (sql == null || sql.isBlank()) {
+            return null;
+        }
+        int start = Math.max(0, sql.lastIndexOf(';', Math.max(0, caret - 1)) + 1);
+        int end = sql.indexOf(';', caret);
+        if (end < 0) {
+            end = sql.length();
+        }
+        String statement = sql.substring(start, end);
+        Matcher matcher = FROM_TABLE.matcher(statement);
+        if (!matcher.find()) {
+            return null;
+        }
+        return stripQuotes(matcher.group(1));
     }
 
     private List<Suggestion> columnsInScope(
