@@ -54,12 +54,20 @@ public final class OutputConsoleView extends BorderPane {
     }
 
     public void appendRunning(List<String> statements) {
+        appendRunning(statements, false);
+    }
+
+    public void appendRunning(List<String> statements, boolean redis) {
         appendSeparator();
         appendInfo("Running\u2026");
         if (statements != null) {
             for (String statement : statements) {
                 if (statement != null && !statement.isBlank()) {
-                    appendSql(statement.strip());
+                    if (redis) {
+                        appendLine("CMD", collapseWhitespace(statement.strip()));
+                    } else {
+                        appendSql(statement.strip());
+                    }
                 }
             }
         }
@@ -70,22 +78,42 @@ public final class OutputConsoleView extends BorderPane {
     }
 
     public void appendScript(ScriptResult script) {
+        appendScript(script, List.of(), false);
+    }
+
+    public void appendScript(ScriptResult script, List<String> sourceStatements, boolean redis) {
         if (script == null || script.isEmpty()) {
             appendInfo("Nothing executed");
             return;
         }
         List<QueryResult> results = script.results();
+        List<String> statements = sourceStatements == null ? List.of() : sourceStatements;
         for (int i = 0; i < results.size(); i++) {
             QueryResult result = results.get(i);
+            String command = i < statements.size() ? collapseWhitespace(statements.get(i).strip()) : "";
             String prefix = results.size() > 1 ? "[" + (i + 1) + "/" + results.size() + "] " : "";
-            if (result.isError()) {
+            if (redis) {
+                if (result.isError()) {
+                    appendError(prefix + "Command failed in " + result.executionTimeMs() + "ms"
+                            + (command.isEmpty() ? "" : ": " + command));
+                    appendError(result.errorMessage());
+                } else {
+                    appendInfo(prefix + "Command executed in " + result.executionTimeMs() + "ms"
+                            + (command.isEmpty() ? "" : ": " + command));
+                    if (result.isStatusReply()) {
+                        appendOk("Reply: " + result.statusText());
+                    } else {
+                        appendOk(result.successMessage(true));
+                    }
+                }
+            } else if (result.isError()) {
                 appendError(prefix + result.summary());
             } else {
                 appendOk(prefix + result.successMessage());
             }
         }
         if (results.size() > 1) {
-            appendInfo(script.summary());
+            appendInfo(script.summary(redis));
         }
     }
 

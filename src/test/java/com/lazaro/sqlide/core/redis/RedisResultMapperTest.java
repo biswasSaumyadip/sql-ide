@@ -9,19 +9,33 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RedisResultMapperTest {
 
     @Test
     @DisplayName("string and integer replies become a Value column")
     void mapsScalars() {
-        QueryResult ok = RedisResultMapper.toQueryResult("OK", "SET", 1L);
-        assertEquals(List.of("Value"), ok.columnNames());
-        assertEquals(List.of(List.of("OK")), ok.rows());
+        QueryResult value = RedisResultMapper.toQueryResult("hello", "GET", 1L);
+        assertEquals(List.of("Value"), value.columnNames());
+        assertEquals(List.of(List.of("hello")), value.rows());
+        assertTrue(value.isResultSet());
+    }
+
+    @Test
+    @DisplayName("SET and DEL are status replies, not result grids")
+    void mapsWriteStatus() {
+        QueryResult ok = RedisResultMapper.toQueryResult("OK", "SET", 12L);
+        assertTrue(ok.isStatusReply());
+        assertFalse(ok.isResultSet());
+        assertEquals("OK", ok.statusText());
+        assertTrue(ok.columnNames().isEmpty());
 
         QueryResult count = RedisResultMapper.toQueryResult(3L, "DEL", 1L);
-        assertEquals(List.of(List.of("3")), count.rows());
+        assertTrue(count.isStatusReply());
+        assertEquals("(integer) 3", count.statusText());
     }
 
     @Test

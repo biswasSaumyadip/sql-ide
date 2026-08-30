@@ -29,6 +29,15 @@ public final class RedisResultMapper {
 
     public static QueryResult toQueryResult(Object reply, String command, long executionTimeMs) {
         Mapped mapped = map(reply, command);
+        if (RedisStatusReplies.isStatusResult(command, mapped.columns(), mapped.rows().size())) {
+            String raw = mapped.rows().isEmpty()
+                    ? NIL
+                    : cellString(mapped.rows().getFirst().get(COL_VALUE));
+            if (raw == null) {
+                raw = NIL;
+            }
+            return QueryResult.ofStatus(RedisStatusReplies.formatReply(reply, raw), executionTimeMs);
+        }
         List<List<String>> rows = new ArrayList<>(mapped.rows().size());
         for (Map<String, Object> row : mapped.rows()) {
             List<String> cells = new ArrayList<>(mapped.columns().size());

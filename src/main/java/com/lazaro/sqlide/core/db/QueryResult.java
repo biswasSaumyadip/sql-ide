@@ -19,6 +19,7 @@ import java.util.Objects;
  * @param isResultSet     {@code true} when the statement produced a result set
  * @param errorMessage    failure description, or {@code null} on success
  * @param truncated       {@code true} when more rows existed than were materialised
+ * @param statusText      Redis status reply ({@code OK}, {@code (integer) 1}), or {@code null}
  */
 public record QueryResult(
         List<String> columnNames,
@@ -27,7 +28,8 @@ public record QueryResult(
         long executionTimeMs,
         boolean isResultSet,
         String errorMessage,
-        boolean truncated
+        boolean truncated,
+        String statusText
 ) {
 
     public QueryResult {
@@ -41,7 +43,7 @@ public record QueryResult(
 
     public static QueryResult ofRows(
             List<String> columnNames, List<List<String>> rows, long executionTimeMs, boolean truncated) {
-        return new QueryResult(columnNames, rows, rows.size(), executionTimeMs, true, null, truncated);
+        return new QueryResult(columnNames, rows, rows.size(), executionTimeMs, true, null, truncated, null);
     }
 
     /**
@@ -62,16 +64,30 @@ public record QueryResult(
     }
 
     public static QueryResult ofUpdate(int updateCount, long executionTimeMs) {
-        return new QueryResult(List.of(), List.of(), Math.max(updateCount, 0), executionTimeMs, false, null, false);
+        return new QueryResult(List.of(), List.of(), Math.max(updateCount, 0), executionTimeMs, false, null, false, null);
+    }
+
+    /**
+     * Redis simple-string / integer reply that belongs in the Output log rather
+     * than a result grid ({@code SET} → {@code OK}, {@code DEL} → {@code (integer) 1}).
+     */
+    public static QueryResult ofStatus(String reply, long executionTimeMs) {
+        String text = reply == null || reply.isBlank() ? "OK" : reply;
+        return new QueryResult(List.of(), List.of(), 0, executionTimeMs, false, null, false, text);
     }
 
     public static QueryResult ofError(String errorMessage, long executionTimeMs) {
         return new QueryResult(List.of(), List.of(), 0, executionTimeMs, false,
-                Objects.requireNonNullElse(errorMessage, "Unknown error"), false);
+                Objects.requireNonNullElse(errorMessage, "Unknown error"), false, null);
     }
 
     public boolean isError() {
         return errorMessage != null;
+    }
+
+    /** {@code true} for Redis write/status replies that should not open a result grid. */
+    public boolean isStatusReply() {
+        return !isError() && !isResultSet && statusText != null;
     }
 
     public int columnCount() {
@@ -91,33 +107,55 @@ public record QueryResult(
 
     /** Single-line status suitable for a footer or log line. */
     public String summary() {
+        return summary(false);
+    }
+
+    public String summary(boolean redis) {
         if (isError()) {
             return "Failed after %d ms: %s".formatted(executionTimeMs, errorMessage);
         }
+        if (isStatusReply()) {
+            return "Reply: %s in %d ms".formatted(statusText, executionTimeMs);
+        }
+        String unit = countUnit(redis, rowCount);
         if (isResultSet) {
             if (truncated) {
-                return "%,d+ rows in %d ms (truncated)".formatted(rowCount, executionTimeMs);
+                return "%,d+ %s in %d ms (truncated)".formatted(rowCount, unit, executionTimeMs);
             }
-            return "%d %s in %d ms".formatted(rowCount, rowCount == 1 ? "row" : "rows", executionTimeMs);
+            return "%d %s in %d ms".formatted(rowCount, unit, executionTimeMs);
         }
-        return "%d %s affected in %d ms".formatted(rowCount, rowCount == 1 ? "row" : "rows", executionTimeMs);
+        return "%d %s affected in %d ms".formatted(rowCount, unit, executionTimeMs);
     }
 
     /** Friendly one-liner for the results pane on a successful statement. */
     public String successMessage() {
+        return successMessage(false);
+    }
+
+    public String successMessage(boolean redis) {
         if (isError()) {
             return errorMessage();
         }
+        if (isStatusReply()) {
+            return "Reply: " + statusText;
+        }
+        String ok = redis ? "Command OK" : "Query OK";
+        String unit = countUnit(redis, rowCount);
         if (isResultSet) {
             if (truncated) {
-                return "Query OK \u2014 %,d rows shown, more available (%d ms)".formatted(
-                        rowCount, executionTimeMs);
+                return "%s \u2014 %,d %s shown, more available (%d ms)".formatted(
+                        ok, rowCount, unit, executionTimeMs);
             }
-            return "Query OK \u2014 %d %s returned (%d ms)".formatted(
-                    rowCount, rowCount == 1 ? "row" : "rows", executionTimeMs);
+            return "%s \u2014 %d %s returned (%d ms)".formatted(ok, rowCount, unit, executionTimeMs);
         }
-        return "Query OK \u2014 %d %s affected (%d ms)".formatted(
-                rowCount, rowCount == 1 ? "row" : "rows", executionTimeMs);
+        return "%s \u2014 %d %s affected (%d ms)".formatted(ok, rowCount, unit, executionTimeMs);
+    }
+
+    private static String countUnit(boolean redis, int count) {
+        if (redis) {
+            return count == 1 ? "key" : "keys";
+        }
+        return count == 1 ? "row" : "rows";
     }
 
     private static List<List<String>> deepCopy(List<List<String>> source) {

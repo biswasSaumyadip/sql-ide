@@ -72,8 +72,16 @@ public final class EditorTabPane extends TabPane {
 
     /** Opens a new query tab bound to {@code sessionId} (nullable). */
     public void newTab(String sessionId) {
-        QueryTab tab = new QueryTab("query-" + (++untitledCounter) + ".sql",
-                schemaCache, activeCatalog, dialect, completionStyle);
+        newTab(sessionId, dialect.get());
+    }
+
+    /**
+     * Opens a new query tab bound to {@code sessionId}. The tab title extension
+     * ({@code .sql} vs {@code .redis}) follows {@code driver}'s connection type.
+     */
+    public void newTab(String sessionId, ConnectionConfig.Driver driver) {
+        String title = "console_" + (++untitledCounter) + SqlSyntaxHighlighter.untitledExtension(driver);
+        QueryTab tab = new QueryTab(title, schemaCache, activeCatalog, dialect, completionStyle);
         if (sessionId != null) {
             tab.editor().setBoundSessionId(sessionId);
         }
@@ -96,7 +104,8 @@ public final class EditorTabPane extends TabPane {
             return;
         }
         String title = template.tabTitle();
-        if (title.startsWith("query-new") || title.startsWith("query-modify")) {
+        if (title.startsWith("query-new") || title.startsWith("query-modify")
+                || title.startsWith("redis-new") || title.startsWith("redis-cmd")) {
             // Keep titles unique when opening several templates in a row.
             int dot = title.lastIndexOf('.');
             String base = dot > 0 ? title.substring(0, dot) : title;
@@ -266,6 +275,7 @@ public final class EditorTabPane extends TabPane {
             editor.setActiveCatalog(activeCatalog);
             editor.setDialect(dialect);
             editor.setCompletionStyle(completionStyle);
+            editor.setDocumentExtension(title);
             setContent(editor);
 
             editor.textProperty().addListener((observable, previous, current) ->
@@ -325,9 +335,19 @@ public final class EditorTabPane extends TabPane {
                 FileChooser chooser = new FileChooser();
                 chooser.setTitle("Save query");
                 chooser.setInitialFileName(title);
-                chooser.getExtensionFilters().addAll(
-                        new FileChooser.ExtensionFilter("SQL", "*.sql"),
-                        new FileChooser.ExtensionFilter("All files", "*.*"));
+                boolean redis = SqlSyntaxHighlighter.driverForDocumentName(title)
+                        .connectionType().isRedis();
+                FileChooser.ExtensionFilter sqlFilter = new FileChooser.ExtensionFilter("SQL", "*.sql");
+                FileChooser.ExtensionFilter redisFilter = new FileChooser.ExtensionFilter("Redis", "*.redis");
+                if (redis) {
+                    chooser.getExtensionFilters().addAll(
+                            redisFilter, sqlFilter, new FileChooser.ExtensionFilter("All files", "*.*"));
+                    chooser.setSelectedExtensionFilter(redisFilter);
+                } else {
+                    chooser.getExtensionFilters().addAll(
+                            sqlFilter, redisFilter, new FileChooser.ExtensionFilter("All files", "*.*"));
+                    chooser.setSelectedExtensionFilter(sqlFilter);
+                }
                 java.io.File chosen = chooser.showSaveDialog(owner);
                 if (chosen == null) {
                     return;
@@ -350,6 +370,7 @@ public final class EditorTabPane extends TabPane {
 
             file = target;
             title = target.getFileName().toString();
+            editor.setDocumentExtension(title);
             baseline = content;
             dirty.set(false);
             refreshTitle();

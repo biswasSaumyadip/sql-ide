@@ -171,6 +171,9 @@ public final class MainController {
                 .map(ConnectionConfig::driver)
                 .orElse(ConnectionConfig.Driver.MYSQL));
         editors.setCompletionStyle(this::completionStyle);
+        outcome.setConnectionType(() -> resolveSession(editors.activeEditor())
+                .map(s -> s.config().connectionType())
+                .orElse(ConnectionConfig.ConnectionType.MYSQL));
         sessions.addListener(this::onSessionsChanged);
     }
 
@@ -197,7 +200,7 @@ public final class MainController {
         schemaTree.setOnRunCommand(this::runGeneratedCommand);
         schemaTree.setOnOpenTemplate(template -> editors.openGeneratedSql(
                 template, sessions.focused().map(ConnectionSession::id).orElse(null)));
-        schemaTree.setOnNewQuery(sessionId -> editors.newTab(sessionId));
+        schemaTree.setOnNewQuery(this::openQueryTab);
         schemaTree.setOnDisconnect(this::disconnectSession);
         schemaTree.setOnSessionFocused(sessionId -> {
             sessions.focus(sessionId);
@@ -270,7 +273,7 @@ public final class MainController {
     private ToolBar buildToolBar() {
         Button sidebarToggle = iconButton(Icons.sidebar(), "Toggle Schema Explorer (Ctrl+1)", this::toggleSidebar);
         Button newQuery = iconButton(Icons.newQuery(), "New Query (Ctrl+T)",
-                () -> editors.newTab(sessions.focused().map(ConnectionSession::id).orElse(null)));
+                () -> openQueryTab(sessions.focused().map(ConnectionSession::id).orElse(null)));
         Button save = iconButton(Icons.save(), "Save Query (Ctrl+S)", () -> editors.saveActiveTab(owner()));
 
         connectButton = labelledButton(Icons.connect(), "Connect", "Connect to a database (Ctrl+K)",
@@ -438,7 +441,7 @@ public final class MainController {
             } else if (toggleSidebar.match(event)) {
                 consumeAnd(event, this::toggleSidebar);
             } else if (newTab.match(event)) {
-                consumeAnd(event, () -> editors.newTab(
+                consumeAnd(event, () -> openQueryTab(
                         sessions.focused().map(ConnectionSession::id).orElse(null)));
             } else if (closeTab.match(event)) {
                 consumeAnd(event, editors::closeActiveTab);
@@ -635,6 +638,21 @@ public final class MainController {
         return sessions.focused().filter(ConnectionSession::isConnected);
     }
 
+    private void openQueryTab(String sessionId) {
+        editors.newTab(sessionId, sessionDriver(sessionId));
+    }
+
+    private ConnectionConfig.Driver sessionDriver(String sessionId) {
+        return Optional.ofNullable(sessionId).flatMap(sessions::find)
+                .or(sessions::focused)
+                .map(s -> s.config().driver())
+                .orElse(ConnectionConfig.Driver.MYSQL);
+    }
+
+    private static boolean isRedis(ConnectionSession session) {
+        return session != null && session.config().connectionType().isRedis();
+    }
+
     private void onSessionsChanged() {
         List<SqlEditorPane.SessionChoice> choices = new ArrayList<>();
         for (ConnectionSession s : sessions.connectedSessions()) {
@@ -685,7 +703,7 @@ public final class MainController {
         Window owner = owner();
         CompareStructureDialog.showAndGetAlter(owner, sessions.connectedSessions())
                 .ifPresent(sql -> {
-                    editors.newTab(sessions.focused().map(ConnectionSession::id).orElse(null));
+                    openQueryTab(sessions.focused().map(ConnectionSession::id).orElse(null));
                     SqlEditorPane ed = editors.activeEditor();
                     if (ed != null) {
                         ed.setSql(sql);
@@ -718,7 +736,7 @@ public final class MainController {
         Optional<ConnectionSession> session = sessions.findByProfileId(config.profileId())
                 .filter(ConnectionSession::isConnected);
         String sessionId = session.map(ConnectionSession::id).orElse(null);
-        editors.newTab(sessionId);
+        openQueryTab(sessionId);
         SqlEditorPane ed = editors.activeEditor();
         if (ed != null) {
             ed.setSql(config.sql());
@@ -752,7 +770,7 @@ public final class MainController {
             }
             sql = substituted.get();
         }
-        editors.newTab(s.id());
+        openQueryTab(s.id());
         SqlEditorPane ed = editors.activeEditor();
         if (ed != null) {
             ed.setSql(sql);
@@ -1207,12 +1225,13 @@ public final class MainController {
             return;
         }
         DataSourceDriver active = sessionOpt.get().driver();
+        boolean redis = isRedis(sessionOpt.get());
         cancelling = false;
         setQueryRunning(true);
         final List<String> toRun = lastRerunStatements;
         final String historySql = lastRerunHistorySql;
         outcome.showLoading(toRun);
-        statusBar.setQueryRunning();
+        statusBar.setQueryRunning(redis);
         Task<ScriptResult> task = new Task<>() {
             @Override
             protected ScriptResult call() throws Exception {
@@ -1225,10 +1244,10 @@ public final class MainController {
             cancelling = false;
             setQueryRunning(false);
             ScriptResult script = task.getValue();
-            outcome.presentScript(script, false);
-            statusBar.setScriptSummary(script.summary(), script.errorCount() > 0);
+            outcome.presentScript(script, false, toRun);
+            statusBar.setScriptSummary(script.summary(redis), script.errorCount() > 0);
             outcome.toolbar().notifyQueryFinished(script.errorCount() > 0);
-            recordHistory(historySql, script);
+            recordHistory(historySql, script, redis);
             historyPane.refresh();
             syncTransactionStatus(sessionOpt.get());
             if (script.errorCount() == 0) {
@@ -1242,7 +1261,7 @@ public final class MainController {
             setQueryRunning(false);
             QueryResult result = QueryResult.ofError(rootCauseMessage(task.getException()), 0);
             outcome.present(result);
-            statusBar.setResult(result);
+            statusBar.setResult(result, redis);
             outcome.toolbar().notifyQueryFinished(true);
             updateActionStates();
         });
@@ -1250,9 +1269,9 @@ public final class MainController {
             activeTask = null;
             cancelling = false;
             setQueryRunning(false);
-            QueryResult result = QueryResult.ofError("Query cancelled", 0);
+            QueryResult result = QueryResult.ofError(redis ? "Command cancelled" : "Query cancelled", 0);
             outcome.present(result);
-            statusBar.setResult(result);
+            statusBar.setResult(result, redis);
             outcome.toolbar().notifyQueryFinished(true);
             updateActionStates();
         });
@@ -1359,7 +1378,7 @@ public final class MainController {
         cancelling = false;
         setQueryRunning(true);
         outcome.showLoading(toRun);
-        statusBar.setQueryRunning();
+        statusBar.setQueryRunning(redis);
 
         Task<ScriptResult> task = new Task<>() {
             @Override
@@ -1374,9 +1393,9 @@ public final class MainController {
             setQueryRunning(false);
             ScriptResult script = task.getValue();
             outcome.presentScript(script, preferPlan, sourceStatements);
-            statusBar.setScriptSummary(script.summary(), script.errorCount() > 0);
+            statusBar.setScriptSummary(script.summary(redis), script.errorCount() > 0);
             outcome.toolbar().notifyQueryFinished(script.errorCount() > 0);
-            recordHistory(historySql, script);
+            recordHistory(historySql, script, redis);
             historyPane.refresh();
             syncTransactionStatus(session);
             if (analyze == null && script.errorCount() == 0) {
@@ -1389,9 +1408,9 @@ public final class MainController {
             setQueryRunning(false);
             QueryResult result = QueryResult.ofError(rootCauseMessage(task.getException()), 0);
             outcome.present(result);
-            statusBar.setResult(result);
+            statusBar.setResult(result, redis);
             outcome.toolbar().notifyQueryFinished(true);
-            recordHistory(historySql, ScriptResult.ofSingle(result));
+            recordHistory(historySql, ScriptResult.ofSingle(result), redis);
             historyPane.refresh();
             syncTransactionStatus(session);
         });
@@ -1399,11 +1418,11 @@ public final class MainController {
             activeTask = null;
             cancelling = false;
             setQueryRunning(false);
-            QueryResult result = QueryResult.ofError("Query cancelled", 0);
+            QueryResult result = QueryResult.ofError(redis ? "Command cancelled" : "Query cancelled", 0);
             outcome.present(result);
-            statusBar.setResult(result);
+            statusBar.setResult(result, redis);
             outcome.toolbar().notifyQueryFinished(true);
-            recordHistory(historySql, ScriptResult.ofSingle(result));
+            recordHistory(historySql, ScriptResult.ofSingle(result), redis);
             historyPane.refresh();
             syncTransactionStatus(session);
         });
@@ -1487,11 +1506,12 @@ public final class MainController {
         }
         ConnectionSession session = sessionOpt.get();
         DataSourceDriver active = session.driver();
+        boolean redis = isRedis(session);
         lastRunSessionId = session.id();
         cancelling = false;
         setQueryRunning(true);
         outcome.showLoading(statements);
-        statusBar.setQueryRunning();
+        statusBar.setQueryRunning(redis);
         Task<ScriptResult> task = new Task<>() {
             @Override
             protected ScriptResult call() throws Exception {
@@ -1504,10 +1524,10 @@ public final class MainController {
             cancelling = false;
             setQueryRunning(false);
             ScriptResult script = task.getValue();
-            outcome.presentScript(script, false);
-            statusBar.setScriptSummary(script.summary(), script.errorCount() > 0);
+            outcome.presentScript(script, false, statements);
+            statusBar.setScriptSummary(script.summary(redis), script.errorCount() > 0);
             outcome.toolbar().notifyQueryFinished(script.errorCount() > 0);
-            recordHistory(sql, script);
+            recordHistory(sql, script, redis);
             historyPane.refresh();
             syncTransactionStatus(session);
             if (script.errorCount() == 0) {
@@ -1520,7 +1540,7 @@ public final class MainController {
             setQueryRunning(false);
             QueryResult result = QueryResult.ofError(rootCauseMessage(task.getException()), 0);
             outcome.present(result);
-            statusBar.setResult(result);
+            statusBar.setResult(result, redis);
             outcome.toolbar().notifyQueryFinished(true);
             syncTransactionStatus(session);
         });
@@ -1535,10 +1555,14 @@ public final class MainController {
     }
 
     private void recordHistory(String sql, ScriptResult script) {
+        recordHistory(sql, script, false);
+    }
+
+    private void recordHistory(String sql, ScriptResult script, boolean redis) {
         if (sql == null || sql.isBlank() || script == null) {
             return;
         }
-        historyStore.record(sql, script.summary(), script.errorCount() == 0, script.totalTimeMs());
+        historyStore.record(sql, script.summary(redis), script.errorCount() == 0, script.totalTimeMs());
     }
 
     private void copyActiveResult(ResultExporter.Format format) {
@@ -1657,10 +1681,10 @@ public final class MainController {
         }
         cancelling = true;
         outcome.showCancelling();
-        statusBar.setQueryRunning();
         Optional<ConnectionSession> sessionOpt = Optional.ofNullable(lastRunSessionId)
                 .flatMap(sessions::find)
                 .or(() -> resolveSession(editors.activeEditor()));
+        statusBar.setQueryRunning(sessionOpt.filter(MainController::isRedis).isPresent());
         DataSourceDriver active = sessionOpt.map(ConnectionSession::driver).orElse(null);
         if (active == null) {
             if (task.isRunning()) {

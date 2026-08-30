@@ -145,6 +145,8 @@ public final class SqlEditorPane extends BorderPane {
     private Supplier<SchemaCache> schemaCache = SchemaCache::new;
     private Supplier<String> activeCatalog = () -> null;
     private Supplier<ConnectionConfig.Driver> dialect = () -> ConnectionConfig.Driver.MYSQL;
+    /** {@code .sql} or {@code .redis} — drives highlighting independently of the focused session. */
+    private String documentExtension = ".sql";
     private Supplier<Style> completionStyle = Style::defaults;
     private Map<String, String> runConfigParams = Map.of();
     private SqlAutocompleteEngine engine = new SqlAutocompleteEngine(new SchemaCache());
@@ -399,6 +401,27 @@ public final class SqlEditorPane extends BorderPane {
         scheduleInspectionNow();
         refreshHighlightingNow();
         scheduleStatementHighlight();
+    }
+
+    /**
+     * File / tab extension used by the lexer. {@code .redis} applies Redis command
+     * highlighting; {@code .sql} applies SQL even if a Redis session is focused.
+     */
+    public void setDocumentExtension(String fileNameOrExtension) {
+        ConnectionConfig.Driver fromName = SqlSyntaxHighlighter.driverForDocumentName(fileNameOrExtension);
+        String next = fromName.connectionType().isRedis() ? ".redis" : ".sql";
+        if (next.equals(documentExtension)) {
+            return;
+        }
+        documentExtension = next;
+        refreshAutocompleteEngine();
+        scheduleInspectionNow();
+        refreshHighlightingNow();
+        scheduleStatementHighlight();
+    }
+
+    public String getDocumentExtension() {
+        return documentExtension;
     }
 
     /**
@@ -1838,8 +1861,14 @@ public final class SqlEditorPane extends BorderPane {
     }
 
     private ConnectionConfig.Driver currentDriver() {
+        if (".redis".equalsIgnoreCase(documentExtension)) {
+            return ConnectionConfig.Driver.REDIS;
+        }
         ConnectionConfig.Driver driver = dialect.get();
-        return driver == null ? ConnectionConfig.Driver.MYSQL : driver;
+        if (driver == null || driver.connectionType().isRedis()) {
+            return ConnectionConfig.Driver.MYSQL;
+        }
+        return driver;
     }
 
     private boolean isRedisDialect() {

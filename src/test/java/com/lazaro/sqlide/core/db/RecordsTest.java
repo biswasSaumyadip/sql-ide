@@ -107,6 +107,16 @@ class RecordsTest {
         assertTrue(truncated.truncationBanner().contains("Showing 2 rows"));
         assertTrue(truncated.successMessage().contains("2 rows shown, more available"));
 
+        QueryResult status = QueryResult.ofStatus("OK", 12L);
+        assertTrue(status.isStatusReply());
+        assertFalse(status.isResultSet());
+        assertEquals("Reply: OK", status.successMessage());
+        assertEquals("Reply: OK in 12 ms", status.summary());
+        assertEquals("Command OK \u2014 1 key returned (5 ms)",
+                QueryResult.ofRows(List.of("Value"), List.of(List.of("a")), 5L).successMessage(true));
+        assertEquals("1 key in 5 ms",
+                QueryResult.ofRows(List.of("Value"), List.of(List.of("a")), 5L).summary(true));
+
         QueryResult more = QueryResult.ofRows(
                 List.of("id"), List.of(List.of("3"), List.of("4")), 4L, false);
         QueryResult combined = truncated.appended(more);

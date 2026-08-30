@@ -41,14 +41,19 @@ public record ScriptResult(List<QueryResult> results, long totalTimeMs, boolean 
     }
 
     public String summary() {
+        return summary(false);
+    }
+
+    public String summary(boolean redis) {
         if (results.isEmpty()) {
             return "Nothing executed";
         }
         if (results.size() == 1) {
-            return results.getFirst().summary();
+            return results.getFirst().summary(redis);
         }
-        String base = "%d statements \u2014 %d ok, %d failed (%d ms)".formatted(
-                results.size(), successCount(), errorCount(), totalTimeMs);
+        String unit = redis ? "commands" : "statements";
+        String base = "%d %s \u2014 %d ok, %d failed (%d ms)".formatted(
+                results.size(), unit, successCount(), errorCount(), totalTimeMs);
         return stoppedEarly ? base + ", stopped early" : base;
     }
 }

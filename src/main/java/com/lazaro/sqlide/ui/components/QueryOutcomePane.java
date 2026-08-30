@@ -1,5 +1,6 @@
 package com.lazaro.sqlide.ui.components;
 
+import com.lazaro.sqlide.core.db.ConnectionConfig;
 import com.lazaro.sqlide.core.db.QueryResult;
 import com.lazaro.sqlide.core.db.SchemaNode;
 import com.lazaro.sqlide.core.db.ScriptResult;
@@ -58,6 +59,8 @@ public final class QueryOutcomePane extends VBox {
     private Function<String, java.util.Optional<EditableResultTarget>> editableResolver =
             sql -> java.util.Optional.empty();
     private boolean awaitingRunResult;
+    private Supplier<ConnectionConfig.ConnectionType> connectionType =
+            () -> ConnectionConfig.ConnectionType.MYSQL;
 
     public QueryOutcomePane() {
         getStyleClass().add("query-outcome-pane");
@@ -130,6 +133,17 @@ public final class QueryOutcomePane extends VBox {
 
     public ResultToolbar toolbar() {
         return toolbar;
+    }
+
+    public void setConnectionType(Supplier<ConnectionConfig.ConnectionType> connectionType) {
+        this.connectionType = connectionType == null
+                ? () -> ConnectionConfig.ConnectionType.MYSQL
+                : connectionType;
+    }
+
+    private boolean redis() {
+        ConnectionConfig.ConnectionType type = connectionType.get();
+        return type != null && type.isRedis();
     }
 
     public void setOnExportToFile(Consumer<QueryResult> action) {
@@ -297,8 +311,10 @@ public final class QueryOutcomePane extends VBox {
     public void showLoading(List<String> statements) {
         errorPanel.clear();
         awaitingRunResult = true;
-        output.appendRunning(statements);
-        replaceTransientWith(List.of(wrap("Running", ResultPage.message("Running query\u2026"), false, false)));
+        boolean redis = redis();
+        output.appendRunning(statements, redis);
+        String running = redis ? "Running command\u2026" : "Running query\u2026";
+        replaceTransientWith(List.of(wrap("Running", ResultPage.message(running), false, false)));
         toolbar.setSummary("Running\u2026");
         syncToolbarState();
     }
@@ -306,7 +322,8 @@ public final class QueryOutcomePane extends VBox {
     public void showCancelling() {
         errorPanel.clear();
         output.appendCancelling();
-        replaceTransientWith(List.of(wrap("Cancelling", ResultPage.message("Cancelling query\u2026"), false, false)));
+        String cancelling = redis() ? "Cancelling command\u2026" : "Cancelling query\u2026";
+        replaceTransientWith(List.of(wrap("Cancelling", ResultPage.message(cancelling), false, false)));
         toolbar.setSummary("Cancelling\u2026");
         syncToolbarState();
     }
@@ -342,7 +359,8 @@ public final class QueryOutcomePane extends VBox {
         if (!awaitingRunResult) {
             output.appendSeparator();
         }
-        output.appendScript(script);
+        boolean redis = redis();
+        output.appendScript(script, sourceStatements, redis);
         awaitingRunResult = false;
 
         List<QueryResult> results = script.results();
@@ -355,10 +373,13 @@ public final class QueryOutcomePane extends VBox {
             if (result.isError()) {
                 lastError = result;
             }
+            if (redis && result.isStatusReply()) {
+                continue;
+            }
             if (result.isResultSet() && !result.isError()) {
                 hasResultSet = true;
             }
-            String title = results.size() == 1 ? tabTitle(result) : "Result " + (i + 1);
+            String title = results.size() == 1 ? tabTitle(result, redis) : "Result " + (i + 1);
             ResultPage page = ResultPage.from(result, preferPlan && results.size() == 1, onExportToFile, onExportJsonArray);
             String sql = i < statements.size() ? statements.get(i) : null;
             maybeEnableEditing(page, result, sql);
@@ -390,7 +411,7 @@ public final class QueryOutcomePane extends VBox {
         } else {
             resultTabs.getSelectionModel().select(outputTab);
         }
-        toolbar.setSummary(script.summary());
+        toolbar.setSummary(script.summary(redis));
         syncToolbarState();
         onActionsChanged.run();
     }
@@ -663,7 +684,7 @@ public final class QueryOutcomePane extends VBox {
             if (tab.getContent() == page) {
                 QueryResult result = page.result();
                 if (result != null && page.editSession() == null) {
-                    tab.setText(tabTitle(result));
+                    tab.setText(tabTitle(result, redis()));
                 }
                 break;
             }
@@ -672,11 +693,11 @@ public final class QueryOutcomePane extends VBox {
         if (result != null && resultTabs.getSelectionModel().getSelectedItem() != null
                 && resultTabs.getSelectionModel().getSelectedItem().getContent() == page) {
             if (page.editSession() == null) {
-                toolbar.setSummary(result.summary());
+                toolbar.setSummary(result.summary(redis()));
             }
         }
         if (result != null && !result.isError()) {
-            output.appendInfo("Loaded more \u2014 " + result.summary());
+            output.appendInfo("Loaded more \u2014 " + result.summary(redis()));
         }
         syncToolbarState();
         onActionsChanged.run();
@@ -694,17 +715,23 @@ public final class QueryOutcomePane extends VBox {
         return tab;
     }
 
-    private static String tabTitle(QueryResult result) {
+    private static String tabTitle(QueryResult result, boolean redis) {
         if (result.isError()) {
             return "Error";
         }
-        if (result.isResultSet()) {
-            if (result.truncated()) {
-                return result.rowCount() + "+ rows";
-            }
-            return result.rowCount() + (result.rowCount() == 1 ? " row" : " rows");
+        if (result.isStatusReply()) {
+            return "Reply";
         }
-        return "Update";
+        if (result.isResultSet()) {
+            String unit = redis
+                    ? (result.rowCount() == 1 ? " key" : " keys")
+                    : (result.rowCount() == 1 ? " row" : " rows");
+            if (result.truncated()) {
+                return result.rowCount() + "+" + unit;
+            }
+            return result.rowCount() + unit;
+        }
+        return redis ? "Reply" : "Update";
     }
 
     private static final class ResultPage extends VBox {

@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -109,6 +110,28 @@ final class SqlSyntaxHighlighter {
             tokens.add(new Token(styleClassOf(matcher), matcher.start(), matcher.end()));
         }
         return tokens;
+    }
+
+    /**
+     * Lexer dialect from a tab or file name. {@code console_1.redis} uses Redis
+     * command highlighting; everything else stays SQL.
+     */
+    static ConnectionConfig.Driver driverForDocumentName(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            return ConnectionConfig.Driver.MYSQL;
+        }
+        String name = fileName.strip();
+        int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+        if (slash >= 0) {
+            name = name.substring(slash + 1);
+        }
+        return name.toLowerCase(Locale.ROOT).endsWith(".redis")
+                ? ConnectionConfig.Driver.REDIS
+                : ConnectionConfig.Driver.MYSQL;
+    }
+
+    static String untitledExtension(ConnectionConfig.Driver driver) {
+        return driver != null && driver.connectionType().isRedis() ? ".redis" : ".sql";
     }
 
     static StyleSpans<Collection<String>> computeHighlighting(String text) {

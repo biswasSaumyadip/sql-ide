@@ -168,8 +168,12 @@ public final class StatusBar extends HBox {
     }
 
     public void setQueryRunning() {
+        setQueryRunning(false);
+    }
+
+    public void setQueryRunning(boolean redis) {
         setActivity(true);
-        resultLabel.setText("Running query\u2026");
+        resultLabel.setText(redis ? "Running command\u2026" : "Running query\u2026");
         resultLabel.setTooltip(null);
         resultLabel.pseudoClassStateChanged(ERROR, false);
         pseudoClassStateChanged(BUSY, true);
@@ -181,8 +185,12 @@ public final class StatusBar extends HBox {
     }
 
     public void setResult(QueryResult result) {
+        setResult(result, false);
+    }
+
+    public void setResult(QueryResult result, boolean redis) {
         clearQueryRunning();
-        String summary = result.summary();
+        String summary = result.summary(redis);
         resultLabel.setText(abbreviate(summary, MAX_RESULT_CHARS));
         resultLabel.setTooltip(summary.equals(resultLabel.getText()) ? null : new Tooltip(summary));
         resultLabel.pseudoClassStateChanged(ERROR, result.isError());

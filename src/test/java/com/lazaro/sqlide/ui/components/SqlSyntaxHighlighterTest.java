@@ -219,6 +219,21 @@ class SqlSyntaxHighlighterTest {
     }
 
     @Test
+    @DisplayName("tab and file names pick SQL vs Redis highlighting")
+    void driverFollowsDocumentExtension() {
+        assertEquals(ConnectionConfig.Driver.REDIS,
+                SqlSyntaxHighlighter.driverForDocumentName("console_1.redis"));
+        assertEquals(ConnectionConfig.Driver.REDIS,
+                SqlSyntaxHighlighter.driverForDocumentName("redis-new-string.redis"));
+        assertEquals(ConnectionConfig.Driver.MYSQL,
+                SqlSyntaxHighlighter.driverForDocumentName("console_1.sql"));
+        assertEquals(ConnectionConfig.Driver.MYSQL,
+                SqlSyntaxHighlighter.driverForDocumentName("query-new-table.sql"));
+        assertEquals(".redis", SqlSyntaxHighlighter.untitledExtension(ConnectionConfig.Driver.REDIS));
+        assertEquals(".sql", SqlSyntaxHighlighter.untitledExtension(ConnectionConfig.Driver.MYSQL));
+    }
+
+    @Test
     @DisplayName("hash comments are Redis comments, not SQL line comments")
     void highlightsRedisHashComments() {
         String text = "# get the key\nGET foo";
