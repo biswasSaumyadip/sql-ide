@@ -9,6 +9,7 @@ mysql = "9.3.0"
 slf4j = "2.0.17"
 h2 = "2.3.232"
 jsqlparser = "5.1"
+jackson = "2.17.0"
 junit = "5.11.4"
 
 [libraries]
@@ -19,6 +20,7 @@ mysql-connector = { module = "com.mysql:mysql-connector-j", version.ref = "mysql
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 h2 = { module = "com.h2database:h2", version.ref = "h2" }
 jsqlparser = { module = "com.github.jsqlparser:jsqlparser", version.ref = "jsqlparser" }
+jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }

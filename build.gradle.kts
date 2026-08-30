@@ -27,6 +27,7 @@ dependencies {
     implementation(libs.richtextfx)
     implementation(libs.hikaricp)
     implementation(libs.jsqlparser)
+    implementation(libs.jackson.databind)
 
     runtimeOnly(libs.mysql.connector)
     runtimeOnly(libs.slf4j.simple)

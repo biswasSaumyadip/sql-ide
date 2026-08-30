@@ -622,6 +622,10 @@
     -fx-padding: 12px;
 }
 
+.connection-dialog .connection-separator {
+    -fx-padding: 2 0 2 0;
+}
+
 .dialog-feedback {
     -fx-font-size: 11.5px;
     -fx-text-fill: #8fbf7f;
