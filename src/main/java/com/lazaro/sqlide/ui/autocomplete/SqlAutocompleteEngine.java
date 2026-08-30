@@ -2,6 +2,7 @@ package com.lazaro.sqlide.ui.autocomplete;
 
 import com.lazaro.sqlide.core.db.SchemaCache;
 import com.lazaro.sqlide.core.db.SchemaNode;
+import com.lazaro.sqlide.core.sql.SqlTableScope;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -74,14 +75,12 @@ public final class SqlAutocompleteEngine {
             "BEGIN", "START", "TRANSACTION");
 
     private static final Pattern WORD = Pattern.compile("[A-Za-z0-9_]*$");
-    private static final Pattern DOT_QUALIFIER = Pattern.compile("([A-Za-z0-9_]+)\\.\\s*([A-Za-z0-9_]*)$");
-    private static final Pattern TABLE_REF = Pattern.compile(
-            "(?i)\\b(?:from|join|update|into|table)\\s+([`\"\\[]?[A-Za-z0-9_]+[`\"\\]]?)"
-                    + "(?:\\s+(?:as\\s+)?([`\"\\[]?[A-Za-z0-9_]+[`\"\\]]?))?",
-            Pattern.CASE_INSENSITIVE);
+    private static final Pattern DOT_QUALIFIER = Pattern.compile(
+            "([A-Za-z0-9_]+(?:\\s*\\.\\s*[A-Za-z0-9_]+)?)\\.\\s*([A-Za-z0-9_]*)$");
     /** Caret is inside {@code INSERT INTO t (…)} column list (parens still open). */
     private static final Pattern INSERT_COLUMN_LIST = Pattern.compile(
-            "(?i)\\bINSERT\\s+INTO\\s+([`\"\\[]?[A-Za-z0-9_]+[`\"\\]]?)\\s*\\(([^()]*)$");
+            "(?i)\\bINSERT\\s+INTO\\s+(?:[`\"\\[]?[A-Za-z0-9_]+[`\"\\]]?\\s*\\.\\s*)?"
+                    + "([`\"\\[]?[A-Za-z0-9_]+[`\"\\]]?)\\s*\\(([^()]*)$");
 
     private static final Set<String> TABLE_CONTEXTS = Set.of(
             "FROM", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "OUTER", "CROSS",
@@ -133,7 +132,7 @@ public final class SqlAutocompleteEngine {
         }
 
         String before = sql.substring(0, caret);
-        Map<String, String> aliases = parseAliases(before);
+        Map<String, String> aliases = resolveAliases(before);
 
         Matcher dot = DOT_QUALIFIER.matcher(before);
         if (dot.find()) {
@@ -460,19 +459,18 @@ public final class SqlAutocompleteEngine {
 
     // ---------------------------------------------------------------- parsing
 
+    /**
+     * Alias / table → physical table using AST scope when the fragment parses,
+     * otherwise the regex fallback (and always merged for incomplete tails).
+     */
+    Map<String, String> resolveAliases(String sqlBeforeCaret) {
+        return SqlTableScope.resolveAliases(sqlBeforeCaret, cache, activeCatalog());
+    }
+
+    /** @deprecated prefer {@link #resolveAliases(String)}; kept for existing tests. */
+    @Deprecated
     static Map<String, String> parseAliases(String sqlBeforeCaret) {
-        Map<String, String> aliases = new LinkedHashMap<>();
-        Matcher matcher = TABLE_REF.matcher(sqlBeforeCaret);
-        while (matcher.find()) {
-            String table = stripQuotes(matcher.group(1));
-            String alias = matcher.group(2) == null ? table : stripQuotes(matcher.group(2));
-            if (isReserved(alias)) {
-                alias = table;
-            }
-            aliases.put(alias.toLowerCase(Locale.ROOT), table);
-            aliases.put(table.toLowerCase(Locale.ROOT), table);
-        }
-        return aliases;
+        return SqlTableScope.regexAliases(sqlBeforeCaret);
     }
 
     /** Table name when caret is inside an open {@code INSERT INTO t (…)} column list. */
@@ -549,16 +547,6 @@ public final class SqlAutocompleteEngine {
 
     private static boolean isIdentChar(char c) {
         return Character.isLetterOrDigit(c) || c == '_';
-    }
-
-    private static boolean isReserved(String word) {
-        String upper = word.toUpperCase(Locale.ROOT);
-        for (String keyword : KEYWORDS) {
-            if (keyword.equals(upper)) {
-                return true;
-            }
-        }
-        return JOIN_KEYWORDS.contains(upper);
     }
 
     private static String stripQuotes(String name) {

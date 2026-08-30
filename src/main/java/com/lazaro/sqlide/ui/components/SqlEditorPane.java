@@ -414,7 +414,7 @@ public final class SqlEditorPane extends BorderPane {
     // ---------------------------------------------------------------- autocomplete
 
     private void configureAutocompletePopup() {
-        completionList.getStyleClass().add("sql-completion-list");
+        completionList.getStyleClass().addAll("sql-completion-list", "autocomplete-list-view");
         completionList.getStylesheets().add(stylesheet());
         completionList.setPrefWidth(420);
         completionList.setFocusTraversable(false);
@@ -505,6 +505,13 @@ public final class SqlEditorPane extends BorderPane {
             return;
         }
 
+        String currentPrefix = completionPrefixAt(sql, caret);
+        if (suggestions.size() == 1
+                && suggestions.getFirst().insertText().equalsIgnoreCase(currentPrefix)) {
+            hideCompletions();
+            return;
+        }
+
         String previouslySelected = Optional.ofNullable(completionList.getSelectionModel().getSelectedItem())
                 .map(Suggestion::insertText)
                 .orElse(null);
@@ -591,6 +598,24 @@ public final class SqlEditorPane extends BorderPane {
 
     private void hideCompletions() {
         completionPopup.hide();
+    }
+
+    /** Identifier fragment immediately before the caret (empty when none). */
+    private static String completionPrefixAt(String sql, int caret) {
+        if (sql == null || caret <= 0 || caret > sql.length()) {
+            return "";
+        }
+        int end = caret;
+        int start = end;
+        while (start > 0) {
+            char c = sql.charAt(start - 1);
+            if (Character.isLetterOrDigit(c) || c == '_') {
+                start--;
+            } else {
+                break;
+            }
+        }
+        return sql.substring(start, end);
     }
 
     /** IntelliJ-style row: kind badge · name ………… detail */

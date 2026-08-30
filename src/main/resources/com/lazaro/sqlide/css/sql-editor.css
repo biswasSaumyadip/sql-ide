@@ -108,37 +108,71 @@
 
 /* ---------------------------------------------------------------- autocomplete popup */
 
+.autocomplete-list-view,
 .sql-completion-list {
     -fx-background-color: #1e1f22;
     -fx-control-inner-background: #1e1f22;
-    -fx-border-color: #3d4450;
-    -fx-border-width: 1;
-    -fx-background-radius: 6px;
-    -fx-border-radius: 6px;
-    -fx-padding: 2px 0;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+    -fx-border-color: -color-border-default;
+    -fx-border-width: 1px;
+    -fx-border-radius: 4px;
+    -fx-background-radius: 4px;
     -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
     -fx-font-size: 12px;
     -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.45), 12, 0.2, 0, 4);
 }
 
-.sql-completion-list .list-cell {
-    -fx-text-fill: #d6d9de;
-    -fx-padding: 2px 0;
-    -fx-background-color: transparent;
-    -fx-background-radius: 0;
+.autocomplete-list-view:focused,
+.sql-completion-list:focused {
+    -fx-background-insets: 0;
+    -fx-border-color: -color-border-default;
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
 }
 
+.autocomplete-list-view .virtual-flow,
+.autocomplete-list-view .clipped-container,
+.autocomplete-list-view .sheet,
+.sql-completion-list .virtual-flow,
+.sql-completion-list .clipped-container,
+.sql-completion-list .sheet {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+
+.autocomplete-list-view .list-cell,
+.sql-completion-list .list-cell {
+    -fx-background-insets: 0;
+    -fx-padding: 4px 8px;
+    -fx-background-radius: 0;
+    -fx-border-width: 0;
+    -fx-background-color: transparent;
+    -fx-text-fill: -color-fg-default;
+}
+
+.autocomplete-list-view .list-cell:selected,
+.autocomplete-list-view .list-cell:focused:selected,
+.autocomplete-list-view .list-cell:filled:selected,
+.autocomplete-list-view .list-cell:filled:selected:focused,
+.sql-completion-list .list-cell:selected,
+.sql-completion-list .list-cell:focused:selected,
 .sql-completion-list .list-cell:filled:selected,
 .sql-completion-list .list-cell:filled:selected:focused {
-    -fx-background-color: #2f5d8c;
+    -fx-background-color: -color-accent-emphasis;
+    -fx-background-insets: 0;
+    -fx-text-fill: -color-fg-emphasis;
 }
 
+.autocomplete-list-view .list-cell:filled:hover,
 .sql-completion-list .list-cell:filled:hover {
     -fx-background-color: #262a32;
 }
 
+.autocomplete-list-view .list-cell:filled:selected:hover,
 .sql-completion-list .list-cell:filled:selected:hover {
-    -fx-background-color: derive(#2f5d8c, 8%);
+    -fx-background-color: -color-accent-emphasis;
 }
 
 .sql-completion-badge {
@@ -177,10 +211,12 @@
     -fx-font-size: 11px;
 }
 
+.autocomplete-list-view .list-cell:filled:selected .sql-completion-name,
 .sql-completion-list .list-cell:filled:selected .sql-completion-name {
     -fx-text-fill: #ffffff;
 }
 
+.autocomplete-list-view .list-cell:filled:selected .sql-completion-detail,
 .sql-completion-list .list-cell:filled:selected .sql-completion-detail {
     -fx-text-fill: #c5d4e8;
 }

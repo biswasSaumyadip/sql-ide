@@ -183,4 +183,28 @@ class SqlInspectorTest {
                 "SELECT email FROM users", cache, "app");
         assertTrue(issues.stream().noneMatch(i -> i.message().contains("Unknown table")));
     }
+
+    @Test
+    @DisplayName("LIKE string literals are not flagged as unknown columns")
+    void ignoresLikeStringLiterals() {
+        String single = "SELECT email FROM users WHERE email LIKE '%pala%'";
+        List<InspectionIssue> singleIssues = SqlInspector.inspect(single, cache, "app");
+        assertTrue(singleIssues.stream().noneMatch(i -> i.message().contains("Unknown column")),
+                () -> "unexpected: " + singleIssues);
+
+        // JSqlParser treats double-quoted tokens as identifiers; still must not lint LIKE patterns.
+        String dbl = "SELECT email FROM users WHERE email LIKE \"%pala%\"";
+        List<InspectionIssue> dblIssues = SqlInspector.inspect(dbl, cache, "app");
+        assertTrue(dblIssues.stream().noneMatch(i ->
+                        i.message().contains("Unknown column") && i.message().contains("pala")),
+                () -> "unexpected: " + dblIssues);
+    }
+
+    @Test
+    @DisplayName("numeric-looking fake columns are skipped")
+    void ignoresNumericMasqueradingColumns() {
+        assertTrue(SqlInspector.isNonSchemaColumnName("%pala%"));
+        assertTrue(SqlInspector.isNonSchemaColumnName("123"));
+        assertTrue(!SqlInspector.isNonSchemaColumnName("email"));
+    }
 }

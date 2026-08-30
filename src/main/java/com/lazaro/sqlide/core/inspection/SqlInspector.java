@@ -365,7 +365,28 @@ public final class SqlInspector {
         expression.accept(new ExpressionVisitorAdapter<Void>() {
             @Override
             public <S> Void visit(Column column, S context) {
+                // Only schema Columns are validated — never literals.
                 checkColumn(column, scope, sql, issues);
+                return null;
+            }
+
+            @Override
+            public <S> Void visit(StringValue stringValue, S context) {
+                return null;
+            }
+
+            @Override
+            public <S> Void visit(LongValue longValue, S context) {
+                return null;
+            }
+
+            @Override
+            public <S> Void visit(DoubleValue doubleValue, S context) {
+                return null;
+            }
+
+            @Override
+            public <S> Void visit(NullValue nullValue, S context) {
                 return null;
             }
 
@@ -384,11 +405,15 @@ public final class SqlInspector {
     }
 
     private static void checkColumn(Column column, Scope scope, String sql, List<InspectionIssue> issues) {
-        if (scope == null || !scope.schemaReady) {
+        if (scope == null || !scope.schemaReady || column == null) {
             return;
         }
         String columnName = stripQuotes(column.getColumnName());
         if (columnName == null || columnName.isBlank() || "*".equals(columnName)) {
+            return;
+        }
+        // Double-quoted LIKE patterns / numeric "identifiers" are not schema objects.
+        if (isNonSchemaColumnName(columnName)) {
             return;
         }
 
@@ -420,6 +445,28 @@ public final class SqlInspector {
             issues.add(issueAround(column, sql, columnName,
                     "Ambiguous column reference", Severity.ERROR));
         }
+    }
+
+    /**
+     * True for values the parser promoted to {@link Column} that are clearly data
+     * (LIKE wildcards, pure numbers), not schema identifiers.
+     */
+    static boolean isNonSchemaColumnName(String columnName) {
+        if (columnName == null || columnName.isBlank()) {
+            return true;
+        }
+        if (columnName.indexOf('%') >= 0) {
+            return true;
+        }
+        // Pure numeric tokens (misparsed literals).
+        boolean digits = true;
+        for (int i = 0; i < columnName.length(); i++) {
+            if (!Character.isDigit(columnName.charAt(i))) {
+                digits = false;
+                break;
+            }
+        }
+        return digits;
     }
 
     private static void flagConstantCondition(BinaryExpression expression, String sql, List<InspectionIssue> issues) {

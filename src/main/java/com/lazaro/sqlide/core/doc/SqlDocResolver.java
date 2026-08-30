@@ -3,14 +3,13 @@ package com.lazaro.sqlide.core.doc;
 import com.lazaro.sqlide.core.db.SchemaCache;
 import com.lazaro.sqlide.core.db.SchemaNode;
 import com.lazaro.sqlide.core.db.SchemaNode.NodeType;
+import com.lazaro.sqlide.core.sql.SqlTableScope;
 
-import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Resolves a hovered SQL identifier to table / column documentation using the
@@ -47,12 +46,6 @@ public final class SqlDocResolver {
         }
     }
 
-    private static final Pattern TABLE_REF = Pattern.compile(
-            "(?i)\\b(?:from|join|update|into|table)\\s+([`\"\\[]?[A-Za-z0-9_]+[`\"\\]]?)"
-                    + "(?:\\s*\\.\\s*([`\"\\[]?[A-Za-z0-9_]+[`\"\\]]?))?"
-                    + "(?:\\s+(?:as\\s+)?([`\"\\[]?[A-Za-z0-9_]+[`\"\\]]?))?",
-            Pattern.CASE_INSENSITIVE);
-
     private SqlDocResolver() {
     }
 
@@ -71,7 +64,7 @@ public final class SqlDocResolver {
             return Optional.empty();
         }
 
-        Map<String, String> aliases = aliasesIn(sql);
+        Map<String, String> aliases = SqlTableScope.resolveAliases(sql.substring(0, index + 1), cache, activeCatalog);
         String catalog = activeCatalog;
 
         if (ident.qualifier() != null) {
@@ -203,28 +196,6 @@ public final class SqlDocResolver {
             }
         }
         return Optional.empty();
-    }
-
-    private static Map<String, String> aliasesIn(String sql) {
-        Map<String, String> aliases = new LinkedHashMap<>();
-        Matcher matcher = TABLE_REF.matcher(sql);
-        while (matcher.find()) {
-            String first = stripQuotes(matcher.group(1));
-            String second = matcher.group(2) == null ? null : stripQuotes(matcher.group(2));
-            String alias = matcher.group(3) == null ? null : stripQuotes(matcher.group(3));
-            String table;
-            if (second != null && !second.isBlank()) {
-                table = second;
-            } else {
-                table = first;
-            }
-            if (alias == null || alias.isBlank()) {
-                alias = table;
-            }
-            aliases.put(alias.toLowerCase(Locale.ROOT), table);
-            aliases.put(table.toLowerCase(Locale.ROOT), table);
-        }
-        return aliases;
     }
 
     public record Identifier(String qualifier, String name) {

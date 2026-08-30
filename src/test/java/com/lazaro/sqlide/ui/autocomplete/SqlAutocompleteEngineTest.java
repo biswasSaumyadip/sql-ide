@@ -200,6 +200,26 @@ class SqlAutocompleteEngineTest {
                 .anyMatch(s -> s.insertText().equals("TRANSACTION")));
     }
 
+    @Test
+    @DisplayName("catalog.table alias resolves columns via AST scope")
+    void suggestsColumnsAfterCatalogQualifiedAlias() {
+        String sql = "SELECT * FROM app.users u WHERE u.";
+        List<Suggestion> suggestions = engine.suggest(sql, sql.length());
+        assertTrue(suggestions.stream().anyMatch(s -> s.kind() == Kind.COLUMN && s.insertText().equals("email")));
+        assertTrue(suggestions.stream().anyMatch(s -> s.kind() == Kind.COLUMN && s.insertText().equals("id")));
+    }
+
+    @Test
+    @DisplayName("multi-join aliases stay independent")
+    void suggestsColumnsForSecondJoinAlias() {
+        String sql = "SELECT * FROM users u JOIN orders o ON o.user_id = u.id WHERE o.";
+        List<Suggestion> suggestions = engine.suggest(sql, sql.length());
+        assertTrue(suggestions.stream().anyMatch(s -> s.insertText().equals("user_id")));
+        assertTrue(suggestions.stream().anyMatch(s -> s.insertText().equals("total")));
+        assertTrue(suggestions.stream().noneMatch(s -> s.insertText().equals("email")),
+                "must not mix users columns into o.: " + suggestions);
+    }
+
     private static int indexOf(List<Suggestion> suggestions, String insertText) {
         for (int i = 0; i < suggestions.size(); i++) {
             if (suggestions.get(i).insertText().equals(insertText)) {
