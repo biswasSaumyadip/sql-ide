@@ -39,7 +39,8 @@ final class SchemaTreeContextMenus {
             Runnable disconnect,
             Runnable reconnect,
             Consumer<TreeItem<SchemaNode>> removeConnection,
-            Consumer<String> dumpToFile
+            Consumer<String> dumpToFile,
+            Consumer<String> runCommand
     ) {
     }
 
@@ -69,12 +70,13 @@ final class SchemaTreeContextMenus {
             return;
         }
         List<MenuItem> items = switch (node.type()) {
-            case DATA_SOURCE -> connectionMenu(item);
-            case DATABASE, SCHEMA -> schemaMenu(item);
+            case DATA_SOURCE -> isRedis(item) ? redisConnectionMenu(item) : connectionMenu(item);
+            case DATABASE, SCHEMA -> isRedis(item) ? redisDatabaseMenu(item) : schemaMenu(item);
             case FOLDER -> folderMenu(item);
             case TABLE -> tableMenu(item);
             case VIEW -> viewMenu(item);
             case PROCEDURE -> procedureMenu(item);
+            case REDIS_KEY -> redisKeyMenu(item);
             case COLUMN -> columnMenu(item);
             case KEY, INDEX -> keyOrIndexMenu(item);
         };
@@ -105,6 +107,61 @@ final class SchemaTreeContextMenus {
         items.add(new SeparatorMenuItem());
         items.add(danger("Remove Connection", () -> actions.removeConnection.accept(item)));
         return items;
+    }
+
+    private List<MenuItem> redisConnectionMenu(TreeItem<SchemaNode> item) {
+        boolean active = item.getValue().metadataFlag(SchemaNode.META_ACTIVE);
+        Menu neu = redisNewMenu();
+
+        List<MenuItem> items = new ArrayList<>();
+        items.add(neu);
+        items.add(action("Refresh", new KeyCodeCombination(KeyCode.F5, KeyCombination.CONTROL_DOWN), actions.refreshAll));
+        items.add(new SeparatorMenuItem());
+        items.add(action("Edit Connection Properties\u2026", null, () -> actions.editConnection.accept(item)));
+        if (active) {
+            items.add(action("Disconnect", null, actions.disconnect));
+            items.add(action("Reconnect", null, actions.reconnect));
+        } else {
+            items.add(action("Connect / Reconnect", null, actions.reconnect));
+        }
+        items.add(new SeparatorMenuItem());
+        items.add(danger("Flush Database\u2026", () -> run("FLUSHDB")));
+        items.add(danger("Remove Connection", () -> actions.removeConnection.accept(item)));
+        return items;
+    }
+
+    private List<MenuItem> redisDatabaseMenu(TreeItem<SchemaNode> item) {
+        return List.of(
+                redisNewMenu(),
+                action("Refresh", new KeyCodeCombination(KeyCode.F5, KeyCombination.CONTROL_DOWN),
+                        () -> actions.refreshItem.accept(item)),
+                new SeparatorMenuItem(),
+                action("Copy Name", null, () -> copy(item.getValue().name())),
+                new SeparatorMenuItem(),
+                danger("Flush Database\u2026", () -> run("FLUSHDB")));
+    }
+
+    private Menu redisNewMenu() {
+        Menu neu = new Menu("+ New");
+        neu.getItems().addAll(
+                action("Query Console", new KeyCodeCombination(KeyCode.Q, KeyCombination.CONTROL_DOWN, KeyCombination.SHIFT_DOWN),
+                        actions.newQueryConsole),
+                action("String Key", null, () -> open(SqlTemplateGenerator.newRedisStringKey())),
+                action("Hash Key", null, () -> open(SqlTemplateGenerator.newRedisHashKey())),
+                action("List Key", null, () -> open(SqlTemplateGenerator.newRedisListKey())),
+                action("Set Key", null, () -> open(SqlTemplateGenerator.newRedisSetKey())));
+        return neu;
+    }
+
+    private List<MenuItem> redisKeyMenu(TreeItem<SchemaNode> item) {
+        String fullKey = item.getValue().metadata(SchemaNode.META_REDIS_KEY);
+        if (fullKey == null || fullKey.isBlank()) {
+            fullKey = item.getValue().name();
+        }
+        String copyKey = fullKey;
+        return List.of(
+                action("Copy Name", null, () -> copy(item.getValue().name())),
+                action("Copy Key", null, () -> copy(copyKey)));
     }
 
     private List<MenuItem> schemaMenu(TreeItem<SchemaNode> item) {
@@ -252,6 +309,22 @@ final class SchemaTreeContextMenus {
         if (sql != null && !sql.isBlank()) {
             actions.insertSql.accept(sql);
         }
+    }
+
+    private void run(String command) {
+        if (command != null && !command.isBlank() && actions.runCommand != null) {
+            actions.runCommand.accept(command);
+        }
+    }
+
+    private static boolean isRedis(TreeItem<SchemaNode> item) {
+        for (TreeItem<SchemaNode> cursor = item; cursor != null; cursor = cursor.getParent()) {
+            SchemaNode node = cursor.getValue();
+            if (node != null && node.type() == NodeType.DATA_SOURCE) {
+                return "REDIS".equalsIgnoreCase(node.metadata(SchemaNode.META_CONNECTION_TYPE));
+            }
+        }
+        return false;
     }
 
     private void open(SqlTemplateGenerator.Template template) {

@@ -37,6 +37,7 @@ public final class Icons {
             case TABLE -> table();
             case VIEW -> view();
             case PROCEDURE -> function();
+            case REDIS_KEY -> redisKey();
             case COLUMN -> node.metadataFlag(SchemaNode.META_PRIMARY_KEY) ? primaryKeyColumn() : column();
             case KEY -> key();
             case INDEX -> index();
@@ -75,6 +76,18 @@ public final class Icons {
         body.setArcWidth(1.5);
         body.setArcHeight(1.5);
         return group(tab, body);
+    }
+
+    /** Document glyph for a Redis key leaf. */
+    public static Node redisKey() {
+        Rectangle page = outlined(new Rectangle(3.0, 2.0, 8.0, 10.0), "icon-redis-key");
+        page.setArcWidth(1.2);
+        page.setArcHeight(1.2);
+        Line foldA = outlined(new Line(8.0, 2.0, 11.0, 5.0), "icon-redis-key");
+        Line foldB = outlined(new Line(8.0, 2.0, 8.0, 5.0), "icon-redis-key");
+        Line foldC = outlined(new Line(8.0, 5.0, 11.0, 5.0), "icon-redis-key");
+        Line body = outlined(new Line(5.0, 8.0, 9.0, 8.0), "icon-redis-key");
+        return group(page, foldA, foldB, foldC, body);
     }
 
     /** A grid: outer frame plus one row and one column rule. */

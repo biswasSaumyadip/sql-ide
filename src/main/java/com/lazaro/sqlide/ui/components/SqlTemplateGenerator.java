@@ -79,6 +79,22 @@ public final class SqlTemplateGenerator {
         return new Template(sql, qualified, "query-modify-table.sql");
     }
 
+    public static Template newRedisStringKey() {
+        return new Template("SET new_key \"value\"", "new_key", "redis-new-string.redis");
+    }
+
+    public static Template newRedisHashKey() {
+        return new Template("HSET new_hash field \"value\"", "new_hash", "redis-new-hash.redis");
+    }
+
+    public static Template newRedisListKey() {
+        return new Template("RPUSH new_list \"value\"", "new_list", "redis-new-list.redis");
+    }
+
+    public static Template newRedisSetKey() {
+        return new Template("SADD new_set \"value\"", "new_set", "redis-new-set.redis");
+    }
+
     /** Schema / database name for the selected tree item. */
     public static String schemaOf(TreeItem<SchemaNode> item) {
         if (item == null || item.getValue() == null) {

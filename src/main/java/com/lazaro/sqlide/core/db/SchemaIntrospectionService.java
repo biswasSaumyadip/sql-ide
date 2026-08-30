@@ -86,7 +86,7 @@ public final class SchemaIntrospectionService {
                     catalogFolders(connection, parent.name()));
             case FOLDER -> supplyAsync(connection -> folderChildren(connection, parent));
             case TABLE, VIEW -> supplyAsync(connection -> tableFolders(connection, parent));
-            case COLUMN, KEY, INDEX, PROCEDURE, DATA_SOURCE -> CompletableFuture.completedFuture(List.of());
+            case COLUMN, KEY, INDEX, PROCEDURE, DATA_SOURCE, REDIS_KEY -> CompletableFuture.completedFuture(List.of());
         };
     }
 

@@ -30,6 +30,7 @@ import com.lazaro.sqlide.ui.components.SqlTemplateGenerator;
 import com.lazaro.sqlide.ui.components.StatusBar;
 import com.lazaro.sqlide.core.transfer.TransferRequest;
 import com.lazaro.sqlide.core.transfer.TransferResult;
+import com.lazaro.sqlide.core.redis.RedisMutatingCommands;
 import com.lazaro.sqlide.core.sql.PageSql;
 import com.lazaro.sqlide.core.sql.ResultPager;
 import com.lazaro.sqlide.core.sql.SchemaChangingSql;
@@ -193,6 +194,7 @@ public final class MainController {
         schemaTree.setOnModifyTable(this::openModifyTable);
         schemaTree.setOnUseDatabase(this::useDatabase);
         schemaTree.setOnInsertSql(sql -> editors.insertIntoActiveEditor(sql));
+        schemaTree.setOnRunCommand(this::runGeneratedCommand);
         schemaTree.setOnOpenTemplate(template -> editors.openGeneratedSql(
                 template, sessions.focused().map(ConnectionSession::id).orElse(null)));
         schemaTree.setOnNewQuery(sessionId -> editors.newTab(sessionId));
@@ -1143,7 +1145,7 @@ public final class MainController {
         DataSourceDriver active = session.driver();
         String catalog = switch (node.type()) {
             case DATABASE, SCHEMA -> node.name();
-            case TABLE, VIEW, COLUMN, FOLDER, KEY, INDEX, PROCEDURE -> {
+            case TABLE, VIEW, COLUMN, FOLDER, KEY, INDEX, PROCEDURE, REDIS_KEY -> {
                 String meta = node.metadata(SchemaNode.META_CATALOG);
                 yield meta == null || meta.isBlank() ? null : meta;
             }
@@ -1174,6 +1176,17 @@ public final class MainController {
     }
 
     private void runQuery() {
+        executeSql(null, false);
+    }
+
+    /** Opens {@code command} in a query tab bound to the focused session and runs it. */
+    private void runGeneratedCommand(String command) {
+        if (command == null || command.isBlank()) {
+            return;
+        }
+        String sessionId = sessions.focused().map(ConnectionSession::id).orElse(null);
+        editors.openGeneratedSql(
+                new SqlTemplateGenerator.Template(command, "", "redis-cmd.redis"), sessionId);
         executeSql(null, false);
     }
 
@@ -1793,6 +1806,10 @@ public final class MainController {
     private void insertNodeReference(SchemaNode node) {
         String text = switch (node.type()) {
             case TABLE, VIEW, PROCEDURE -> node.qualifiedName();
+            case REDIS_KEY -> {
+                String key = node.metadata(SchemaNode.META_REDIS_KEY);
+                yield key == null || key.isBlank() ? node.name() : key;
+            }
             case DATA_SOURCE -> node.name();
             default -> node.name();
         };
@@ -1810,7 +1827,8 @@ public final class MainController {
         for (String statement : statements) {
             syncActiveCatalogFromSql(session, statement);
         }
-        if (SchemaChangingSql.anyChangesSchema(statements)) {
+        if (SchemaChangingSql.anyChangesSchema(statements)
+                || (session.config().connectionType().isRedis() && RedisMutatingCommands.any(statements))) {
             schemaTree.reload();
             refreshSchemaCache(session);
         }

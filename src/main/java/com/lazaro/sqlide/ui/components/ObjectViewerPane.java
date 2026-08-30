@@ -77,6 +77,7 @@ public final class ObjectViewerPane extends VBox {
             case VIEW -> "VIEW";
             case PROCEDURE -> SchemaNode.ROUTINE_FUNCTION.equalsIgnoreCase(
                     node.metadata(SchemaNode.META_ROUTINE_KIND)) ? "FUNCTION" : "PROCEDURE";
+            case REDIS_KEY -> "REDIS KEY";
             default -> "TABLE";
         };
         subtitleLabel.setText(catalog == null || catalog.isBlank() ? kind : kind + " · " + catalog);

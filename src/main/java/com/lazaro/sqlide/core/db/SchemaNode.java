@@ -78,6 +78,14 @@ public record SchemaNode(String name, NodeType type, List<SchemaNode> children, 
     public static final String FOLDER_COLUMNS = "columns";
     public static final String FOLDER_KEYS = "keys";
     public static final String FOLDER_INDEXES = "indexes";
+    /** Namespace folder in a Redis key tree ({@code cache:session:…}). */
+    public static final String FOLDER_REDIS = "redis-namespace";
+    /** Full Redis key on a {@link NodeType#REDIS_KEY} (and optionally a namespace folder). */
+    public static final String META_REDIS_KEY = "redisKey";
+    /** Redis TYPE string: {@code string}, {@code hash}, {@code list}, {@code set}, … */
+    public static final String META_REDIS_TYPE = "redisType";
+    /** {@link com.lazaro.sqlide.core.db.ConnectionConfig.ConnectionType} name on a data source. */
+    public static final String META_CONNECTION_TYPE = "connectionType";
 
     public enum NodeType {
         /** Saved / session data source root in the Database pane. */
@@ -90,6 +98,8 @@ public record SchemaNode(String name, NodeType type, List<SchemaNode> children, 
         VIEW,
         /** Stored procedure or function (see {@link #META_ROUTINE_KIND}). */
         PROCEDURE,
+        /** Redis key (leaf). Namespace prefixes use {@link #FOLDER}. */
+        REDIS_KEY,
         COLUMN,
         /** Primary or foreign key under a table's keys folder. */
         KEY,
@@ -98,7 +108,7 @@ public record SchemaNode(String name, NodeType type, List<SchemaNode> children, 
 
         /** Whether nodes of this kind can ever contain children. */
         public boolean isContainer() {
-            return this != COLUMN && this != KEY && this != INDEX && this != PROCEDURE;
+            return this != COLUMN && this != KEY && this != INDEX && this != PROCEDURE && this != REDIS_KEY;
         }
     }
 

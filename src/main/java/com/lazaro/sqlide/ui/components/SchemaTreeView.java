@@ -4,8 +4,10 @@ import com.lazaro.sqlide.core.config.ConnectionProfile;
 import com.lazaro.sqlide.core.config.ConnectionProfileManager;
 import com.lazaro.sqlide.core.db.ConnectionConfig;
 import com.lazaro.sqlide.core.db.DataSourceDriver;
+import com.lazaro.sqlide.core.db.RedisDriver;
 import com.lazaro.sqlide.core.db.SchemaNode;
 import com.lazaro.sqlide.core.db.SchemaNode.NodeType;
+import com.lazaro.sqlide.core.redis.RedisReadCommands;
 import com.lazaro.sqlide.core.session.ConnectionSession;
 import com.lazaro.sqlide.core.session.SessionManager;
 import com.lazaro.sqlide.ui.Icons;
@@ -72,6 +74,7 @@ public final class SchemaTreeView extends VBox {
     private Consumer<ConnectionProfile> onConnectProfile = profile -> { };
     private Consumer<ConnectionProfile> onDeleteProfile = profile -> { };
     private Consumer<String> onInsertSql = sql -> { };
+    private Consumer<String> onRunCommand = command -> { };
     private Consumer<SqlTemplateGenerator.Template> onOpenTemplate = template -> { };
     private Consumer<String> onNewQuery = sessionId -> { };
     private Consumer<String> onDisconnect = sessionId -> { };
@@ -175,7 +178,8 @@ public final class SchemaTreeView extends VBox {
                         () -> onDisconnect.accept(sessionIdOfSelection()),
                         this::connectSelectedDataSource,
                         this::removeConnectionFromItem,
-                        this::dumpSqlToFile));
+                        this::dumpSqlToFile,
+                        command -> onRunCommand.accept(command)));
         tree.setContextMenu(contextMenus.menu());
         // Populate before show — mutating items in onShowing cancels the popup.
         tree.addEventFilter(ContextMenuEvent.CONTEXT_MENU_REQUESTED, event -> {
@@ -343,6 +347,11 @@ public final class SchemaTreeView extends VBox {
     /** Inserts generated SQL into the active editor. */
     public void setOnInsertSql(Consumer<String> onInsertSql) {
         this.onInsertSql = onInsertSql == null ? sql -> { } : onInsertSql;
+    }
+
+    /** Opens a command in the editor and executes it (Redis Flush / key reads). */
+    public void setOnRunCommand(Consumer<String> onRunCommand) {
+        this.onRunCommand = onRunCommand == null ? command -> { } : onRunCommand;
     }
 
     /** Opens a new query tab with a generated CREATE/ALTER template. */
@@ -687,23 +696,58 @@ public final class SchemaTreeView extends VBox {
             item.replaceChildren(List.of(placeholderItem("Connect to browse schemas")));
             return;
         }
+        if (isRedisDriver(driver, node)) {
+            populateRedisKeys(item, driver);
+            return;
+        }
         item.replaceChildren(List.of(placeholderItem("Loading\u2026")));
         driver.getSchemaTree().whenComplete((nodes, error) -> Platform.runLater(() -> {
-            if (error != null) {
-                item.replaceChildren(List.of(placeholderItem(rootCauseMessage(error))));
-            } else if (nodes == null || nodes.isEmpty()) {
-                item.replaceChildren(List.of(placeholderItem("empty")));
-            } else {
-                rememberAvailableSchemas(nodes, connectionIdOf(item.getValue()), driver);
-                List<TreeItem<SchemaNode>> children = new ArrayList<>();
-                for (SchemaNode child : nodes) {
-                    children.add(schemaItem(child));
-                }
-                item.replaceChildren(children);
-            }
-            item.setExpanded(true);
-            applyFilter();
+            applyLoadedChildren(item, driver, nodes, error, true);
         }));
+    }
+
+    /**
+     * SCAN-backed Redis key tree under the connection node (colon folders + key leaves).
+     */
+    private void populateRedisKeys(DataSourceItem item, DataSourceDriver driver) {
+        item.replaceChildren(List.of(placeholderItem("Scanning keys\u2026")));
+        driver.getSchemaTree().whenComplete((nodes, error) -> Platform.runLater(() -> {
+            applyLoadedChildren(item, driver, nodes, error, false);
+        }));
+    }
+
+    private void applyLoadedChildren(
+            DataSourceItem item,
+            DataSourceDriver driver,
+            List<SchemaNode> nodes,
+            Throwable error,
+            boolean rememberSchemas) {
+        if (error != null) {
+            item.replaceChildren(List.of(placeholderItem(rootCauseMessage(error))));
+        } else if (nodes == null || nodes.isEmpty()) {
+            item.replaceChildren(List.of(placeholderItem("empty")));
+        } else {
+            if (rememberSchemas) {
+                rememberAvailableSchemas(nodes, connectionIdOf(item.getValue()), driver);
+            }
+            List<TreeItem<SchemaNode>> children = new ArrayList<>();
+            for (SchemaNode child : nodes) {
+                children.add(schemaItem(child));
+            }
+            item.replaceChildren(children);
+        }
+        item.setExpanded(true);
+        applyFilter();
+    }
+
+    private static boolean isRedisDriver(DataSourceDriver driver, SchemaNode dataSource) {
+        if (driver instanceof RedisDriver) {
+            return true;
+        }
+        if (driver != null && driver.currentConfig().map(c -> c.connectionType().isRedis()).orElse(false)) {
+            return true;
+        }
+        return dataSource != null && "REDIS".equalsIgnoreCase(dataSource.metadata(SchemaNode.META_CONNECTION_TYPE));
     }
 
     private void rememberAvailableSchemas(List<SchemaNode> nodes, String connectionId, DataSourceDriver driver) {
@@ -814,6 +858,10 @@ public final class SchemaTreeView extends VBox {
             }
             return;
         }
+        if (node.type() == NodeType.REDIS_KEY) {
+            openRedisKey(selected, node);
+            return;
+        }
         if (node.type() == NodeType.DATABASE || node.type() == NodeType.SCHEMA) {
             onUseDatabase.accept(node);
         } else if (node.type() == NodeType.TABLE || node.type() == NodeType.VIEW) {
@@ -822,6 +870,23 @@ public final class SchemaTreeView extends VBox {
         } else {
             onActivate.accept(node);
         }
+    }
+
+    private void openRedisKey(TreeItem<SchemaNode> selected, SchemaNode node) {
+        String key = node.metadata(SchemaNode.META_REDIS_KEY);
+        if (key == null || key.isBlank()) {
+            key = node.name();
+        }
+        String fullKey = key;
+        DataSourceDriver driver = driverFor(selected);
+        if (driver instanceof RedisDriver redis) {
+            redis.keyType(fullKey).whenComplete((type, error) -> Platform.runLater(() -> {
+                String command = RedisReadCommands.forType(fullKey, error == null ? type : "string");
+                onRunCommand.accept(command);
+            }));
+            return;
+        }
+        onRunCommand.accept(RedisReadCommands.forType(fullKey, "string"));
     }
 
     private void connectSelectedDataSource() {
@@ -878,6 +943,7 @@ public final class SchemaTreeView extends VBox {
         String user = profile.username().isBlank() ? "<anonymous>" : profile.username();
         String schema = profile.database().isBlank() ? "" : "/" + profile.database();
         meta.put("endpoint", "%s@%s:%d%s".formatted(user, profile.host(), profile.port(), schema));
+        meta.put(SchemaNode.META_CONNECTION_TYPE, connectionTypeName(profile.driver()));
         return SchemaNode.of(profile.displayName(), NodeType.DATA_SOURCE, meta);
     }
 
@@ -888,7 +954,23 @@ public final class SchemaTreeView extends VBox {
         meta.put(SchemaNode.META_SESSION, "true");
         meta.put(SchemaNode.META_ACTIVE, "true");
         meta.put("endpoint", session.config().displayLabel());
+        meta.put(SchemaNode.META_CONNECTION_TYPE, session.config().connectionType().name());
         return SchemaNode.of(session.displayName(), NodeType.DATA_SOURCE, meta);
+    }
+
+    private static String connectionTypeName(String driverRaw) {
+        if (driverRaw == null || driverRaw.isBlank()) {
+            return ConnectionConfig.ConnectionType.MYSQL.name();
+        }
+        try {
+            return ConnectionConfig.Driver.valueOf(driverRaw.trim().toUpperCase(Locale.ROOT))
+                    .connectionType()
+                    .name();
+        } catch (IllegalArgumentException ignored) {
+            return "redis".equalsIgnoreCase(driverRaw.trim())
+                    ? ConnectionConfig.ConnectionType.REDIS.name()
+                    : ConnectionConfig.ConnectionType.MYSQL.name();
+        }
     }
 
     private static TreeItem<SchemaNode> placeholderItem(String text) {
@@ -1089,6 +1171,10 @@ public final class SchemaTreeView extends VBox {
         if (node.name().toLowerCase(Locale.ROOT).contains(needle)) {
             return true;
         }
+        String redisKey = node.metadata(SchemaNode.META_REDIS_KEY);
+        if (redisKey != null && redisKey.toLowerCase(Locale.ROOT).contains(needle)) {
+            return true;
+        }
         String endpoint = node.metadata("endpoint");
         return endpoint != null && endpoint.toLowerCase(Locale.ROOT).contains(needle);
     }
@@ -1154,6 +1240,7 @@ public final class SchemaTreeView extends VBox {
             detailLabel.getStyleClass().add(
                     item.type() == NodeType.FOLDER || item.type() == NodeType.COLUMN
                             || item.type() == NodeType.KEY || item.type() == NodeType.INDEX
+                            || item.type() == NodeType.REDIS_KEY
                             ? "schema-node-muted" : "schema-node-detail");
             detailLabel.setVisible(!detailLabel.getText().isEmpty());
             detailLabel.setManaged(detailLabel.isVisible());
@@ -1225,8 +1312,13 @@ public final class SchemaTreeView extends VBox {
                 }
                 case FOLDER -> switch (Objects.requireNonNullElse(node.folderKind(), "")) {
                     case SchemaNode.FOLDER_PROCEDURES -> "Stored procedures in this database";
+                    case SchemaNode.FOLDER_REDIS -> "Redis key namespace";
                     default -> null;
                 };
+                case REDIS_KEY -> {
+                    String key = node.metadata(SchemaNode.META_REDIS_KEY);
+                    yield key == null || key.isBlank() ? node.name() : key;
+                }
                 default -> null;
             };
         }
@@ -1257,6 +1349,7 @@ public final class SchemaTreeView extends VBox {
                     String kind = node.metadata(SchemaNode.META_ROUTINE_KIND);
                     yield SchemaNode.ROUTINE_FUNCTION.equalsIgnoreCase(kind) ? "function" : "procedure";
                 }
+                case REDIS_KEY -> Objects.requireNonNullElse(node.metadata(SchemaNode.META_REDIS_TYPE), "");
                 default -> "";
             };
         }

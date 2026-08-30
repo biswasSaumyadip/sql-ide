@@ -2,7 +2,13 @@ package com.lazaro.sqlide.core.db;
 
 import com.lazaro.sqlide.core.redis.RedisConnectionManager;
 import com.lazaro.sqlide.core.redis.RedisExecutor;
+import com.lazaro.sqlide.core.redis.RedisKeyTree;
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.params.ScanParams;
+import redis.clients.jedis.resps.ScanResult;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -18,12 +24,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Redis implementation of {@link DataSourceDriver}, pooling Jedis connections.
  *
  * <p>Transactions, catalogs and SQL schema introspection are not applicable;
- * the structure tree shows a single database node so the Database pane is not
- * empty after connect.
+ * the structure tree is a colon-grouped key explorer built with {@code SCAN}.
  */
 public final class RedisDriver implements DataSourceDriver {
 
     public static final String ID = "redis";
+
+    /** Soft cap so a huge keyspace cannot freeze the Database pane. */
+    static final int MAX_SCAN_KEYS = 10_000;
 
     private static final DriverCapabilities CAPABILITIES = new DriverCapabilities(
             ID,
@@ -98,12 +106,54 @@ public final class RedisDriver implements DataSourceDriver {
 
     @Override
     public CompletableFuture<List<SchemaNode>> getSchemaTree() {
-        return CompletableFuture.supplyAsync(this::rootNodes, workers);
+        return CompletableFuture.supplyAsync(this::populateRedisKeys, workers);
     }
 
     @Override
     public CompletableFuture<List<SchemaNode>> getChildren(SchemaNode parent) {
+        if (parent != null && !parent.children().isEmpty()) {
+            return CompletableFuture.completedFuture(parent.children());
+        }
         return CompletableFuture.completedFuture(List.of());
+    }
+
+    /**
+     * SCAN the current Redis DB and group keys into a colon-delimited folder tree.
+     */
+    public List<SchemaNode> populateRedisKeys() {
+        List<String> keys = scanKeys();
+        Collections.sort(keys);
+        return RedisKeyTree.build(keys);
+    }
+
+    /** Redis {@code TYPE} for {@code key}, or {@code none} when missing. */
+    public CompletableFuture<String> keyType(String key) {
+        String target = key == null ? "" : key;
+        return CompletableFuture.supplyAsync(() -> {
+            try (Jedis jedis = connections.borrow()) {
+                String type = jedis.type(target);
+                return type == null || type.isBlank() ? "none" : type;
+            } catch (RuntimeException e) {
+                throw new CompletionException(e);
+            }
+        }, workers);
+    }
+
+    private List<String> scanKeys() {
+        List<String> keys = new ArrayList<>();
+        try (Jedis jedis = connections.borrow()) {
+            ScanParams params = new ScanParams().match("*").count(500);
+            String cursor = ScanParams.SCAN_POINTER_START;
+            do {
+                ScanResult<String> page = jedis.scan(cursor, params);
+                keys.addAll(page.getResult());
+                cursor = page.getCursor();
+                if (keys.size() >= MAX_SCAN_KEYS) {
+                    return new ArrayList<>(keys.subList(0, MAX_SCAN_KEYS));
+                }
+            } while (cursor != null && !ScanParams.SCAN_POINTER_START.equals(cursor));
+        }
+        return keys;
     }
 
     @Override
@@ -175,13 +225,6 @@ public final class RedisDriver implements DataSourceDriver {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-    }
-
-    private List<SchemaNode> rootNodes() {
-        String label = connections.currentConfig()
-                .map(ConnectionConfig::displayLabel)
-                .orElse("Redis");
-        return List.of(SchemaNode.of(label, SchemaNode.NodeType.DATABASE));
     }
 
     private static ThreadFactory workerThreadFactory() {
