@@ -10,6 +10,7 @@ import javafx.collections.FXCollections;
 import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
 import javafx.css.PseudoClass;
+import javafx.geometry.Pos;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
@@ -20,6 +21,7 @@ import javafx.scene.control.TablePosition;
 import javafx.scene.control.TableView;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
+import javafx.scene.text.TextAlignment;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -40,11 +42,6 @@ import java.util.function.Consumer;
 public final class DynamicResultTable extends TableView<ObservableList<String>> {
 
     private static final String PLACEHOLDER_IDLE = "Run a query to see results.";
-    private static final int MIN_COLUMN_WIDTH = 70;
-    private static final int MAX_COLUMN_WIDTH = 420;
-    private static final int PIXELS_PER_CHARACTER = 8;
-    private static final int COLUMN_PADDING = 28;
-    private static final int WIDTH_SAMPLE_ROWS = 60;
 
     /** Active while no columns exist, so the empty header strip can be hidden. */
     private static final PseudoClass EMPTY_GRID = PseudoClass.getPseudoClass("empty-grid");
@@ -76,11 +73,6 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
     /** Live backing store used by both read-only results and data-edit mode. */
     ObservableList<ObservableList<String>> backingRows() {
         return allRows;
-    }
-
-    /** Row-number column shared with {@link TableDataEditSession}. */
-    TableColumn<ObservableList<String>, Void> createRowNumberColumn() {
-        return rowNumberColumn();
     }
 
     /**
@@ -266,6 +258,9 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
         } else {
             sampleRows = currentResult.rows();
         }
+        if (!getColumns().isEmpty()) {
+            getColumns().getFirst().setPrefWidth(TableColumnAutoSizer.rowNumberWidth(sampleRows.size()));
+        }
         // Skip the leading "#" column.
         for (int i = 0; i < names.size(); i++) {
             int tableColumnIndex = i + 1;
@@ -273,7 +268,7 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
                 break;
             }
             TableColumn<ObservableList<String>, ?> column = getColumns().get(tableColumnIndex);
-            column.setPrefWidth(estimateWidth(names.get(i), sampleRows, i));
+            TableColumnAutoSizer.apply(column, names.get(i), sampleRows, i);
         }
     }
 
@@ -379,7 +374,7 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
     }
 
     private void buildColumns(QueryResult result) {
-        getColumns().add(rowNumberColumn());
+        getColumns().add(rowNumberColumn(result.rowCount()));
 
         List<String> names = result.columnNames();
         for (int i = 0; i < names.size(); i++) {
@@ -393,41 +388,46 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
                 return new ReadOnlyStringWrapper(value);
             });
             column.setCellFactory(ignored -> new ValueCell());
-            column.setPrefWidth(estimateWidth(name, result.rows(), columnIndex));
+            TableColumnAutoSizer.apply(column, name, result.rows(), columnIndex);
             column.setSortable(true);
             getColumns().add(column);
         }
     }
 
     private TableColumn<ObservableList<String>, Void> rowNumberColumn() {
+        return rowNumberColumn(allRows.size());
+    }
+
+    TableColumn<ObservableList<String>, Void> createRowNumberColumn() {
+        return rowNumberColumn(allRows.isEmpty() && currentResult != null
+                ? currentResult.rowCount()
+                : allRows.size());
+    }
+
+    private TableColumn<ObservableList<String>, Void> rowNumberColumn(int rowCount) {
         TableColumn<ObservableList<String>, Void> column = new TableColumn<>("#");
         column.setSortable(false);
         column.setReorderable(false);
-        column.setPrefWidth(56);
+        column.setResizable(false);
+        column.setPrefWidth(TableColumnAutoSizer.rowNumberWidth(rowCount));
         column.getStyleClass().add("row-number-column");
+        column.setStyle("-fx-alignment: CENTER-RIGHT;");
         column.setCellFactory(ignored -> new TableCell<>() {
+            {
+                getStyleClass().add("row-number-cell");
+                setAlignment(Pos.CENTER_RIGHT);
+                setTextAlignment(TextAlignment.RIGHT);
+            }
+
             @Override
             protected void updateItem(Void item, boolean empty) {
                 super.updateItem(item, empty);
                 setText(empty ? null : String.valueOf(getIndex() + 1));
+                setAlignment(Pos.CENTER_RIGHT);
+                setTextAlignment(TextAlignment.RIGHT);
             }
         });
         return column;
-    }
-
-    private static double estimateWidth(String header, List<List<String>> rows, int columnIndex) {
-        int widest = header.length();
-        int sampled = Math.min(rows.size(), WIDTH_SAMPLE_ROWS);
-        for (int i = 0; i < sampled; i++) {
-            List<String> row = rows.get(i);
-            String value = columnIndex < row.size() ? row.get(columnIndex) : null;
-            int length = value == null ? 4 : value.length();
-            if (length > widest) {
-                widest = length;
-            }
-        }
-        int width = widest * PIXELS_PER_CHARACTER + COLUMN_PADDING;
-        return Math.clamp(width, MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
     }
 
     private static String stylesheet() {

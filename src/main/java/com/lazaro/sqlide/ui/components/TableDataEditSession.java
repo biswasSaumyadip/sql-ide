@@ -363,8 +363,9 @@ public final class TableDataEditSession {
             int columnIndex = i;
             String name = columnNames.get(i);
             boolean pk = containsIgnoreCase(primaryKeyColumns, name);
-            TableColumn<ObservableList<String>, String> column = new TableColumn<>(pk ? name + " (PK)" : name);
-            column.setPrefWidth(Math.clamp(name.length() * 8 + 28, 70, 420));
+            String header = pk ? name + " (PK)" : name;
+            TableColumn<ObservableList<String>, String> column = new TableColumn<>(header);
+            TableColumnAutoSizer.apply(column, header, result.rows(), columnIndex);
             column.setEditable(editable);
             column.setCellValueFactory(features -> {
                 ObservableList<String> row = features.getValue();
