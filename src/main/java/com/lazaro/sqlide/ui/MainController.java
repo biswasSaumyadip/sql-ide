@@ -34,10 +34,12 @@ import com.lazaro.sqlide.core.sql.SqlParameterParser;
 import com.lazaro.sqlide.ui.dialogs.CompareDataDialog;
 import com.lazaro.sqlide.ui.dialogs.CompareStructureDialog;
 import com.lazaro.sqlide.ui.dialogs.ConnectionDialog;
+import com.lazaro.sqlide.ui.dialogs.SettingsDialog;
 import com.lazaro.sqlide.ui.dialogs.ImportDataDialog;
 import com.lazaro.sqlide.ui.dialogs.ParameterPromptDialog;
 import com.lazaro.sqlide.ui.dialogs.TableDataTransferDialog;
 import com.lazaro.sqlide.ui.dialogs.TransferProgressDialog;
+import com.lazaro.sqlide.ui.autocomplete.SqlCompletionHygiene.Style;
 import javafx.concurrent.Task;
 import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
@@ -61,6 +63,9 @@ import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.input.KeyCombination;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
@@ -158,6 +163,7 @@ public final class MainController {
                 .map(ConnectionSession::config)
                 .map(ConnectionConfig::driver)
                 .orElse(ConnectionConfig.Driver.MYSQL));
+        editors.setCompletionStyle(this::completionStyle);
         sessions.addListener(this::onSessionsChanged);
     }
 
@@ -292,6 +298,11 @@ public final class MainController {
         toolbarActivity.setVisible(false);
         toolbarActivity.setManaged(false);
 
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        Button settingsButton = iconButton(Icons.settings(), "Settings (Ctrl+,)", this::openSettings);
+
         ToolBar toolBar = new ToolBar(
                 sidebarToggle,
                 separator(),
@@ -302,7 +313,9 @@ public final class MainController {
                 separator(),
                 runButton, stopButton, explainButton, explainAnalyzeButton, toolbarActivity,
                 separator(),
-                autoCommitToggle, beginButton, commitButton, rollbackButton);
+                autoCommitToggle, beginButton, commitButton, rollbackButton,
+                spacer,
+                settingsButton);
         toolBar.getStyleClass().add("app-toolbar");
         // High-density IDE chrome: tight gaps between controls.
         toolBar.setStyle("-fx-spacing: 2;");
@@ -377,6 +390,7 @@ public final class MainController {
         KeyCombination findNext = new KeyCodeCombination(KeyCode.F3);
         KeyCombination findPrevious = new KeyCodeCombination(KeyCode.F3, KeyCombination.SHIFT_DOWN);
         KeyCombination selectInDatabase = new KeyCodeCombination(KeyCode.F1, KeyCombination.ALT_DOWN);
+        KeyCombination settings = new KeyCodeCombination(KeyCode.COMMA, KeyCombination.SHORTCUT_DOWN);
 
         scene.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
             if (run.match(event) || runAlt.match(event)) {
@@ -401,6 +415,8 @@ public final class MainController {
                 consumeAnd(event, () -> findStep(true));
             } else if (selectInDatabase.match(event)) {
                 consumeAnd(event, this::selectInDatabase);
+            } else if (settings.match(event)) {
+                consumeAnd(event, this::openSettings);
             } else if (toggleSidebar.match(event)) {
                 consumeAnd(event, this::toggleSidebar);
             } else if (newTab.match(event)) {
@@ -469,6 +485,20 @@ public final class MainController {
 
     private void openConnectionDialog() {
         openConnectionDialog(null);
+    }
+
+    private void openSettings() {
+        SettingsDialog dialog = new SettingsDialog(state);
+        dialog.initOwner(owner());
+        Optional<Boolean> saved = dialog.showAndWait();
+        if (saved.orElse(false)) {
+            editors.setCompletionStyle(this::completionStyle);
+            editors.refreshAutocompleteEngines();
+        }
+    }
+
+    private Style completionStyle() {
+        return new Style(state.lowerKeywords(), state.autoQuoteReserved(), state.preserveDbCasing());
     }
 
     private void openConnectionDialog(ConnectionProfile profile) {

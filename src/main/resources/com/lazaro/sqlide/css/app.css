@@ -215,6 +215,10 @@
     -fx-stroke: #a3be8c;
 }
 
+.icon-settings {
+    -fx-stroke: #a4acb9;
+}
+
 .icon-export {
     -fx-stroke: #a4acb9;
 }
@@ -1320,6 +1324,21 @@
 
 .connection-dialog {
     -fx-padding: 12px;
+}
+
+.settings-dialog {
+    -fx-background-color: -color-bg-default;
+}
+
+.settings-section-title {
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -color-fg-default;
+}
+
+.settings-hint {
+    -fx-text-fill: -color-fg-muted;
+    -fx-font-size: 12px;
 }
 
 .connection-dialog .connection-separator {

@@ -178,6 +178,21 @@ public final class Icons {
         return group(dot, shaft);
     }
 
+    /** Gear for Settings. */
+    public static Node settings() {
+        Circle hub = outlined(new Circle(7, 7, 2.2), "icon-settings");
+        // eight short teeth
+        Line n = outlined(new Line(7, 1.5, 7, 3.2), "icon-settings");
+        Line s = outlined(new Line(7, 10.8, 7, 12.5), "icon-settings");
+        Line e = outlined(new Line(10.8, 7, 12.5, 7), "icon-settings");
+        Line w = outlined(new Line(1.5, 7, 3.2, 7), "icon-settings");
+        Line ne = outlined(new Line(10.2, 3.8, 11.4, 2.6), "icon-settings");
+        Line nw = outlined(new Line(3.8, 3.8, 2.6, 2.6), "icon-settings");
+        Line se = outlined(new Line(10.2, 10.2, 11.4, 11.4), "icon-settings");
+        Line sw = outlined(new Line(3.8, 10.2, 2.6, 11.4), "icon-settings");
+        return group(hub, n, s, e, w, ne, nw, se, sw);
+    }
+
     // ---------------------------------------------------------------- toolbar
 
     /** Filled triangle for Execute. */

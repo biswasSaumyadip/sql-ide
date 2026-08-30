@@ -10,7 +10,6 @@ import com.lazaro.sqlide.core.inspection.Severity;
 import com.lazaro.sqlide.core.inspection.SqlInspector;
 import com.lazaro.sqlide.core.sql.SqlParameterParser;
 import com.lazaro.sqlide.ui.Icons;
-import com.lazaro.sqlide.ui.WorkspaceState;
 import com.lazaro.sqlide.ui.autocomplete.SqlAutocompleteEngine;
 import com.lazaro.sqlide.ui.autocomplete.SqlAutocompleteEngine.Kind;
 import com.lazaro.sqlide.ui.autocomplete.SqlAutocompleteEngine.SuggestResult;
@@ -175,12 +174,8 @@ public final class SqlEditorPane extends BorderPane {
             return thread;
         });
 
-        // Prefer workspace hygiene prefs when available.
-        WorkspaceState workspace = new WorkspaceState();
-        completionStyle = () -> new Style(
-                workspace.lowerKeywords(),
-                workspace.autoQuoteReserved(),
-                workspace.preserveDbCasing());
+        // Prefer workspace hygiene prefs when available — MainController overrides via setCompletionStyle.
+        completionStyle = Style::defaults;
 
         IntFunction<Node> lineNumbers = LineNumberFactory.get(codeArea);
         codeArea.setParagraphGraphicFactory(index -> {

@@ -3,6 +3,7 @@ package com.lazaro.sqlide.ui.components;
 import com.lazaro.sqlide.core.db.ConnectionConfig;
 import com.lazaro.sqlide.core.db.SchemaCache;
 import com.lazaro.sqlide.core.db.SchemaNode;
+import com.lazaro.sqlide.ui.autocomplete.SqlCompletionHygiene.Style;
 import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -38,6 +39,7 @@ public final class EditorTabPane extends TabPane {
     private Supplier<SchemaCache> schemaCache = SchemaCache::new;
     private Supplier<String> activeCatalog = () -> null;
     private Supplier<ConnectionConfig.Driver> dialect = () -> ConnectionConfig.Driver.MYSQL;
+    private Supplier<Style> completionStyle = Style::defaults;
 
     public EditorTabPane() {
         getStyleClass().add("editor-tabs");
@@ -70,7 +72,8 @@ public final class EditorTabPane extends TabPane {
 
     /** Opens a new query tab bound to {@code sessionId} (nullable). */
     public void newTab(String sessionId) {
-        QueryTab tab = new QueryTab("query-" + (++untitledCounter) + ".sql", schemaCache, activeCatalog, dialect);
+        QueryTab tab = new QueryTab("query-" + (++untitledCounter) + ".sql",
+                schemaCache, activeCatalog, dialect, completionStyle);
         if (sessionId != null) {
             tab.editor().setBoundSessionId(sessionId);
         }
@@ -102,7 +105,7 @@ public final class EditorTabPane extends TabPane {
         } else {
             untitledCounter++;
         }
-        QueryTab tab = new QueryTab(title, schemaCache, activeCatalog, dialect);
+        QueryTab tab = new QueryTab(title, schemaCache, activeCatalog, dialect, completionStyle);
         if (sessionId != null) {
             tab.editor().setBoundSessionId(sessionId);
         }
@@ -151,6 +154,15 @@ public final class EditorTabPane extends TabPane {
                 .filter(QueryTab.class::isInstance)
                 .map(QueryTab.class::cast)
                 .forEach(tab -> tab.editor().setDialect(this.dialect));
+    }
+
+    /** Supplies completion hygiene prefs (keyword case / quoting) to every editor. */
+    public void setCompletionStyle(Supplier<Style> completionStyle) {
+        this.completionStyle = completionStyle == null ? Style::defaults : completionStyle;
+        getTabs().stream()
+                .filter(QueryTab.class::isInstance)
+                .map(QueryTab.class::cast)
+                .forEach(tab -> tab.editor().setCompletionStyle(this.completionStyle));
     }
 
     /** Rebuilds each query editor's autocomplete engine after a schema refresh. */
@@ -247,11 +259,13 @@ public final class EditorTabPane extends TabPane {
                 String title,
                 Supplier<SchemaCache> schemaCache,
                 Supplier<String> activeCatalog,
-                Supplier<ConnectionConfig.Driver> dialect) {
+                Supplier<ConnectionConfig.Driver> dialect,
+                Supplier<Style> completionStyle) {
             this.title = title;
             editor.setSchemaCache(schemaCache);
             editor.setActiveCatalog(activeCatalog);
             editor.setDialect(dialect);
+            editor.setCompletionStyle(completionStyle);
             setContent(editor);
 
             editor.textProperty().addListener((observable, previous, current) ->
