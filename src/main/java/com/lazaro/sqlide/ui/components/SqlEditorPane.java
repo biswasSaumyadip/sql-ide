@@ -110,14 +110,11 @@ public final class SqlEditorPane extends BorderPane {
     private static final Duration AUTOCOMPLETE_DELAY = Duration.millis(45);
     private static final int POPUP_MAX_ROWS = 12;
     private static final double ROW_HEIGHT = 26;
+    private static final String DEFAULT_EDITOR_FONT = "JetBrains Mono";
+    private static final int DEFAULT_EDITOR_FONT_SIZE = 13;
 
-    private static final String GUTTER_STYLE = """
-            -fx-text-fill: #5c626b; \
-            -fx-background-color: #1e1f22; \
-            -fx-font-weight: normal; \
-            -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace; \
-            -fx-font-size: 12px; \
-            -fx-padding: 0 10 0 8;""";
+    private String editorFontFamily = DEFAULT_EDITOR_FONT;
+    private int editorFontSize = DEFAULT_EDITOR_FONT_SIZE;
 
     private final CodeArea codeArea = new CodeArea();
     private final Pane inlayLayer = new PassThroughPane();
@@ -473,6 +470,37 @@ public final class SqlEditorPane extends BorderPane {
     public void setCompletionStyle(Supplier<Style> completionStyle) {
         this.completionStyle = completionStyle == null ? Style::defaults : completionStyle;
         refreshAutocompleteEngine();
+    }
+
+    /**
+     * Applies persisted editor appearance: font family/size and word wrap.
+     */
+    public void applyEditorPreferences(String fontFamily, int fontSize, boolean wrap) {
+        editorFontFamily = fontFamily == null || fontFamily.isBlank()
+                ? DEFAULT_EDITOR_FONT
+                : fontFamily.strip().replace("\"", "");
+        editorFontSize = Math.clamp(fontSize, 10, 22);
+        codeArea.setWrapText(wrap);
+        applyEditorFontCss();
+        codeArea.setParagraphGraphicFactory(this::buildParagraphGraphic);
+        measureMonospaceWidth();
+        codeArea.requestLayout();
+    }
+
+    private void applyEditorFontCss() {
+        codeArea.setStyle("-fx-font-family: \"%s\", monospace; -fx-font-size: %dpx;"
+                .formatted(editorFontFamily, editorFontSize));
+    }
+
+    private String gutterStyle() {
+        return """
+                -fx-text-fill: #5c626b; \
+                -fx-background-color: #1e1f22; \
+                -fx-font-weight: normal; \
+                -fx-font-family: "%s", monospace; \
+                -fx-font-size: %dpx; \
+                -fx-padding: 0 10 0 8;""".formatted(
+                editorFontFamily, Math.max(10, editorFontSize - 1));
     }
 
     public void refreshAutocompleteEngine() {
@@ -1305,7 +1333,7 @@ public final class SqlEditorPane extends BorderPane {
 
     private void measureMonospaceWidth() {
         var text = new javafx.scene.text.Text("M");
-        text.setFont(javafx.scene.text.Font.font("JetBrains Mono", 13));
+        text.setFont(javafx.scene.text.Font.font(editorFontFamily, editorFontSize));
         monospaceCharWidth = Math.max(6.0, text.getLayoutBounds().getWidth());
     }
 
@@ -1350,7 +1378,7 @@ public final class SqlEditorPane extends BorderPane {
         }
 
         Node lineNo = lineNumbers.apply(index);
-        lineNo.setStyle(GUTTER_STYLE);
+        lineNo.setStyle(gutterStyle());
         gutter.getChildren().addAll(foldSlot, lineNo);
         return gutter;
     }

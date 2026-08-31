@@ -14,13 +14,71 @@ import java.util.Set;
 public final class SqlCompletionHygiene {
 
     /**
-     * @param lowerKeywords     insert keywords in lower case ({@code select} vs {@code SELECT})
-     * @param autoQuoteReserved wrap reserved / unsafe identifiers in dialect quotes
-     * @param preserveDbCasing  keep schema object names as returned by the database
+     * How keywords are written when a suggestion is accepted.
      */
-    public record Style(boolean lowerKeywords, boolean autoQuoteReserved, boolean preserveDbCasing) {
+    public enum KeywordCasing {
+        UPPERCASE("UPPERCASE"),
+        LOWERCASE("lowercase"),
+        CAPITALIZE("Capitalize");
+
+        private final String label;
+
+        KeywordCasing(String label) {
+            this.label = label;
+        }
+
+        public String label() {
+            return label;
+        }
+
+        public static KeywordCasing parse(String raw) {
+            if (raw == null || raw.isBlank()) {
+                return UPPERCASE;
+            }
+            try {
+                return valueOf(raw.strip().toUpperCase(Locale.ROOT));
+            } catch (IllegalArgumentException ignored) {
+                if (raw.equalsIgnoreCase("lowercase") || raw.equalsIgnoreCase("lower")) {
+                    return LOWERCASE;
+                }
+                if (raw.equalsIgnoreCase("capitalize") || raw.equalsIgnoreCase("capitalise")) {
+                    return CAPITALIZE;
+                }
+                return UPPERCASE;
+            }
+        }
+    }
+
+    /**
+     * @param keywordCasing            SELECT vs select vs Select
+     * @param autoQuoteReserved        wrap reserved / unsafe identifiers in dialect quotes
+     * @param preserveDbCasing         keep schema object names as returned by the database
+     * @param autoGenerateTableAliases insert {@code users u} after FROM / JOIN
+     * @param suggestJoinColumns       offer {@code JOIN t ON …} from foreign keys
+     */
+    public record Style(
+            KeywordCasing keywordCasing,
+            boolean autoQuoteReserved,
+            boolean preserveDbCasing,
+            boolean autoGenerateTableAliases,
+            boolean suggestJoinColumns
+    ) {
+        public Style {
+            keywordCasing = keywordCasing == null ? KeywordCasing.UPPERCASE : keywordCasing;
+        }
+
         public static Style defaults() {
-            return new Style(false, true, true);
+            return new Style(KeywordCasing.UPPERCASE, true, true, false, true);
+        }
+
+        /** Compatibility constructor used by tests ({@code lowerKeywords, quote, preserve}). */
+        public Style(boolean lowerKeywords, boolean autoQuoteReserved, boolean preserveDbCasing) {
+            this(lowerKeywords ? KeywordCasing.LOWERCASE : KeywordCasing.UPPERCASE,
+                    autoQuoteReserved, preserveDbCasing, false, true);
+        }
+
+        public boolean lowerKeywords() {
+            return keywordCasing == KeywordCasing.LOWERCASE;
         }
     }
 
@@ -55,15 +113,12 @@ public final class SqlCompletionHygiene {
         String text = insertText;
 
         if (kind == Kind.KEYWORD) {
-            if (s.lowerKeywords()) {
-                text = text.toLowerCase(Locale.ROOT);
-            }
-            return text;
+            return applyKeywordCasing(text, s.keywordCasing());
         }
 
         if (kind == Kind.SNIPPET || kind == Kind.FUNCTION || kind == Kind.JOIN || kind == Kind.PARAMETER) {
-            if (s.lowerKeywords() && (kind == Kind.SNIPPET || kind == Kind.JOIN)) {
-                text = lowerSqlKeywordsInTemplate(text);
+            if (kind == Kind.SNIPPET || kind == Kind.JOIN) {
+                text = recaseSqlKeywordsInTemplate(text, s.keywordCasing());
             }
             return text;
         }
@@ -113,8 +168,49 @@ public final class SqlCompletionHygiene {
         return first != '`' && first != '"' && first != '[';
     }
 
-    private static String lowerSqlKeywordsInTemplate(String template) {
-        // Lowercase only whole keyword tokens; leave $placeholders$ alone.
+    /**
+     * Compact alias for a table name: {@code users} → {@code u}, {@code order_items} → {@code oi}.
+     */
+    public static String tableAlias(String tableName) {
+        if (tableName == null || tableName.isBlank()) {
+            return "t";
+        }
+        String raw = tableName.strip();
+        if (!raw.isEmpty() && (raw.charAt(0) == '`' || raw.charAt(0) == '"' || raw.charAt(0) == '[')) {
+            raw = raw.substring(1, Math.max(1, raw.length() - 1));
+        }
+        String[] parts = raw.split("[_\\-]+");
+        if (parts.length >= 2) {
+            StringBuilder out = new StringBuilder();
+            for (String part : parts) {
+                if (!part.isEmpty()) {
+                    out.append(Character.toLowerCase(part.charAt(0)));
+                }
+            }
+            return out.isEmpty() ? "t" : out.toString();
+        }
+        return Character.toString(Character.toLowerCase(raw.charAt(0)));
+    }
+
+    static String applyKeywordCasing(String word, KeywordCasing casing) {
+        if (word == null || word.isEmpty()) {
+            return word;
+        }
+        KeywordCasing mode = casing == null ? KeywordCasing.UPPERCASE : casing;
+        return switch (mode) {
+            case UPPERCASE -> word.toUpperCase(Locale.ROOT);
+            case LOWERCASE -> word.toLowerCase(Locale.ROOT);
+            case CAPITALIZE -> {
+                String lower = word.toLowerCase(Locale.ROOT);
+                yield Character.toUpperCase(lower.charAt(0)) + lower.substring(1);
+            }
+        };
+    }
+
+    private static String recaseSqlKeywordsInTemplate(String template, KeywordCasing casing) {
+        if (template == null || template.isEmpty()) {
+            return template;
+        }
         StringBuilder out = new StringBuilder(template.length());
         int i = 0;
         while (i < template.length()) {
@@ -135,7 +231,7 @@ public final class SqlCompletionHygiene {
                 }
                 String word = template.substring(start, i);
                 if (RESERVED.contains(word.toLowerCase(Locale.ROOT))) {
-                    out.append(word.toLowerCase(Locale.ROOT));
+                    out.append(applyKeywordCasing(word, casing));
                 } else {
                     out.append(word);
                 }

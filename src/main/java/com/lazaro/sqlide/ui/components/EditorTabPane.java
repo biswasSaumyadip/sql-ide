@@ -40,6 +40,9 @@ public final class EditorTabPane extends TabPane {
     private Supplier<String> activeCatalog = () -> null;
     private Supplier<ConnectionConfig.Driver> dialect = () -> ConnectionConfig.Driver.MYSQL;
     private Supplier<Style> completionStyle = Style::defaults;
+    private String editorFontFamily = "JetBrains Mono";
+    private int editorFontSize = 13;
+    private boolean editorWordWrap;
 
     public EditorTabPane() {
         getStyleClass().add("editor-tabs");
@@ -81,7 +84,7 @@ public final class EditorTabPane extends TabPane {
      */
     public void newTab(String sessionId, ConnectionConfig.Driver driver) {
         String title = "console_" + (++untitledCounter) + SqlSyntaxHighlighter.untitledExtension(driver);
-        QueryTab tab = new QueryTab(title, schemaCache, activeCatalog, dialect, completionStyle);
+        QueryTab tab = createQueryTab(title);
         if (sessionId != null) {
             tab.editor().setBoundSessionId(sessionId);
         }
@@ -114,7 +117,7 @@ public final class EditorTabPane extends TabPane {
         } else {
             untitledCounter++;
         }
-        QueryTab tab = new QueryTab(title, schemaCache, activeCatalog, dialect, completionStyle);
+        QueryTab tab = createQueryTab(title);
         if (sessionId != null) {
             tab.editor().setBoundSessionId(sessionId);
         }
@@ -172,6 +175,24 @@ public final class EditorTabPane extends TabPane {
                 .filter(QueryTab.class::isInstance)
                 .map(QueryTab.class::cast)
                 .forEach(tab -> tab.editor().setCompletionStyle(this.completionStyle));
+    }
+
+    /** Applies font family/size and word wrap to every query console, including tabs opened later. */
+    public void setEditorPreferences(String fontFamily, int fontSize, boolean wrap) {
+        editorFontFamily = fontFamily == null || fontFamily.isBlank() ? "JetBrains Mono" : fontFamily.strip();
+        editorFontSize = Math.clamp(fontSize, 10, 22);
+        editorWordWrap = wrap;
+        getTabs().stream()
+                .filter(QueryTab.class::isInstance)
+                .map(QueryTab.class::cast)
+                .forEach(tab -> tab.editor().applyEditorPreferences(
+                        editorFontFamily, editorFontSize, editorWordWrap));
+    }
+
+    private QueryTab createQueryTab(String title) {
+        QueryTab tab = new QueryTab(title, schemaCache, activeCatalog, dialect, completionStyle);
+        tab.editor().applyEditorPreferences(editorFontFamily, editorFontSize, editorWordWrap);
+        return tab;
     }
 
     /** Rebuilds each query editor's autocomplete engine after a schema refresh. */

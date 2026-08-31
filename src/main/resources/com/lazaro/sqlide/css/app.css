@@ -1432,19 +1432,201 @@
     -fx-padding: 12px;
 }
 
-.settings-dialog {
-    -fx-background-color: -color-bg-default;
+.settings-dialog.dialog-pane {
+    -fx-background-color: #1e1f22;
+    -fx-padding: 0;
+    -fx-border-color: #3c3f44;
+    -fx-border-width: 1px;
+}
+
+.settings-dialog.dialog-pane > .header-panel {
+    -fx-background-color: #2b2d30;
+    -fx-padding: 0;
+    -fx-max-height: 0;
+    -fx-pref-height: 0;
+    -fx-min-height: 0;
+    visibility: hidden;
+}
+
+.settings-dialog.dialog-pane > .header-panel > .header-panel-container,
+.settings-dialog.dialog-pane > .header-panel .label,
+.settings-dialog.dialog-pane > .header-panel .graphic-container {
+    -fx-background-color: #2b2d30;
+}
+
+.settings-dialog.dialog-pane > .content {
+    -fx-background-color: #1e1f22;
+    -fx-padding: 0;
+}
+
+.settings-dialog.dialog-pane > .button-bar {
+    -fx-background-color: #17181b;
+}
+
+.settings-dialog.dialog-pane > .button-bar > .container {
+    -fx-background-color: #17181b;
+    -fx-padding: 10 16 12 16;
+    -fx-border-color: #303237 transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+}
+
+.settings-root {
+    -fx-background-color: #1e1f22;
+}
+
+.settings-body,
+.settings-content {
+    -fx-background-color: #1e1f22;
+}
+
+.settings-title-bar {
+    -fx-background-color: #2b2d30;
+    -fx-border-color: transparent transparent #303237 transparent;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 0 0 0 14;
+    -fx-min-height: 36px;
+    -fx-pref-height: 36px;
+    -fx-alignment: center-left;
+}
+
+.settings-title-label {
+    -fx-text-fill: #eceff4;
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+}
+
+.settings-window-button {
+    -fx-background-color: transparent;
+    -fx-background-radius: 0;
+    -fx-text-fill: #c8ccd2;
+    -fx-font-size: 14px;
+    -fx-min-width: 46px;
+    -fx-pref-width: 46px;
+    -fx-min-height: 36px;
+    -fx-pref-height: 36px;
+    -fx-padding: 0;
+    -fx-cursor: hand;
+}
+
+.settings-window-button:hover {
+    -fx-background-color: #3c3f44;
+    -fx-text-fill: #eceff4;
+}
+
+.settings-window-close:hover {
+    -fx-background-color: #e81123;
+    -fx-text-fill: #ffffff;
+}
+
+.settings-page {
+    -fx-background-color: #1e1f22;
+}
+
+.settings-page-title {
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #eceff4;
 }
 
 .settings-section-title {
     -fx-font-size: 13px;
     -fx-font-weight: bold;
-    -fx-text-fill: -color-fg-default;
+    -fx-text-fill: #eceff4;
 }
 
 .settings-hint {
-    -fx-text-fill: -color-fg-muted;
+    -fx-text-fill: #999999;
     -fx-font-size: 12px;
+}
+
+.settings-field-label {
+    -fx-text-fill: #a4acb9;
+    -fx-font-size: 12.5px;
+}
+
+.settings-page .check-box {
+    -fx-text-fill: #d6d9de;
+}
+
+.settings-page .check-box > .box {
+    -fx-background-color: #2b2d31;
+    -fx-background-radius: 3px;
+    -fx-border-color: #666666;
+    -fx-border-width: 1.5px;
+    -fx-border-radius: 3px;
+}
+
+.settings-page .check-box:hover > .box {
+    -fx-border-color: #888888;
+}
+
+.settings-page .check-box:selected > .box {
+    -fx-background-color: #2f5d8c;
+    -fx-border-color: #4fa6ee;
+}
+
+.settings-page .check-box:selected > .box > .mark {
+    -fx-background-color: #eceff4;
+}
+
+.settings-nav {
+    -fx-background-color: #17181b;
+    -fx-background-insets: 0;
+    -fx-padding: 10 8 10 8;
+    -fx-border-color: transparent #303237 transparent transparent;
+    -fx-border-width: 0 1 0 0;
+    -fx-background-radius: 0;
+}
+
+.settings-nav:focused {
+    -fx-background-color: #17181b;
+    -fx-background-insets: 0;
+    -fx-padding: 10 8 10 8;
+}
+
+.settings-nav .virtual-flow,
+.settings-nav .clipped-container,
+.settings-nav .sheet,
+.settings-nav .corner {
+    -fx-background-color: #17181b;
+}
+
+.settings-nav .list-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: #7f848e;
+    -fx-padding: 8 16 8 16;
+    -fx-background-radius: 6;
+    -fx-background-insets: 2 6 2 6;
+    -fx-font-size: 13px;
+}
+
+.settings-nav .list-cell:hover {
+    -fx-background-color: #262a32;
+    -fx-background-radius: 6;
+    -fx-background-insets: 2 6 2 6;
+    -fx-text-fill: #c8ccd2;
+}
+
+.settings-nav .list-cell:filled:selected,
+.settings-nav .list-cell:filled:selected:focused,
+.settings-nav .list-cell:selected,
+.settings-nav .list-cell:selected:focused,
+.settings-nav .list-cell:selected:hover {
+    -fx-background-color: #2f5d8c;
+    -fx-background-radius: 6;
+    -fx-background-insets: 2 6 2 6;
+    -fx-text-fill: #eceff4;
+    -fx-font-weight: bold;
+}
+
+.settings-page .combo-box,
+.settings-page .combo-box-base,
+.settings-page .spinner {
+    -fx-background-color: #2b2d31;
+}
+
+.settings-page .combo-box .list-cell {
+    -fx-text-fill: #d6d9de;
 }
 
 .connection-dialog .connection-separator {

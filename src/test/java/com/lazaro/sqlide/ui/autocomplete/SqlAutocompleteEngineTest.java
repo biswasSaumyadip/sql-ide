@@ -631,6 +631,59 @@ class SqlAutocompleteEngineTest {
                 "must not expand for unknown FROM table: " + suggestions);
     }
 
+    @Test
+    @DisplayName("auto-generate table aliases after FROM")
+    void autoGenerateTableAliasesAfterFrom() {
+        engine = new SqlAutocompleteEngine(
+                cache, activeCatalog::get, dialect::get, Map::of,
+                new SqlCompletionHygiene.Style(
+                        SqlCompletionHygiene.KeywordCasing.UPPERCASE, true, true, true, true));
+        List<Suggestion> suggestions = suggest("SELECT * FROM ");
+        assertTrue(suggestions.stream().anyMatch(s ->
+                s.kind() == Kind.TABLE && s.insertText().equals("users u")), suggestions.toString());
+        assertTrue(suggestions.stream().anyMatch(s ->
+                s.kind() == Kind.TABLE && s.insertText().equals("orders o")), suggestions.toString());
+    }
+
+    @Test
+    @DisplayName("auto-generate table aliases is skipped after UPDATE")
+    void autoGenerateTableAliasesSkippedForUpdate() {
+        engine = new SqlAutocompleteEngine(
+                cache, activeCatalog::get, dialect::get, Map::of,
+                new SqlCompletionHygiene.Style(
+                        SqlCompletionHygiene.KeywordCasing.UPPERCASE, true, true, true, true));
+        List<Suggestion> suggestions = suggest("UPDATE ");
+        assertTrue(suggestions.stream().anyMatch(s ->
+                s.kind() == Kind.TABLE && s.insertText().equals("users")), suggestions.toString());
+        assertTrue(suggestions.stream().noneMatch(s -> s.insertText().equals("users u")),
+                suggestions.toString());
+    }
+
+    @Test
+    @DisplayName("suggest columns on JOIN can be disabled")
+    void suggestJoinColumnsCanBeDisabled() {
+        engine = new SqlAutocompleteEngine(
+                cache, activeCatalog::get, dialect::get, Map::of,
+                new SqlCompletionHygiene.Style(
+                        SqlCompletionHygiene.KeywordCasing.UPPERCASE, true, true, false, false));
+        List<Suggestion> suggestions = suggest("SELECT * FROM users u JOIN ");
+        assertTrue(suggestions.stream().noneMatch(s -> s.kind() == Kind.JOIN), suggestions.toString());
+        assertTrue(suggestions.stream().anyMatch(s ->
+                s.kind() == Kind.TABLE && s.insertText().equals("orders")), suggestions.toString());
+    }
+
+    @Test
+    @DisplayName("Capitalize keyword casing inserts Select")
+    void capitalizeKeywordCasing() {
+        engine = new SqlAutocompleteEngine(
+                cache, activeCatalog::get, dialect::get, Map::of,
+                new SqlCompletionHygiene.Style(
+                        SqlCompletionHygiene.KeywordCasing.CAPITALIZE, true, true, false, true));
+        List<Suggestion> suggestions = suggest("SEL");
+        assertTrue(suggestions.stream().anyMatch(s ->
+                s.kind() == Kind.KEYWORD && s.insertText().equals("Select")), suggestions.toString());
+    }
+
     private static int indexOf(List<Suggestion> suggestions, String insertText) {
         for (int i = 0; i < suggestions.size(); i++) {
             if (suggestions.get(i).insertText().equals(insertText)) {

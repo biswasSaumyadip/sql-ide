@@ -265,8 +265,10 @@ public final class SqlAutocompleteEngine {
 
         if (isJoinContext(previousUpper) && cache.isReady()) {
             List<Suggestion> out = new ArrayList<>();
-            out.addAll(joinSuggestions(aliases.keySet(), prefix, replaceStart, caret));
-            out.addAll(tableSuggestions(prefix, replaceStart, caret, scope, invoked));
+            if (style.suggestJoinColumns()) {
+                out.addAll(joinSuggestions(aliases.keySet(), prefix, replaceStart, caret));
+            }
+            out.addAll(tableSuggestions(prefix, replaceStart, caret, scope, invoked, previousUpper));
             out.addAll(schemaSuggestions(prefix, replaceStart, caret, invoked));
             if (invoked || !prefix.isEmpty()) {
                 out.addAll(keywordSuggestions(prefix, replaceStart, caret, Set.of("JOIN", "ON", "AS"), invoked));
@@ -289,7 +291,8 @@ public final class SqlAutocompleteEngine {
         }
 
         if (TABLE_CONTEXTS.contains(previousUpper)) {
-            List<Suggestion> out = new ArrayList<>(tableSuggestions(prefix, replaceStart, caret, scope, invoked));
+            List<Suggestion> out = new ArrayList<>(tableSuggestions(
+                    prefix, replaceStart, caret, scope, invoked, previousUpper));
             out.addAll(schemaSuggestions(prefix, replaceStart, caret, invoked));
             if (invoked || prefix.length() >= 1) {
                 out.addAll(keywordSuggestions(prefix, replaceStart, caret, Set.of("AS", "JOIN", "ON", "WHERE"), invoked));
@@ -572,11 +575,28 @@ public final class SqlAutocompleteEngine {
 
     private List<Suggestion> tableSuggestions(
             String prefix, int start, int end, ResolvedScope scope, boolean invoked) {
-        return tableSuggestionsInCatalog(activeCatalog(), prefix, start, end, scope, invoked);
+        return tableSuggestions(prefix, start, end, scope, invoked, null);
+    }
+
+    private List<Suggestion> tableSuggestions(
+            String prefix, int start, int end, ResolvedScope scope, boolean invoked, String previousUpper) {
+        return tableSuggestionsInCatalog(activeCatalog(), prefix, start, end, scope, invoked, previousUpper);
     }
 
     private List<Suggestion> tableSuggestionsInCatalog(
             String catalog, String prefix, int start, int end, ResolvedScope scope, boolean invoked) {
+        return tableSuggestionsInCatalog(catalog, prefix, start, end, scope, invoked, null);
+    }
+
+    private List<Suggestion> tableSuggestionsInCatalog(
+            String catalog,
+            String prefix,
+            int start,
+            int end,
+            ResolvedScope scope,
+            boolean invoked,
+            String previousUpper) {
+        boolean withAlias = shouldAliasTables(previousUpper);
         List<Suggestion> out = new ArrayList<>();
         ConnectionConfig.Driver driver = currentDialect();
 
@@ -589,6 +609,9 @@ public final class SqlAutocompleteEngine {
                 }
                 String insert = SqlCompletionHygiene.finalizeInsert(
                         cte, cte, Kind.TABLE, driver, style);
+                if (withAlias) {
+                    insert = insert + " " + SqlCompletionHygiene.tableAlias(cte);
+                }
                 out.add(suggestion(
                         insert, cte, "cte", Kind.TABLE, start, end, score + 85, false,
                         "Common table expression `" + cte + "`.", List.of()));
@@ -601,7 +624,7 @@ public final class SqlAutocompleteEngine {
 
         if (prefix == null || prefix.isEmpty()) {
             for (SchemaNode table : cache.tables(catalog)) {
-                addTableSuggestion(out, table, catalog, 50, start, end, driver);
+                addTableSuggestion(out, table, catalog, 50, start, end, driver, withAlias);
             }
             return out;
         }
@@ -614,7 +637,7 @@ public final class SqlAutocompleteEngine {
             if (score < 0) {
                 continue;
             }
-            addTableSuggestion(out, table, catalog, score, start, end, driver);
+            addTableSuggestion(out, table, catalog, score, start, end, driver, withAlias);
         }
 
         if (invoked || prefixHits.isEmpty()) {
@@ -626,7 +649,7 @@ public final class SqlAutocompleteEngine {
                 if (score < 0) {
                     continue;
                 }
-                addTableSuggestion(out, table, catalog, score, start, end, driver);
+                addTableSuggestion(out, table, catalog, score, start, end, driver, withAlias);
             }
         }
         return out;
@@ -639,7 +662,8 @@ public final class SqlAutocompleteEngine {
             int score,
             int start,
             int end,
-            ConnectionConfig.Driver driver) {
+            ConnectionConfig.Driver driver,
+            boolean withAlias) {
         boolean view = table.type() == SchemaNode.NodeType.VIEW;
         boolean system = isLowPriorityTable(table);
         int boost = system ? -400 : (view ? 75 : 80);
@@ -649,9 +673,25 @@ public final class SqlAutocompleteEngine {
                 + (catalog == null || catalog.isBlank() ? "" : " in " + catalog) + ".";
         String insert = SqlCompletionHygiene.finalizeInsert(
                 table.name(), table.name(), kind, driver, style);
+        if (withAlias) {
+            insert = insert + " " + SqlCompletionHygiene.tableAlias(table.name());
+        }
         out.add(suggestion(
                 insert, table.name(), detail, kind, start, end, score + boost, false,
                 doc, List.of()));
+    }
+
+    private boolean shouldAliasTables(String previousUpper) {
+        if (!style.autoGenerateTableAliases() || previousUpper == null || previousUpper.isBlank()) {
+            return false;
+        }
+        if ("UPDATE".equals(previousUpper)
+                || "INTO".equals(previousUpper)
+                || "TABLE".equals(previousUpper)
+                || "TRUNCATE".equals(previousUpper)) {
+            return false;
+        }
+        return "FROM".equals(previousUpper) || JOIN_KEYWORDS.contains(previousUpper);
     }
 
     private List<Suggestion> procedureSuggestions(String prefix, int start, int end, boolean invoked) {

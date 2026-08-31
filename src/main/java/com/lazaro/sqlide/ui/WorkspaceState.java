@@ -1,6 +1,7 @@
 package com.lazaro.sqlide.ui;
 
 import com.lazaro.sqlide.core.db.ConnectionConfig;
+import com.lazaro.sqlide.ui.autocomplete.SqlCompletionHygiene.KeywordCasing;
 import javafx.geometry.Rectangle2D;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
@@ -36,8 +37,16 @@ public final class WorkspaceState {
     private static final String STOP_AUTO_REFRESH_ON_ERROR = "results.stopAutoRefreshOnError";
     private static final String MAX_ROWS = "results.maxRows";
     private static final String LOWER_KEYWORDS = "completion.lowerKeywords";
+    private static final String KEYWORD_CASING = "completion.keywordCasing";
     private static final String AUTO_QUOTE = "completion.autoQuoteReserved";
     private static final String PRESERVE_DB_CASING = "completion.preserveDbCasing";
+    private static final String AUTO_TABLE_ALIASES = "completion.autoGenerateTableAliases";
+    private static final String SUGGEST_JOIN_COLUMNS = "completion.suggestJoinColumns";
+    private static final String EDITOR_FONT_FAMILY = "editor.fontFamily";
+    private static final String EDITOR_FONT_SIZE = "editor.fontSize";
+    private static final String EDITOR_WORD_WRAP = "editor.wordWrap";
+    private static final String CONFIRM_DANGEROUS_DML = "execution.confirmDangerousDml";
+    private static final String DEFAULT_EDITOR_FONT = "JetBrains Mono";
 
     private static final double DEFAULT_WIDTH = 1280;
     private static final double DEFAULT_HEIGHT = 800;
@@ -160,14 +169,82 @@ public final class WorkspaceState {
         preferences.putInt(MAX_ROWS, Math.max(1, maxRows));
     }
 
+    public boolean confirmDangerousDml() {
+        return preferences.getBoolean(CONFIRM_DANGEROUS_DML, true);
+    }
+
+    public void saveConfirmDangerousDml(boolean confirm) {
+        preferences.putBoolean(CONFIRM_DANGEROUS_DML, confirm);
+    }
+
+    // ---------------------------------------------------------------- editor
+
+    public String editorFontFamily() {
+        String family = preferences.get(EDITOR_FONT_FAMILY, DEFAULT_EDITOR_FONT);
+        return family == null || family.isBlank() ? DEFAULT_EDITOR_FONT : family;
+    }
+
+    public void saveEditorFontFamily(String family) {
+        String value = family == null || family.isBlank() ? DEFAULT_EDITOR_FONT : family.strip();
+        preferences.put(EDITOR_FONT_FAMILY, value);
+    }
+
+    public int editorFontSize() {
+        return Math.clamp(preferences.getInt(EDITOR_FONT_SIZE, 13), 10, 22);
+    }
+
+    public void saveEditorFontSize(int size) {
+        preferences.putInt(EDITOR_FONT_SIZE, Math.clamp(size, 10, 22));
+    }
+
+    public boolean editorWordWrap() {
+        return preferences.getBoolean(EDITOR_WORD_WRAP, false);
+    }
+
+    public void saveEditorWordWrap(boolean wrap) {
+        preferences.putBoolean(EDITOR_WORD_WRAP, wrap);
+    }
+
     // ---------------------------------------------------------------- completion hygiene
 
+    public KeywordCasing keywordCasing() {
+        String stored = preferences.get(KEYWORD_CASING, null);
+        if (stored != null && !stored.isBlank()) {
+            return KeywordCasing.parse(stored);
+        }
+        return preferences.getBoolean(LOWER_KEYWORDS, false)
+                ? KeywordCasing.LOWERCASE
+                : KeywordCasing.UPPERCASE;
+    }
+
+    public void saveKeywordCasing(KeywordCasing casing) {
+        KeywordCasing value = casing == null ? KeywordCasing.UPPERCASE : casing;
+        preferences.put(KEYWORD_CASING, value.name());
+        preferences.putBoolean(LOWER_KEYWORDS, value == KeywordCasing.LOWERCASE);
+    }
+
     public boolean lowerKeywords() {
-        return preferences.getBoolean(LOWER_KEYWORDS, false);
+        return keywordCasing() == KeywordCasing.LOWERCASE;
     }
 
     public void saveLowerKeywords(boolean lowerKeywords) {
-        preferences.putBoolean(LOWER_KEYWORDS, lowerKeywords);
+        saveKeywordCasing(lowerKeywords ? KeywordCasing.LOWERCASE : KeywordCasing.UPPERCASE);
+    }
+
+    public boolean autoGenerateTableAliases() {
+        return preferences.getBoolean(AUTO_TABLE_ALIASES, false);
+    }
+
+    public void saveAutoGenerateTableAliases(boolean enabled) {
+        preferences.putBoolean(AUTO_TABLE_ALIASES, enabled);
+    }
+
+    public boolean suggestJoinColumns() {
+        return preferences.getBoolean(SUGGEST_JOIN_COLUMNS, true);
+    }
+
+    public void saveSuggestJoinColumns(boolean enabled) {
+        preferences.putBoolean(SUGGEST_JOIN_COLUMNS, enabled);
     }
 
     public boolean autoQuoteReserved() {

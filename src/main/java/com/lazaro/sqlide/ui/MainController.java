@@ -175,6 +175,8 @@ public final class MainController {
                 .map(ConnectionConfig::driver)
                 .orElse(ConnectionConfig.Driver.MYSQL));
         editors.setCompletionStyle(this::completionStyle);
+        editors.setEditorPreferences(
+                state.editorFontFamily(), state.editorFontSize(), state.editorWordWrap());
         outcome.setConnectionType(() -> resolveSession(editors.activeEditor())
                 .map(s -> s.config().connectionType())
                 .orElse(ConnectionConfig.ConnectionType.MYSQL));
@@ -512,11 +514,21 @@ public final class MainController {
         if (saved.orElse(false)) {
             editors.setCompletionStyle(this::completionStyle);
             editors.refreshAutocompleteEngines();
+            editors.setEditorPreferences(
+                    state.editorFontFamily(), state.editorFontSize(), state.editorWordWrap());
+            outcome.toolbar().setMaxRows(state.maxRows());
+            sessions.connectedSessions().forEach(s -> s.driver().setMaxRowsPerQuery(state.maxRows()));
+            autoCommitToggle.setSelected(state.autoCommit());
         }
     }
 
     private Style completionStyle() {
-        return new Style(state.lowerKeywords(), state.autoQuoteReserved(), state.preserveDbCasing());
+        return new Style(
+                state.keywordCasing(),
+                state.autoQuoteReserved(),
+                state.preserveDbCasing(),
+                state.autoGenerateTableAliases(),
+                state.suggestJoinColumns());
     }
 
     private void openConnectionDialog(ConnectionProfile profile) {
