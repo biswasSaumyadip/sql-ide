@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SchemaCacheTest {
@@ -83,5 +84,63 @@ class SchemaCacheTest {
         assertTrue(cache.findTable("users", "app").isEmpty(), "replaced catalog must drop stale tables");
         assertEquals("items", cache.findTable("items", "shop").orElseThrow().name());
         assertEquals("faction", cache.findTable("faction", "warcraft").orElseThrow().name());
+        assertEquals("accounts", cache.tables("app").getFirst().name());
+        assertTrue(cache.tables("shop").stream().anyMatch(t -> t.name().equals("items")));
+    }
+
+    @Test
+    void tablesReturnsTheSameSnapshotUntilTheCacheIsRebuilt() {
+        List<SchemaNode> first = cache.tables("app");
+        List<SchemaNode> second = cache.tables("app");
+        assertEquals(first, second);
+        assertSame(first, second);
+        assertSame(cache.tables(), cache.tables());
+    }
+
+    @Test
+    void tablesWalksLogicalFolders() {
+        SchemaNode nested = SchemaNode.of("orders", NodeType.TABLE, Map.of(SchemaNode.META_CATALOG, "app"));
+        SchemaNode folder = SchemaNode.folder(
+                "tables", SchemaNode.FOLDER_TABLES, 1, Map.of(SchemaNode.META_CATALOG, "app"));
+        folder = folder.withChildren(List.of(nested));
+        cache.replace(List.of(new SchemaNode("app", NodeType.DATABASE, List.of(folder), Map.of())));
+        assertEquals("orders", cache.tables("app").getFirst().name());
+        assertEquals("orders", cache.findTable("orders", "app").orElseThrow().name());
+        assertEquals("orders", cache.tablesWithPrefix("app", "ord").getFirst().name());
+    }
+
+    @Test
+    void tablesWithPrefixUsesSortedIndexPerCatalog() {
+        List<SchemaNode> children = new ArrayList<>();
+        children.add(SchemaNode.of("users", NodeType.TABLE, Map.of(SchemaNode.META_CATALOG, "app")));
+        children.add(SchemaNode.of("user_roles", NodeType.TABLE, Map.of(SchemaNode.META_CATALOG, "app")));
+        children.add(SchemaNode.of("orders", NodeType.TABLE, Map.of(SchemaNode.META_CATALOG, "app")));
+        cache.replace(List.of(new SchemaNode("app", NodeType.DATABASE, children, Map.of())));
+
+        assertEquals(List.of("user_roles", "users"),
+                cache.tablesWithPrefix("app", "us").stream().map(SchemaNode::name).toList());
+        assertTrue(cache.tablesWithPrefix("app", "xyz").isEmpty());
+        assertTrue(cache.tablesWithPrefix("app", "").isEmpty());
+        assertTrue(cache.tablesWithPrefix("shop", "us").isEmpty());
+        assertEquals(List.of("user_roles", "users"),
+                cache.tablesWithPrefix(null, "US").stream().map(SchemaNode::name).toList());
+    }
+
+    @Test
+    void joinSuggestionsUseDecodedForeignKeysWithoutRescanningTables() {
+        String fks = SchemaMetadataCodec.encodeForeignKeys(List.of(
+                new SchemaMetadataCodec.ForeignKey("fk_orders_user", "user_id", "users", "id")));
+        SchemaNode users = SchemaNode.of("users", NodeType.TABLE, Map.of(SchemaNode.META_CATALOG, "app"));
+        SchemaNode orders = new SchemaNode("orders", NodeType.TABLE, List.of(), Map.of(
+                SchemaNode.META_CATALOG, "app",
+                SchemaNode.META_FOREIGN_KEYS, fks));
+        cache.replace(List.of(new SchemaNode("app", NodeType.DATABASE, List.of(users, orders), Map.of())));
+
+        List<SchemaCache.JoinSuggestion> fromUsers = cache.joinSuggestions(List.of("users"));
+        assertTrue(fromUsers.stream().anyMatch(j ->
+                j.toTable().equals("orders") && j.insertText().contains("user_id")), fromUsers.toString());
+        List<SchemaCache.JoinSuggestion> fromOrders = cache.joinSuggestions(List.of("orders"));
+        assertTrue(fromOrders.stream().anyMatch(j ->
+                j.toTable().equals("users") && j.insertText().contains("orders")), fromOrders.toString());
     }
 }

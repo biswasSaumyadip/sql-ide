@@ -26,7 +26,21 @@ public final class SchemaCache {
 
     private final CopyOnWriteArrayList<SchemaNode> catalogs = new CopyOnWriteArrayList<>();
     private volatile Map<String, List<SchemaNode>> tablesByLowerName = Map.of();
+    private volatile Map<String, List<SchemaNode>> tablesByLowerCatalog = Map.of();
+    private volatile List<SchemaNode> allTables = List.of();
+    private volatile List<FkEdge> foreignKeyEdges = List.of();
+    private volatile Map<String, SchemaPrefixIndex> prefixByCatalog = Map.of();
+    private volatile SchemaPrefixIndex allPrefixIndex = SchemaPrefixIndex.EMPTY;
     private volatile boolean ready;
+
+    private record FkEdge(
+            String fromTable,
+            String fromTableLower,
+            String toTable,
+            String toTableLower,
+            String fkColumn,
+            String pkColumn) {
+    }
 
     public void replace(List<SchemaNode> fullSchema) {
         catalogs.clear();
@@ -34,7 +48,7 @@ public final class SchemaCache {
             catalogs.addAll(fullSchema);
         }
         ready = !catalogs.isEmpty();
-        tablesByLowerName = indexTables();
+        rebuildIndexes();
     }
 
     /**
@@ -62,12 +76,17 @@ public final class SchemaCache {
             }
         }
         ready = !catalogs.isEmpty();
-        tablesByLowerName = indexTables();
+        rebuildIndexes();
     }
 
     public void clear() {
         catalogs.clear();
         tablesByLowerName = Map.of();
+        tablesByLowerCatalog = Map.of();
+        allTables = List.of();
+        foreignKeyEdges = List.of();
+        prefixByCatalog = Map.of();
+        allPrefixIndex = SchemaPrefixIndex.EMPTY;
         ready = false;
     }
 
@@ -87,39 +106,93 @@ public final class SchemaCache {
     /**
      * Tables and views, optionally restricted to {@code catalog}.
      * When {@code catalog} is null/blank, returns every loaded catalog.
+     * Returns the snapshot built on {@link #replace} / {@link #upsertCatalogs};
+     * callers must not mutate it.
      */
     public List<SchemaNode> tables(String catalog) {
-        List<SchemaNode> tables = new ArrayList<>();
-        String filter = catalog == null || catalog.isBlank() ? null : catalog;
+        if (catalog == null || catalog.isBlank()) {
+            return allTables;
+        }
+        List<SchemaNode> snapshot = tablesByLowerCatalog.get(catalog.toLowerCase(Locale.ROOT));
+        return snapshot == null ? List.of() : snapshot;
+    }
+
+    /**
+     * Tables whose names start with {@code prefix}, using the sorted prefix index.
+     * Empty prefix returns an empty list — use {@link #tables(String)} for the
+     * full snapshot.
+     */
+    public List<SchemaNode> tablesWithPrefix(String catalog, String prefix) {
+        if (prefix == null || prefix.isEmpty()) {
+            return List.of();
+        }
+        SchemaPrefixIndex index;
+        if (catalog == null || catalog.isBlank()) {
+            index = allPrefixIndex;
+        } else {
+            index = prefixByCatalog.getOrDefault(catalog.toLowerCase(Locale.ROOT), SchemaPrefixIndex.EMPTY);
+        }
+        return index.prefixHits(prefix);
+    }
+
+    private void rebuildIndexes() {
+        Map<String, List<SchemaNode>> byCatalog = new LinkedHashMap<>();
+        Map<String, List<SchemaNode>> byName = new LinkedHashMap<>();
+        Map<String, SchemaPrefixIndex> prefixes = new LinkedHashMap<>();
+        List<SchemaNode> all = new ArrayList<>();
+        List<FkEdge> edges = new ArrayList<>();
         for (SchemaNode db : catalogs) {
-            if (filter != null && !db.name().equalsIgnoreCase(filter)) {
+            if (db == null || db.name() == null || db.name().isBlank()) {
                 continue;
             }
-            for (SchemaNode child : db.children()) {
-                if (child.type() == NodeType.TABLE || child.type() == NodeType.VIEW) {
-                    if (filter != null) {
-                        String meta = child.metadata(SchemaNode.META_CATALOG);
-                        if (meta != null && !meta.isBlank() && !meta.equalsIgnoreCase(filter)) {
-                            continue;
-                        }
+            List<SchemaNode> catalogTables = new ArrayList<>();
+            collectTables(db, db.name(), catalogTables);
+            List<SchemaNode> frozenCatalog = List.copyOf(catalogTables);
+            byCatalog.put(db.name().toLowerCase(Locale.ROOT), frozenCatalog);
+            prefixes.put(db.name().toLowerCase(Locale.ROOT), SchemaPrefixIndex.of(frozenCatalog));
+            for (SchemaNode table : frozenCatalog) {
+                all.add(table);
+                byName.computeIfAbsent(table.name().toLowerCase(Locale.ROOT), key -> new ArrayList<>()).add(table);
+                for (ForeignKey key : SchemaMetadataCodec.decodeForeignKeys(
+                        table.metadata(SchemaNode.META_FOREIGN_KEYS))) {
+                    if (key.pkTable() == null || key.pkTable().isBlank()) {
+                        continue;
                     }
-                    tables.add(child);
+                    edges.add(new FkEdge(
+                            table.name(),
+                            table.name().toLowerCase(Locale.ROOT),
+                            key.pkTable(),
+                            key.pkTable().toLowerCase(Locale.ROOT),
+                            key.fkColumn(),
+                            key.pkColumn()));
                 }
             }
         }
-        return List.copyOf(tables);
+        Map<String, List<SchemaNode>> frozenNames = new LinkedHashMap<>();
+        for (Map.Entry<String, List<SchemaNode>> entry : byName.entrySet()) {
+            frozenNames.put(entry.getKey(), List.copyOf(entry.getValue()));
+        }
+        tablesByLowerCatalog = Map.copyOf(byCatalog);
+        tablesByLowerName = Map.copyOf(frozenNames);
+        allTables = List.copyOf(all);
+        foreignKeyEdges = List.copyOf(edges);
+        prefixByCatalog = Map.copyOf(prefixes);
+        allPrefixIndex = SchemaPrefixIndex.of(allTables);
     }
 
-    private Map<String, List<SchemaNode>> indexTables() {
-        Map<String, List<SchemaNode>> index = new LinkedHashMap<>();
-        for (SchemaNode table : tables()) {
-            index.computeIfAbsent(table.name().toLowerCase(Locale.ROOT), key -> new ArrayList<>()).add(table);
+    private static void collectTables(SchemaNode parent, String catalogName, List<SchemaNode> out) {
+        for (SchemaNode child : parent.children()) {
+            if (child.type() == NodeType.TABLE || child.type() == NodeType.VIEW) {
+                String meta = child.metadata(SchemaNode.META_CATALOG);
+                if (meta != null && !meta.isBlank() && catalogName != null
+                        && !meta.equalsIgnoreCase(catalogName)) {
+                    continue;
+                }
+                out.add(child);
+            } else if (child.type() == NodeType.FOLDER) {
+                collectTables(child, catalogName, out);
+            }
         }
-        Map<String, List<SchemaNode>> frozen = new LinkedHashMap<>();
-        for (Map.Entry<String, List<SchemaNode>> entry : index.entrySet()) {
-            frozen.put(entry.getKey(), List.copyOf(entry.getValue()));
-        }
-        return Map.copyOf(frozen);
     }
 
     /**
@@ -298,31 +371,28 @@ public final class SchemaCache {
         }
 
         List<JoinSuggestion> suggestions = new ArrayList<>();
-        for (SchemaNode table : tables()) {
-            List<ForeignKey> keys = SchemaMetadataCodec.decodeForeignKeys(table.metadata(SchemaNode.META_FOREIGN_KEYS));
-            for (ForeignKey key : keys) {
-                boolean fromInScope = aliases.containsKey(table.name().toLowerCase(Locale.ROOT));
-                boolean toInScope = aliases.containsKey(key.pkTable().toLowerCase(Locale.ROOT));
-                if (!fromInScope && !toInScope) {
-                    continue;
-                }
-                // Prefer joining the table that is not yet in scope.
-                if (fromInScope && !toInScope) {
-                    String clause = "%s ON %s.%s = %s.%s".formatted(
-                            key.pkTable(), key.pkTable(), key.pkColumn(), table.name(), key.fkColumn());
-                    suggestions.add(new JoinSuggestion(
-                            clause, "JOIN " + clause, table.name(), key.pkTable()));
-                } else if (toInScope && !fromInScope) {
-                    String clause = "%s ON %s.%s = %s.%s".formatted(
-                            table.name(), table.name(), key.fkColumn(), key.pkTable(), key.pkColumn());
-                    suggestions.add(new JoinSuggestion(
-                            clause, "JOIN " + clause, key.pkTable(), table.name()));
-                } else {
-                    String clause = "%s ON %s.%s = %s.%s".formatted(
-                            table.name(), table.name(), key.fkColumn(), key.pkTable(), key.pkColumn());
-                    suggestions.add(new JoinSuggestion(
-                            clause, "JOIN " + clause, key.pkTable(), table.name()));
-                }
+        for (FkEdge key : foreignKeyEdges) {
+            boolean fromInScope = aliases.containsKey(key.fromTableLower());
+            boolean toInScope = aliases.containsKey(key.toTableLower());
+            if (!fromInScope && !toInScope) {
+                continue;
+            }
+            // Prefer joining the table that is not yet in scope.
+            if (fromInScope && !toInScope) {
+                String clause = "%s ON %s.%s = %s.%s".formatted(
+                        key.toTable(), key.toTable(), key.pkColumn(), key.fromTable(), key.fkColumn());
+                suggestions.add(new JoinSuggestion(
+                        clause, "JOIN " + clause, key.fromTable(), key.toTable()));
+            } else if (toInScope && !fromInScope) {
+                String clause = "%s ON %s.%s = %s.%s".formatted(
+                        key.fromTable(), key.fromTable(), key.fkColumn(), key.toTable(), key.pkColumn());
+                suggestions.add(new JoinSuggestion(
+                        clause, "JOIN " + clause, key.toTable(), key.fromTable()));
+            } else {
+                String clause = "%s ON %s.%s = %s.%s".formatted(
+                        key.fromTable(), key.fromTable(), key.fkColumn(), key.toTable(), key.pkColumn());
+                suggestions.add(new JoinSuggestion(
+                        clause, "JOIN " + clause, key.toTable(), key.fromTable()));
             }
         }
         return List.copyOf(suggestions);

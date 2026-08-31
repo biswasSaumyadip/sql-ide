@@ -321,6 +321,30 @@ class SqlAutocompleteEngineTest {
         assertTrue(SqlAutocompleteEngine.matchScore("users", "uzers") > 0);
         assertTrue(SqlAutocompleteEngine.editDistanceAtMostOne("users", "userrs"));
         assertFalse(SqlAutocompleteEngine.editDistanceAtMostOne("users", "xyz"));
+        List<Suggestion> suggestions = suggest("SELECT * FROM uzers");
+        assertTrue(suggestions.stream().anyMatch(s -> s.insertText().equals("users")),
+                "zero prefix hits should still fuzzy-match users: " + suggestions);
+    }
+
+    @Test
+    @DisplayName("many prefix hits skip substring matching unless Ctrl+Space")
+    void manyPrefixHitsSkipFuzzyUnlessInvoked() {
+        List<SchemaNode> children = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            children.add(SchemaNode.of("order_" + i, NodeType.TABLE, Map.of(SchemaNode.META_CATALOG, "app")));
+        }
+        children.add(SchemaNode.of("sales_orders", NodeType.TABLE, Map.of(SchemaNode.META_CATALOG, "app")));
+        cache.replace(List.of(new SchemaNode("app", NodeType.DATABASE, children, Map.of())));
+        engine = new SqlAutocompleteEngine(cache, activeCatalog::get, dialect::get);
+
+        List<Suggestion> auto = suggest("SELECT * FROM order");
+        assertTrue(auto.stream().anyMatch(s -> s.insertText().equals("order_0")), auto.toString());
+        assertTrue(auto.stream().noneMatch(s -> s.insertText().equals("sales_orders")),
+                "auto-popup with many prefix hits must not scan for mid-token: " + auto);
+
+        List<Suggestion> invoked = suggest("SELECT * FROM order", true);
+        assertTrue(invoked.stream().anyMatch(s -> s.insertText().equals("sales_orders")),
+                "Ctrl+Space should still mid-token match sales_orders: " + invoked);
     }
 
     @Test

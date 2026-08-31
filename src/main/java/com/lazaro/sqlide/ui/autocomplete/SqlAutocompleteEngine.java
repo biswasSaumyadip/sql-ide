@@ -103,6 +103,11 @@ public final class SqlAutocompleteEngine {
     }
 
     private static final int DISPLAY_CAP = 50;
+    /**
+     * Auto-popup scores prefix hits from the sorted name index. Typo / mid-token /
+     * substring matching runs only when that set is small, or on Ctrl+Space.
+     */
+    static final int FUZZY_WHEN_PREFIX_HITS_BELOW = 8;
 
     private static final Pattern WORD = Pattern.compile("[A-Za-z0-9_]*$");
     private static final Pattern DOT_QUALIFIER = Pattern.compile(
@@ -222,7 +227,7 @@ public final class SqlAutocompleteEngine {
             if (!qualifier.contains(".")
                     && isKnownCatalog(qualifier)
                     && !isExplicitAlias(aliases, qualifier)) {
-                return rank(tableSuggestionsInCatalog(qualifier, dotPrefix, dotStart, caret, scope));
+                return rank(tableSuggestionsInCatalog(qualifier, dotPrefix, dotStart, caret, scope, invoked));
             }
             String table = aliases.getOrDefault(qualifier.toLowerCase(Locale.ROOT), qualifier);
             return rank(columnSuggestions(table, dotPrefix, dotStart, caret, Set.of(), scope));
@@ -266,7 +271,7 @@ public final class SqlAutocompleteEngine {
         if (isJoinContext(previousUpper) && cache.isReady()) {
             List<Suggestion> out = new ArrayList<>();
             out.addAll(joinSuggestions(aliases.keySet(), prefix, replaceStart, caret));
-            out.addAll(tableSuggestions(prefix, replaceStart, caret, scope));
+            out.addAll(tableSuggestions(prefix, replaceStart, caret, scope, invoked));
             out.addAll(schemaSuggestions(prefix, replaceStart, caret));
             if (invoked || !prefix.isEmpty()) {
                 out.addAll(keywordSuggestions(prefix, replaceStart, caret, Set.of("JOIN", "ON", "AS")));
@@ -284,12 +289,12 @@ public final class SqlAutocompleteEngine {
 
         if (INDEX_CONTEXTS.contains(previousUpper) && cache.isReady()) {
             List<Suggestion> out = new ArrayList<>(indexSuggestions(aliases, prefix, replaceStart, caret));
-            out.addAll(tableSuggestions(prefix, replaceStart, caret, scope));
+            out.addAll(tableSuggestions(prefix, replaceStart, caret, scope, invoked));
             return rank(out);
         }
 
         if (TABLE_CONTEXTS.contains(previousUpper)) {
-            List<Suggestion> out = new ArrayList<>(tableSuggestions(prefix, replaceStart, caret, scope));
+            List<Suggestion> out = new ArrayList<>(tableSuggestions(prefix, replaceStart, caret, scope, invoked));
             out.addAll(schemaSuggestions(prefix, replaceStart, caret));
             if (invoked || prefix.length() >= 1) {
                 out.addAll(keywordSuggestions(prefix, replaceStart, caret, Set.of("AS", "JOIN", "ON", "WHERE")));
@@ -340,7 +345,7 @@ public final class SqlAutocompleteEngine {
         }
         if ((cache.isReady() || !scope.cteNames().isEmpty()) && (invoked || prefix.length() >= 1)) {
             out.addAll(schemaSuggestions(prefix, replaceStart, caret));
-            out.addAll(tableSuggestions(prefix, replaceStart, caret, scope));
+            out.addAll(tableSuggestions(prefix, replaceStart, caret, scope, invoked));
             out.addAll(indexSuggestions(aliases, prefix, replaceStart, caret));
             if (!aliases.isEmpty()) {
                 out.addAll(columnsInScope(aliases, prefix, replaceStart, caret, Set.of(), scope));
@@ -522,12 +527,13 @@ public final class SqlAutocompleteEngine {
         return out;
     }
 
-    private List<Suggestion> tableSuggestions(String prefix, int start, int end, ResolvedScope scope) {
-        return tableSuggestionsInCatalog(activeCatalog(), prefix, start, end, scope);
+    private List<Suggestion> tableSuggestions(
+            String prefix, int start, int end, ResolvedScope scope, boolean invoked) {
+        return tableSuggestionsInCatalog(activeCatalog(), prefix, start, end, scope, invoked);
     }
 
     private List<Suggestion> tableSuggestionsInCatalog(
-            String catalog, String prefix, int start, int end, ResolvedScope scope) {
+            String catalog, String prefix, int start, int end, ResolvedScope scope, boolean invoked) {
         List<Suggestion> out = new ArrayList<>();
         ConnectionConfig.Driver driver = currentDialect();
 
@@ -549,25 +555,60 @@ public final class SqlAutocompleteEngine {
         if (!cache.isReady()) {
             return out;
         }
-        for (SchemaNode table : cache.tables(catalog)) {
+
+        if (prefix == null || prefix.isEmpty()) {
+            for (SchemaNode table : cache.tables(catalog)) {
+                addTableSuggestion(out, table, catalog, 50, start, end, driver);
+            }
+            return out;
+        }
+
+        List<SchemaNode> prefixHits = cache.tablesWithPrefix(catalog, prefix);
+        Set<String> scored = new LinkedHashSet<>();
+        for (SchemaNode table : prefixHits) {
+            scored.add(table.name().toLowerCase(Locale.ROOT));
             int score = matchScore(table.name(), prefix);
             if (score < 0) {
                 continue;
             }
-            boolean view = table.type() == SchemaNode.NodeType.VIEW;
-            boolean system = isLowPriorityTable(table);
-            int boost = system ? -400 : (view ? 75 : 80);
-            Kind kind = view ? Kind.VIEW : Kind.TABLE;
-            String detail = view ? "view" : (system ? "system" : "table");
-            String doc = (view ? "View" : "Table") + " `" + table.name() + "`"
-                    + (catalog == null || catalog.isBlank() ? "" : " in " + catalog) + ".";
-            String insert = SqlCompletionHygiene.finalizeInsert(
-                    table.name(), table.name(), kind, driver, style);
-            out.add(suggestion(
-                    insert, table.name(), detail, kind, start, end, score + boost, false,
-                    doc, List.of()));
+            addTableSuggestion(out, table, catalog, score, start, end, driver);
+        }
+
+        if (invoked || prefixHits.size() < FUZZY_WHEN_PREFIX_HITS_BELOW) {
+            for (SchemaNode table : cache.tables(catalog)) {
+                if (!scored.add(table.name().toLowerCase(Locale.ROOT))) {
+                    continue;
+                }
+                int score = matchScore(table.name(), prefix);
+                if (score < 0) {
+                    continue;
+                }
+                addTableSuggestion(out, table, catalog, score, start, end, driver);
+            }
         }
         return out;
+    }
+
+    private void addTableSuggestion(
+            List<Suggestion> out,
+            SchemaNode table,
+            String catalog,
+            int score,
+            int start,
+            int end,
+            ConnectionConfig.Driver driver) {
+        boolean view = table.type() == SchemaNode.NodeType.VIEW;
+        boolean system = isLowPriorityTable(table);
+        int boost = system ? -400 : (view ? 75 : 80);
+        Kind kind = view ? Kind.VIEW : Kind.TABLE;
+        String detail = view ? "view" : (system ? "system" : "table");
+        String doc = (view ? "View" : "Table") + " `" + table.name() + "`"
+                + (catalog == null || catalog.isBlank() ? "" : " in " + catalog) + ".";
+        String insert = SqlCompletionHygiene.finalizeInsert(
+                table.name(), table.name(), kind, driver, style);
+        out.add(suggestion(
+                insert, table.name(), detail, kind, start, end, score + boost, false,
+                doc, List.of()));
     }
 
     private List<Suggestion> procedureSuggestions(String prefix, int start, int end) {
