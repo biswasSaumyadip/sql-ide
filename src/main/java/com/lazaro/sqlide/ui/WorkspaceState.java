@@ -69,15 +69,19 @@ public final class WorkspaceState {
         } else {
             stage.centerOnScreen();
         }
+    }
 
-        stage.setMaximized(preferences.getBoolean(WINDOW_MAXIMIZED, false));
+    public boolean windowMaximized() {
+        return preferences.getBoolean(WINDOW_MAXIMIZED, false);
     }
 
     public void saveWindow(Stage stage) {
-        preferences.putBoolean(WINDOW_MAXIMIZED, stage.isMaximized());
+        boolean maximized = stage.isMaximized()
+                || Boolean.TRUE.equals(stage.getProperties().get("sql-ide.maximized"));
+        preferences.putBoolean(WINDOW_MAXIMIZED, maximized);
         // A maximized stage reports the screen bounds; keeping the restored size
         // means un-maximizing after a restart returns to the user's own size.
-        if (!stage.isMaximized()) {
+        if (!maximized) {
             preferences.putDouble(WINDOW_X, stage.getX());
             preferences.putDouble(WINDOW_Y, stage.getY());
             preferences.putDouble(WINDOW_WIDTH, stage.getWidth());

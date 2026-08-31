@@ -11,6 +11,66 @@
     -fx-background-color: #17181b;
 }
 
+.app-shell {
+    -fx-background-color: #17181b;
+    -fx-border-color: #3c3f44;
+    -fx-border-width: 1px;
+}
+
+.app-title-bar {
+    -fx-background-color: #1E1F22;
+    -fx-border-color: transparent transparent #303237 transparent;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 0 0 0 8px;
+    -fx-min-height: 32px;
+    -fx-pref-height: 32px;
+    -fx-max-height: 32px;
+    -fx-alignment: center-left;
+}
+
+.app-title-label {
+    -fx-text-fill: #CCCCCC;
+    -fx-font-size: 12px;
+    -fx-font-weight: normal;
+}
+
+.app-window-button {
+    -fx-background-color: transparent;
+    -fx-background-radius: 0;
+    -fx-background-insets: 0;
+    -fx-border-width: 0;
+    -fx-padding: 0;
+    -fx-min-width: 46px;
+    -fx-pref-width: 46px;
+    -fx-max-width: 46px;
+    -fx-min-height: 32px;
+    -fx-pref-height: 32px;
+    -fx-max-height: 32px;
+    -fx-cursor: hand;
+    -fx-content-display: graphic-only;
+}
+
+.app-window-button:hover {
+    -fx-background-color: #333333;
+}
+
+.app-window-close:hover {
+    -fx-background-color: #E81123;
+}
+
+.app-window-close:hover .icon-window-caption {
+    -fx-stroke: #ffffff;
+}
+
+.icon-app-logo {
+    -fx-stroke: #4fa6ee;
+}
+
+.icon-window-caption {
+    -fx-stroke: #CCCCCC;
+    -fx-stroke-line-cap: square;
+}
+
 /* Cupertino-dark selection accent, used consistently below. */
 * {
     -fx-accent: #4fa6ee;
@@ -1475,7 +1535,37 @@
 
 .connection-body {
     -fx-background-color: #1e1f22;
-    -fx-padding: 16 18 14 18;
+    -fx-padding: 0;
+}
+
+.connection-form {
+    -fx-background-color: #1e1f22;
+    -fx-padding: 16 18 8 18;
+}
+
+.connection-footer {
+    -fx-background-color: #1e1f22;
+    -fx-padding: 8 18 14 18;
+    -fx-border-color: #303237 transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+}
+
+.connection-scroll,
+.connection-tab-scroll {
+    -fx-background-color: #1e1f22;
+    -fx-background: #1e1f22;
+    -fx-padding: 0;
+    -fx-background-insets: 0;
+}
+
+.connection-scroll > .viewport,
+.connection-tab-scroll > .viewport {
+    -fx-background-color: #1e1f22;
+}
+
+.connection-scroll .corner,
+.connection-tab-scroll .corner {
+    -fx-background-color: #1e1f22;
 }
 
 .connection-section-header {

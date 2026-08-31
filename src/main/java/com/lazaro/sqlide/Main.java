@@ -7,6 +7,7 @@ import com.lazaro.sqlide.ui.WorkspaceState;
 import javafx.application.Application;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
+import javafx.stage.StageStyle;
 
 import java.util.Objects;
 
@@ -27,6 +28,8 @@ public final class Main extends Application {
         workspaceState = new WorkspaceState();
         controller = new MainController(DriverRegistry.withDefaults(), workspaceState);
 
+        stage.initStyle(StageStyle.UNDECORATED);
+
         Scene scene = new Scene(controller.createView());
         scene.getStylesheets().add(stylesheet());
         controller.installShortcuts(scene);
@@ -36,6 +39,10 @@ public final class Main extends Application {
         stage.setMinWidth(MIN_WINDOW_WIDTH);
         stage.setMinHeight(MIN_WINDOW_HEIGHT);
         workspaceState.restoreWindow(stage);
+        controller.installWindowChrome(stage);
+        if (workspaceState.windowMaximized()) {
+            controller.maximizeRestoredWindow();
+        }
 
         stage.setOnCloseRequest(event -> {
             if (controller.confirmExit()) {

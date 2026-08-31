@@ -445,6 +445,48 @@ public final class Icons {
         return group(head, shaft);
     }
 
+    /** 16×16 cylinder mark used as the application logo in the caption bar. */
+    public static Node appLogo() {
+        Ellipse top = outlined(new Ellipse(8, 4.0, 6.0, 2.2), "icon-app-logo");
+        Ellipse mid = outlined(new Ellipse(8, 8.0, 6.0, 2.2), "icon-app-logo");
+        Ellipse bottom = outlined(new Ellipse(8, 12.0, 6.0, 2.2), "icon-app-logo");
+        Line left = outlined(new Line(2.0, 4.0, 2.0, 12.0), "icon-app-logo");
+        Line right = outlined(new Line(14.0, 4.0, 14.0, 12.0), "icon-app-logo");
+        return group(top, mid, bottom, left, right);
+    }
+
+    /** Windows 11 caption: minimize dash. */
+    public static Node windowMinimize() {
+        Line line = outlined(new Line(4.0, 8.0, 12.0, 8.0), "icon-window-caption");
+        line.setStrokeWidth(1.0);
+        return group(line);
+    }
+
+    /** Windows 11 caption: maximize square. */
+    public static Node windowMaximize() {
+        Rectangle frame = outlined(new Rectangle(4.0, 4.0, 8.0, 8.0), "icon-window-caption");
+        frame.setStrokeWidth(1.0);
+        return group(frame);
+    }
+
+    /** Windows 11 caption: restore (overlapping squares). */
+    public static Node windowRestore() {
+        Rectangle back = outlined(new Rectangle(5.5, 3.5, 6.5, 6.5), "icon-window-caption");
+        back.setStrokeWidth(1.0);
+        Rectangle front = outlined(new Rectangle(3.5, 5.5, 6.5, 6.5), "icon-window-caption");
+        front.setStrokeWidth(1.0);
+        return group(back, front);
+    }
+
+    /** Windows 11 caption: close X. */
+    public static Node windowClose() {
+        Line a = outlined(new Line(4.5, 4.5, 11.5, 11.5), "icon-window-caption");
+        Line b = outlined(new Line(11.5, 4.5, 4.5, 11.5), "icon-window-caption");
+        a.setStrokeWidth(1.1);
+        b.setStrokeWidth(1.1);
+        return group(a, b);
+    }
+
     /** Funnel glyph for the schema-filter toolbar action. */
     public static Node schemaFilter() {
         Polygon funnel = new Polygon(

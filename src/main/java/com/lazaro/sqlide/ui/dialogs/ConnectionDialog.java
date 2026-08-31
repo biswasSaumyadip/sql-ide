@@ -27,13 +27,17 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.ProgressIndicator;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Separator;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
+import javafx.scene.control.TextInputControl;
 import javafx.scene.control.Tooltip;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.control.cell.TextFieldTableCell;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.ColumnConstraints;
@@ -125,7 +129,7 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
             ConnectionProfile preselect) {
         this.profileManager = profileManager == null ? new ConnectionProfileManager() : profileManager;
         this.registry = registry;
-        this.chrome = new DialogChrome(this, 560, 480);
+        this.chrome = new DialogChrome(this, 480, 360);
 
         initStyle(StageStyle.UNDECORATED);
         setTitle("Connect to database");
@@ -136,13 +140,13 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
         getDialogPane().getButtonTypes().setAll(ButtonType.OK, ButtonType.CANCEL);
         Button hiddenOk = (Button) getDialogPane().lookupButton(ButtonType.OK);
         hiddenOk.setText("Connect");
-        hiddenOk.setDefaultButton(true);
+        hiddenOk.setDefaultButton(false);
 
         getDialogPane().getStyleClass().add("connection-dialog");
         getDialogPane().getStylesheets().add(stylesheet());
         getDialogPane().setContent(buildRoot());
-        getDialogPane().setPrefSize(640, 620);
-        getDialogPane().setMinSize(560, 480);
+        getDialogPane().setPrefSize(640, 580);
+        getDialogPane().setMinSize(480, 360);
 
         reloadSavedProfiles();
         populate(initial);
@@ -155,7 +159,10 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
             selectProfile(preselect);
         }
 
-        setOnShown(event -> chrome.installResize());
+        setOnShown(event -> {
+            chrome.installResize();
+            getDialogPane().getScene().addEventFilter(KeyEvent.KEY_PRESSED, this::handleEnterToConnect);
+        });
         setResultConverter(button -> {
             if (button != ButtonType.OK) {
                 return null;
@@ -207,10 +214,11 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
         header.getStyleClass().add("connection-section-header");
 
         TabPane tabs = new TabPane(
-                closableTab("General", generalPane()),
-                closableTab("SSH / SSL", sshSslPane()),
-                closableTab("Advanced", advancedPane()));
+                closableTab("General", scrollable(generalPane())),
+                closableTab("SSH / SSL", scrollable(sshSslPane())),
+                closableTab("Advanced", scrollable(advancedPane())));
         tabs.getStyleClass().add("connection-tabs");
+        tabs.setMinHeight(160);
         VBox.setVgrow(tabs, Priority.ALWAYS);
 
         urlPreview.setEditable(false);
@@ -227,15 +235,42 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
         feedback.setWrapText(true);
         feedback.setMaxWidth(Double.MAX_VALUE);
 
-        VBox body = new VBox(12, header, savedPane(), tabs, urlRow, feedback, buttonBar());
-        body.getStyleClass().add("connection-body");
+        VBox form = new VBox(12, header, savedPane(), tabs);
+        form.getStyleClass().add("connection-form");
         VBox.setVgrow(tabs, Priority.ALWAYS);
+
+        ScrollPane scroll = new ScrollPane(form);
+        scroll.setFitToWidth(true);
+        scroll.setFitToHeight(true);
+        scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        scroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        scroll.getStyleClass().add("connection-scroll");
+        VBox.setVgrow(scroll, Priority.ALWAYS);
+
+        VBox footer = new VBox(10, urlRow, feedback, buttonBar());
+        footer.getStyleClass().add("connection-footer");
+
+        BorderPane body = new BorderPane();
+        body.getStyleClass().add("connection-body");
+        body.setCenter(scroll);
+        body.setBottom(footer);
 
         BorderPane root = new BorderPane();
         root.getStyleClass().add("connection-root");
         root.setTop(chrome.titleBar("Connect to database"));
         root.setCenter(body);
         return root;
+    }
+
+    private static ScrollPane scrollable(Node content) {
+        ScrollPane pane = new ScrollPane(content);
+        pane.setFitToWidth(true);
+        pane.setFitToHeight(true);
+        pane.setMinHeight(0);
+        pane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        pane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        pane.getStyleClass().add("connection-tab-scroll");
+        return pane;
     }
 
     private static Tab closableTab(String title, Node content) {
@@ -411,6 +446,40 @@ public final class ConnectionDialog extends Dialog<ConnectionConfig> {
         Button hiddenCancel = (Button) getDialogPane().lookupButton(ButtonType.CANCEL);
         connectButton.setOnAction(event -> hiddenOk.fire());
         cancelButton.setOnAction(event -> hiddenCancel.fire());
+        connectButton.setDefaultButton(true);
+    }
+
+    private void handleEnterToConnect(KeyEvent event) {
+        if (event.getCode() != KeyCode.ENTER || event.isAltDown() || event.isShortcutDown()) {
+            return;
+        }
+        if (connectButton.isDisabled() || defersEnter(event)) {
+            return;
+        }
+        event.consume();
+        connectButton.fire();
+    }
+
+    private boolean defersEnter(KeyEvent event) {
+        Node focus = getDialogPane().getScene() == null ? null : getDialogPane().getScene().getFocusOwner();
+        Node current = focus;
+        while (current != null) {
+            if (current instanceof Button) {
+                return true;
+            }
+            if (current instanceof ComboBox<?> combo && combo.isShowing()) {
+                return true;
+            }
+            if (current instanceof TableView<?> table && table.getEditingCell() != null) {
+                return true;
+            }
+            if (current instanceof TextInputControl && current.isFocused()) {
+                // Single-line fields still submit via the default button; skip the extra fire.
+                return true;
+            }
+            current = current.getParent();
+        }
+        return false;
     }
 
     private static GridPane labeledGrid() {

@@ -127,6 +127,7 @@ public final class MainController {
     private final StatusBar statusBar = new StatusBar();
     private final SessionManager sessions;
 
+    private final WindowChrome windowChrome = new WindowChrome();
     private final SplitPane mainSplit = new SplitPane();
     private final SplitPane rightSplit = new SplitPane();
     private final BorderPane sidebar = new BorderPane();
@@ -274,7 +275,24 @@ public final class MainController {
 
         onSessionsChanged();
         updateActionStates();
-        return root;
+
+        HBox titleBar = windowChrome.createTitleBar();
+        VBox.setVgrow(titleBar, Priority.NEVER);
+        VBox.setVgrow(root, Priority.ALWAYS);
+
+        VBox shell = new VBox(titleBar, root);
+        shell.getStyleClass().add("app-shell");
+        return shell;
+    }
+
+    public void installWindowChrome(Stage stage) {
+        windowChrome.attach(stage);
+    }
+
+    public void maximizeRestoredWindow() {
+        if (!windowChrome.isMaximized()) {
+            windowChrome.toggleMaximize();
+        }
     }
 
     private ToolBar buildToolBar() {
