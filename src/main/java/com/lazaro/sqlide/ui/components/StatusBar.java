@@ -33,10 +33,14 @@ public final class StatusBar extends HBox {
     private final Label connectionLabel = new Label("Not connected");
     private final Label databaseLabel = new Label();
     private final Label transactionLabel = new Label();
+    private final Label indexingLabel = new Label();
     private final Label resultLabel = new Label();
     private final Label caretLabel = new Label("Ln 1, Col 1");
 
     private String endpointText = "Not connected";
+    private boolean queryBusy;
+    private boolean indexing;
+    private boolean lifecycleBusy;
 
     public StatusBar() {
         getStyleClass().add("status-bar");
@@ -53,6 +57,9 @@ public final class StatusBar extends HBox {
         connectionLabel.getStyleClass().add("status-text");
         databaseLabel.getStyleClass().addAll("status-text", "status-database");
         transactionLabel.getStyleClass().addAll("status-text", "status-transaction");
+        indexingLabel.getStyleClass().addAll("status-text", "status-indexing");
+        indexingLabel.setVisible(false);
+        indexingLabel.setManaged(false);
         resultLabel.getStyleClass().addAll("status-text", "status-result");
         caretLabel.getStyleClass().addAll("status-text", "status-caret");
 
@@ -65,7 +72,7 @@ public final class StatusBar extends HBox {
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
         getChildren().addAll(
-                dot, activity, connectionLabel, databaseLabel, transactionLabel,
+                dot, activity, connectionLabel, databaseLabel, transactionLabel, indexingLabel,
                 spacer,
                 resultLabel, new Separator(Orientation.VERTICAL), caretLabel);
 
@@ -77,8 +84,9 @@ public final class StatusBar extends HBox {
      * @param database active catalog/schema, or {@code null}/{@code ""} when none
      */
     public void setConnected(String endpoint, String database) {
-        setActivity(false);
+        lifecycleBusy = false;
         applyDotClass(DOT_CONNECTED);
+        syncActivity();
         endpointText = endpoint == null || endpoint.isBlank() ? "Connected" : endpoint;
         connectionLabel.setText(endpointText);
         connectionLabel.pseudoClassStateChanged(ERROR, false);
@@ -130,7 +138,11 @@ public final class StatusBar extends HBox {
     }
 
     public void setDisconnected() {
-        setActivity(false);
+        queryBusy = false;
+        indexing = false;
+        lifecycleBusy = false;
+        hideIndexingLabel();
+        syncActivity();
         applyDotClass(DOT_DISCONNECTED);
         endpointText = "Not connected";
         connectionLabel.setText(endpointText);
@@ -148,7 +160,8 @@ public final class StatusBar extends HBox {
     }
 
     public void setBusy(String message) {
-        setActivity(true);
+        lifecycleBusy = true;
+        syncActivity();
         applyDotClass(DOT_BUSY);
         connectionLabel.setText(message);
         connectionLabel.pseudoClassStateChanged(ERROR, false);
@@ -156,7 +169,11 @@ public final class StatusBar extends HBox {
     }
 
     public void setConnectionError(String message) {
-        setActivity(false);
+        queryBusy = false;
+        indexing = false;
+        lifecycleBusy = false;
+        hideIndexingLabel();
+        syncActivity();
         applyDotClass(DOT_DISCONNECTED);
         connectionLabel.setText(abbreviate(message, 72));
         connectionLabel.setTooltip(new Tooltip(message));
@@ -172,7 +189,8 @@ public final class StatusBar extends HBox {
     }
 
     public void setQueryRunning(boolean redis) {
-        setActivity(true);
+        queryBusy = true;
+        syncActivity();
         resultLabel.setText(redis ? "Running command\u2026" : "Running query\u2026");
         resultLabel.setTooltip(null);
         resultLabel.pseudoClassStateChanged(ERROR, false);
@@ -180,8 +198,30 @@ public final class StatusBar extends HBox {
     }
 
     public void clearQueryRunning() {
-        setActivity(false);
+        queryBusy = false;
+        syncActivity();
         pseudoClassStateChanged(BUSY, false);
+    }
+
+    /**
+     * Background schema indexing. Does not replace the connection readout or a
+     * running-query message; the spinner stays on while this or a query is active.
+     */
+    public void setIndexing(String message) {
+        indexing = message != null && !message.isBlank();
+        if (indexing) {
+            indexingLabel.setText("· " + message);
+            indexingLabel.setTooltip(new Tooltip(message));
+        } else {
+            hideIndexingLabel();
+        }
+        indexingLabel.setVisible(indexing);
+        indexingLabel.setManaged(indexing);
+        syncActivity();
+    }
+
+    public void clearIndexing() {
+        setIndexing(null);
     }
 
     public void setResult(QueryResult result) {
@@ -220,9 +260,17 @@ public final class StatusBar extends HBox {
         }
     }
 
-    private void setActivity(boolean active) {
+    private void syncActivity() {
+        boolean active = queryBusy || indexing || lifecycleBusy;
         activity.setVisible(active);
         activity.setManaged(active);
+    }
+
+    private void hideIndexingLabel() {
+        indexingLabel.setText("");
+        indexingLabel.setTooltip(null);
+        indexingLabel.setVisible(false);
+        indexingLabel.setManaged(false);
     }
 
     private void applyDotClass(String styleClass) {

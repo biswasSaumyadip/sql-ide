@@ -57,6 +57,9 @@ public final class SchemaTreeView extends VBox {
     private final Label emptyHint = new Label();
     private final Label loadingLabel = new Label("Loading schemas\u2026");
     private final ProgressIndicator loadingSpinner = new ProgressIndicator();
+    private final HBox indexingBar = new HBox(6);
+    private final ProgressIndicator indexingSpinner = new ProgressIndicator();
+    private final Label indexingLabel = new Label();
 
     private ConnectionProfileManager profileManager = new ConnectionProfileManager();
     private SessionManager sessionManager;
@@ -199,13 +202,14 @@ public final class SchemaTreeView extends VBox {
         emptyHint.setMouseTransparent(true);
 
         buildLoadingState();
+        buildIndexingBar();
 
         body.getChildren().addAll(tree, emptyHint, loadingState);
         StackPane.setAlignment(emptyHint, Pos.CENTER);
         StackPane.setAlignment(loadingState, Pos.CENTER);
         VBox.setVgrow(body, Priority.ALWAYS);
 
-        getChildren().addAll(header, filterBar, body);
+        getChildren().addAll(header, filterBar, indexingBar, body);
         rebuildDataSources();
     }
 
@@ -217,6 +221,28 @@ public final class SchemaTreeView extends VBox {
         loadingState.getChildren().addAll(loadingSpinner, loadingLabel);
         loadingState.setVisible(false);
         loadingState.setManaged(false);
+    }
+
+    private void buildIndexingBar() {
+        indexingSpinner.setMaxSize(12, 12);
+        indexingLabel.getStyleClass().add("schema-indexing-label");
+        indexingBar.getStyleClass().add("schema-indexing-bar");
+        indexingBar.setAlignment(Pos.CENTER_LEFT);
+        indexingBar.getChildren().addAll(indexingSpinner, indexingLabel);
+        indexingBar.setVisible(false);
+        indexingBar.setManaged(false);
+    }
+
+    /** Compact banner while other catalogs index in the background. */
+    public void setIndexing(String message) {
+        boolean on = message != null && !message.isBlank();
+        indexingLabel.setText(on ? message : "");
+        indexingBar.setVisible(on);
+        indexingBar.setManaged(on);
+    }
+
+    public void clearIndexing() {
+        setIndexing(null);
     }
 
     private void refreshTreeItem(TreeItem<SchemaNode> item) {

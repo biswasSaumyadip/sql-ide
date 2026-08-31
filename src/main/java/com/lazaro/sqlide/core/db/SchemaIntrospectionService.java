@@ -217,24 +217,41 @@ public final class SchemaIntrospectionService {
      * can offer table names before the detailed pass finishes.
      */
     public CompletableFuture<List<SchemaNode>> fetchSchemaOutlineAsync() {
-        return supplyAsync(SchemaIntrospectionService::readSchemaOutline);
+        return fetchSchemaOutlineAsync(null);
     }
 
     /**
-     * Loads every catalog, then attaches columns (batched) plus indexes / foreign
-     * keys per table. Routine bodies are left unloaded; fetch them on demand.
+     * Like {@link #fetchSchemaOutlineAsync()}, but loads {@code preferredCatalog}
+     * first and leaves other catalogs as empty shells.
+     */
+    public CompletableFuture<List<SchemaNode>> fetchSchemaOutlineAsync(String preferredCatalog) {
+        return supplyAsync(connection -> readSchemaOutline(connection, preferredCatalog));
+    }
+
+    /**
+     * Loads catalogs, then attaches columns (batched) plus indexes / foreign keys
+     * per table. Routine bodies are left unloaded; fetch them on demand.
      * Used once per connection (and on Refresh) so autocomplete never hits the
      * network per keystroke. A failure on one table keeps the name-only node.
      */
     public CompletableFuture<List<SchemaNode>> fetchFullSchemaAsync() {
-        return supplyAsync(connection -> {
-            List<SchemaNode> outline = readSchemaOutline(connection);
-            List<SchemaNode> loaded = new ArrayList<>(outline.size());
-            for (SchemaNode database : outline) {
-                loaded.add(enrichCatalog(connection, database));
-            }
-            return List.copyOf(loaded);
-        });
+        return fetchFullSchemaAsync(null);
+    }
+
+    /**
+     * Like {@link #fetchFullSchemaAsync()}, but enriches {@code preferredCatalog}
+     * only. Other catalogs stay as name-only shells for {@link #fetchSecondarySchemaAsync}.
+     */
+    public CompletableFuture<List<SchemaNode>> fetchFullSchemaAsync(String preferredCatalog) {
+        return supplyAsync(connection -> readFullSchema(connection, preferredCatalog));
+    }
+
+    /**
+     * Tables / columns for every catalog except {@code preferredCatalog}. System
+     * catalogs stay name-only. Empty when {@code preferredCatalog} is blank.
+     */
+    public CompletableFuture<List<SchemaNode>> fetchSecondarySchemaAsync(String preferredCatalog) {
+        return supplyAsync(connection -> readSecondarySchema(connection, preferredCatalog));
     }
 
     /**
@@ -269,16 +286,76 @@ public final class SchemaIntrospectionService {
 
     // ---------------------------------------------------------------- outline / enrich
 
-    private static List<SchemaNode> readSchemaOutline(Connection connection) throws SQLException {
+    private static List<SchemaNode> readSchemaOutline(Connection connection, String preferredCatalog)
+            throws SQLException {
         List<SchemaNode> databases = readDatabases(connection);
+        SchemaNode preferred = findPreferred(databases, preferredCatalog);
         List<SchemaNode> loaded = new ArrayList<>(databases.size());
+        if (preferred == null) {
+            for (SchemaNode database : databases) {
+                loaded.add(loadOutlineChildren(connection, database));
+            }
+            return List.copyOf(loaded);
+        }
+        loaded.add(loadOutlineChildren(connection, preferred));
         for (SchemaNode database : databases) {
-            List<SchemaNode> children = new ArrayList<>();
-            children.addAll(readTablesSafe(connection, database.name()));
-            children.addAll(readRoutines(connection, database.name(), false));
-            loaded.add(database.withChildren(children));
+            if (!database.name().equalsIgnoreCase(preferred.name())) {
+                loaded.add(database);
+            }
         }
         return List.copyOf(loaded);
+    }
+
+    private static List<SchemaNode> readFullSchema(Connection connection, String preferredCatalog)
+            throws SQLException {
+        List<SchemaNode> outline = readSchemaOutline(connection, preferredCatalog);
+        SchemaNode preferred = findPreferred(outline, preferredCatalog);
+        List<SchemaNode> loaded = new ArrayList<>(outline.size());
+        for (SchemaNode database : outline) {
+            if (preferred != null && !database.name().equalsIgnoreCase(preferred.name())) {
+                loaded.add(database);
+            } else {
+                loaded.add(enrichCatalog(connection, database));
+            }
+        }
+        return List.copyOf(loaded);
+    }
+
+    private static List<SchemaNode> readSecondarySchema(Connection connection, String preferredCatalog)
+            throws SQLException {
+        if (preferredCatalog == null || preferredCatalog.isBlank()) {
+            return List.of();
+        }
+        List<SchemaNode> databases = readDatabases(connection);
+        List<SchemaNode> loaded = new ArrayList<>();
+        for (SchemaNode database : databases) {
+            if (database.name().equalsIgnoreCase(preferredCatalog) || isSystemCatalogName(database.name())) {
+                continue;
+            }
+            SchemaNode outlined = loadOutlineChildren(connection, database);
+            loaded.add(enrichCatalog(connection, outlined));
+        }
+        return List.copyOf(loaded);
+    }
+
+    private static SchemaNode loadOutlineChildren(Connection connection, SchemaNode database)
+            throws SQLException {
+        List<SchemaNode> children = new ArrayList<>();
+        children.addAll(readTablesSafe(connection, database.name()));
+        children.addAll(readRoutines(connection, database.name(), false));
+        return database.withChildren(children);
+    }
+
+    private static SchemaNode findPreferred(List<SchemaNode> databases, String preferredCatalog) {
+        if (preferredCatalog == null || preferredCatalog.isBlank() || databases == null) {
+            return null;
+        }
+        for (SchemaNode database : databases) {
+            if (database.name().equalsIgnoreCase(preferredCatalog)) {
+                return database;
+            }
+        }
+        return null;
     }
 
     private static List<SchemaNode> readTablesSafe(Connection connection, String catalog) {

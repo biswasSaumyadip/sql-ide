@@ -439,12 +439,17 @@ public final class JdbcSqlDriver implements DataSourceDriver {
 
     @Override
     public CompletableFuture<List<SchemaNode>> getSchemaOutline() {
-        return introspection.fetchSchemaOutlineAsync();
+        return introspection.fetchSchemaOutlineAsync(activeCatalog);
     }
 
     @Override
     public CompletableFuture<List<SchemaNode>> getFullSchema() {
-        return introspection.fetchFullSchemaAsync();
+        return introspection.fetchFullSchemaAsync(activeCatalog);
+    }
+
+    @Override
+    public CompletableFuture<List<SchemaNode>> getSecondarySchema() {
+        return introspection.fetchSecondarySchemaAsync(activeCatalog);
     }
 
     @Override

@@ -69,4 +69,19 @@ class SchemaCacheTest {
         assertEquals("users", cache.findTable("users", "app").orElseThrow().name());
         assertTrue(cache.findTable("missing", "app").isEmpty());
     }
+
+    @Test
+    void upsertCatalogsReplacesByNameAndKeepsTheRest() {
+        SchemaNode items = SchemaNode.of("items", NodeType.TABLE, Map.of(SchemaNode.META_CATALOG, "shop"));
+        cache.upsertCatalogs(List.of(
+                new SchemaNode("shop", NodeType.DATABASE, List.of(items), Map.of()),
+                new SchemaNode("app", NodeType.DATABASE, List.of(
+                        SchemaNode.of("accounts", NodeType.TABLE, Map.of(SchemaNode.META_CATALOG, "app"))),
+                        Map.of())));
+
+        assertEquals("accounts", cache.findTable("accounts", "app").orElseThrow().name());
+        assertTrue(cache.findTable("users", "app").isEmpty(), "replaced catalog must drop stale tables");
+        assertEquals("items", cache.findTable("items", "shop").orElseThrow().name());
+        assertEquals("faction", cache.findTable("faction", "warcraft").orElseThrow().name());
+    }
 }

@@ -189,6 +189,40 @@ class SchemaIntrospectionServiceTest {
     }
 
     @Test
+    @DisplayName("preferred catalog is outlined first; unknown preferred falls back to every catalog")
+    void schemaOutlinePrefersNamedCatalog() throws Exception {
+        List<SchemaNode> preferred = schemaService.fetchSchemaOutlineAsync(catalog)
+                .get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        assertFalse(preferred.isEmpty());
+        assertTrue(preferred.getFirst().name().equalsIgnoreCase(catalog),
+                "active catalog should be first, got " + preferred.getFirst().name());
+        SchemaNode active = find(preferred, catalog);
+        assertTrue(active.children().stream().anyMatch(node -> node.name().equals("CUSTOMER")));
+
+        for (SchemaNode database : preferred) {
+            if (database.name().equalsIgnoreCase(catalog)) {
+                continue;
+            }
+            assertTrue(database.children().isEmpty(),
+                    "other catalogs stay shells until the secondary pass: " + database.name());
+        }
+
+        List<SchemaNode> fallback = schemaService.fetchSchemaOutlineAsync("no_such_database")
+                .get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        assertTrue(find(fallback, catalog).children().stream().anyMatch(node -> node.name().equals("CUSTOMER")),
+                "unknown preferred catalog must still load every database");
+    }
+
+    @Test
+    @DisplayName("secondary schema omits the preferred catalog")
+    void secondarySchemaSkipsPreferredCatalog() throws Exception {
+        List<SchemaNode> secondary = schemaService.fetchSecondarySchemaAsync(catalog)
+                .get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        assertTrue(secondary.stream().noneMatch(node -> node.name().equalsIgnoreCase(catalog)),
+                secondary.stream().map(SchemaNode::name).toList().toString());
+    }
+
+    @Test
     @DisplayName("full schema packs FK, index and DDL metadata onto table nodes")
     void fullSchemaEnrichesTableMetadata() throws Exception {
         List<SchemaNode> full = driver.getFullSchema().get(TIMEOUT_SECONDS, TIMEOUT_UNIT);

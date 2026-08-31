@@ -86,6 +86,7 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Builds the main window and connects its actions to live {@link ConnectionSession}s
@@ -152,6 +153,7 @@ public final class MainController {
     private List<String> lastRerunStatements = List.of();
     private String lastRerunHistorySql = "";
     private String lastRunSessionId;
+    private final AtomicLong schemaIndexGeneration = new AtomicLong();
 
     public MainController(DriverRegistry registry, WorkspaceState state) {
         this.registry = registry;
@@ -617,6 +619,7 @@ public final class MainController {
             outcome.setRefreshEnabled(false);
             statusBar.setDisconnected();
             autoCommitToggle.setSelected(state.autoCommit());
+            clearSchemaIndexing();
         } else {
             refreshStatusFromFocus();
         }
@@ -681,9 +684,9 @@ public final class MainController {
     }
 
     /**
-     * Pulls table / routine names first so autocomplete works on large catalogs,
-     * then replaces the snapshot with columns and keys when that pass finishes.
-     * Failures leave the previous snapshot intact so typing is not disrupted.
+     * Pulls the active catalog first so autocomplete works before other databases
+     * are indexed. Failures leave the previous snapshot intact so typing is not
+     * disrupted. Status bar + Database pane show progress while that runs.
      */
     private void refreshSchemaCache(ConnectionSession session) {
         if (session == null || !session.isConnected()) {
@@ -691,27 +694,84 @@ public final class MainController {
         }
         DataSourceDriver active = session.driver();
         SchemaCache cache = session.schemaCache();
+        final long generation = schemaIndexGeneration.incrementAndGet();
+        String catalog = active.activeCatalog().orElseGet(() ->
+                session.config().database().isBlank() ? null : session.config().database());
+        showSchemaIndexing(catalog == null || catalog.isBlank()
+                ? "Indexing schema\u2026"
+                : "Indexing " + catalog + "\u2026");
         active.getSchemaOutline().whenComplete((outline, outlineError) -> {
-            if (outline != null) {
-                javafx.application.Platform.runLater(() -> {
-                    if (!session.isConnected()) {
-                        return;
-                    }
+            boolean pendingOthers = outlineHasPendingCatalogs(outline);
+            javafx.application.Platform.runLater(() -> {
+                if (generation != schemaIndexGeneration.get() || !session.isConnected()) {
+                    return;
+                }
+                if (outline != null) {
                     cache.replace(outline);
                     editors.refreshAutocompleteEngines();
-                });
-            }
+                }
+            });
             if (active.schemaOutlineIsAuthoritative()) {
+                javafx.application.Platform.runLater(() -> clearSchemaIndexing(generation));
                 return;
             }
             active.getFullSchema().whenComplete((nodes, error) -> javafx.application.Platform.runLater(() -> {
-                if (error != null || nodes == null || !session.isConnected()) {
+                if (generation != schemaIndexGeneration.get() || !session.isConnected()) {
                     return;
                 }
-                cache.replace(nodes);
-                editors.refreshAutocompleteEngines();
+                if (error == null && nodes != null) {
+                    cache.replace(nodes);
+                    editors.refreshAutocompleteEngines();
+                }
+                if (pendingOthers) {
+                    showSchemaIndexing("Indexing other databases\u2026");
+                } else {
+                    clearSchemaIndexing(generation);
+                }
+                active.getSecondarySchema().whenComplete((secondary, secondaryError) ->
+                        javafx.application.Platform.runLater(() -> {
+                            if (generation != schemaIndexGeneration.get() || !session.isConnected()) {
+                                return;
+                            }
+                            if (secondaryError == null && secondary != null && !secondary.isEmpty()) {
+                                cache.upsertCatalogs(secondary);
+                                editors.refreshAutocompleteEngines();
+                            }
+                            clearSchemaIndexing(generation);
+                        }));
             }));
         });
+    }
+
+    private static boolean outlineHasPendingCatalogs(List<SchemaNode> outline) {
+        if (outline == null || outline.size() < 2) {
+            return false;
+        }
+        for (int i = 1; i < outline.size(); i++) {
+            if (outline.get(i).children().isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void showSchemaIndexing(String message) {
+        statusBar.setIndexing(message);
+        schemaTree.setIndexing(message);
+    }
+
+    private void clearSchemaIndexing() {
+        schemaIndexGeneration.incrementAndGet();
+        statusBar.clearIndexing();
+        schemaTree.clearIndexing();
+    }
+
+    private void clearSchemaIndexing(long generation) {
+        if (generation != schemaIndexGeneration.get()) {
+            return;
+        }
+        statusBar.clearIndexing();
+        schemaTree.clearIndexing();
     }
 
     private void openCompareStructure() {

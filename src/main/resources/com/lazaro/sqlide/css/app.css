@@ -1274,8 +1274,30 @@
     -fx-font-weight: bold;
 }
 
+.status-indexing {
+    -fx-text-fill: #8ab4d8;
+}
+
 .status-bar:busy .status-result {
     -fx-text-fill: #e0c06a;
+}
+
+.schema-indexing-bar {
+    -fx-alignment: center-left;
+    -fx-padding: 0 8 6 8;
+}
+
+.schema-indexing-bar .progress-indicator {
+    -fx-progress-color: #4fa6ee;
+    -fx-max-width: 12px;
+    -fx-max-height: 12px;
+    -fx-pref-width: 12px;
+    -fx-pref-height: 12px;
+}
+
+.schema-indexing-label {
+    -fx-font-size: 11px;
+    -fx-text-fill: #8ab4d8;
 }
 
 .status-result:error,

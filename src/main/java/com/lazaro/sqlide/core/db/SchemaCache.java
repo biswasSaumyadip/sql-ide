@@ -37,6 +37,34 @@ public final class SchemaCache {
         tablesByLowerName = indexTables();
     }
 
+    /**
+     * Inserts or replaces catalogs by name, leaving unmatched catalogs in place.
+     * Used when the active database is indexed first and the rest arrive later.
+     */
+    public void upsertCatalogs(List<SchemaNode> incoming) {
+        if (incoming == null || incoming.isEmpty()) {
+            return;
+        }
+        for (SchemaNode next : incoming) {
+            if (next == null || next.name() == null || next.name().isBlank()) {
+                continue;
+            }
+            boolean replaced = false;
+            for (int i = 0; i < catalogs.size(); i++) {
+                if (catalogs.get(i).name().equalsIgnoreCase(next.name())) {
+                    catalogs.set(i, next);
+                    replaced = true;
+                    break;
+                }
+            }
+            if (!replaced) {
+                catalogs.add(next);
+            }
+        }
+        ready = !catalogs.isEmpty();
+        tablesByLowerName = indexTables();
+    }
+
     public void clear() {
         catalogs.clear();
         tablesByLowerName = Map.of();

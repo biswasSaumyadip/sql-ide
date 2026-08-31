@@ -70,10 +70,20 @@ public interface DataSourceDriver extends AutoCloseable {
     /**
      * Catalogs with table / view / routine names only. Autocomplete uses this so
      * table names appear before {@link #getFullSchema()} finishes loading columns.
+     * When an active catalog is set, that database is listed first and other
+     * catalogs are name-only shells until {@link #getSecondarySchema()}.
      * Default is {@link #getFullSchema()}.
      */
     default CompletableFuture<List<SchemaNode>> getSchemaOutline() {
         return getFullSchema();
+    }
+
+    /**
+     * Remaining catalogs after {@link #getFullSchema()} has prioritized the active
+     * database. Empty when there is no active catalog or nothing left to load.
+     */
+    default CompletableFuture<List<SchemaNode>> getSecondarySchema() {
+        return CompletableFuture.completedFuture(List.of());
     }
 
     /**
@@ -85,9 +95,9 @@ public interface DataSourceDriver extends AutoCloseable {
     }
 
     /**
-     * Eagerly loads every catalog with tables, columns, indexes and foreign keys
-     * populated. Intended for the client-side schema cache (autocomplete / object
-     * viewer), not for painting the lazy tree.
+     * Eagerly loads schema objects for autocomplete. When an active catalog is
+     * set, that database is fully populated first; other catalogs may arrive
+     * later via {@link #getSecondarySchema()}.
      */
     CompletableFuture<List<SchemaNode>> getFullSchema();
 
