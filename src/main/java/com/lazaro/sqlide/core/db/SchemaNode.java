@@ -30,6 +30,12 @@ public record SchemaNode(String name, NodeType type, List<SchemaNode> children, 
     public static final String META_NULLABLE = "nullable";
     /** Metadata key, {@code "true"} when a column is part of the primary key. */
     public static final String META_PRIMARY_KEY = "primaryKey";
+    /** Metadata key, {@code "true"} when a column is AUTO_INCREMENT / identity. */
+    public static final String META_AUTO_INCREMENT = "autoIncrement";
+    /** Metadata key holding a column default expression, e.g. {@code CURRENT_TIMESTAMP}. */
+    public static final String META_DEFAULT = "columnDefault";
+    /** Metadata key holding a column comment / remarks. */
+    public static final String META_COMMENT = "comment";
     /** Metadata key holding the owning catalog of a table. */
     public static final String META_CATALOG = "catalog";
     /** Metadata key holding the raw JDBC table type, e.g. {@code BASE TABLE}. */

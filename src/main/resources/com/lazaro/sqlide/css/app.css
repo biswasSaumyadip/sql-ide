@@ -2065,6 +2065,33 @@
     -fx-background-color: #eceff4;
 }
 
+.modify-table-dialog .table-row-cell.added-row,
+.modify-table-dialog .table-row-cell.added-row:odd {
+    -fx-background-color: rgba(80, 160, 90, 0.18);
+}
+
+.modify-table-dialog .table-row-cell.modified-row,
+.modify-table-dialog .table-row-cell.modified-row:odd {
+    -fx-background-color: rgba(200, 170, 70, 0.18);
+}
+
+.modify-table-dialog .table-row-cell.dropped-row,
+.modify-table-dialog .table-row-cell.dropped-row:odd {
+    -fx-background-color: rgba(180, 70, 70, 0.16);
+}
+
+.modify-table-dialog .table-row-cell.added-row:filled:hover,
+.modify-table-dialog .table-row-cell.modified-row:filled:hover,
+.modify-table-dialog .table-row-cell.dropped-row:filled:hover {
+    -fx-background-color: #262a32;
+}
+
+.modify-table-dialog .table-row-cell.added-row:filled:selected,
+.modify-table-dialog .table-row-cell.modified-row:filled:selected,
+.modify-table-dialog .table-row-cell.dropped-row:filled:selected {
+    -fx-background-color: #2f5d8c;
+}
+
 .modify-table-dialog .dropped-row .text {
     -fx-strikethrough: true;
     -fx-fill: #7f848e;
@@ -2072,6 +2099,44 @@
 
 .modify-table-dialog .added-row .text {
     -fx-fill: #8fbf7f;
+}
+
+.modify-table-dialog .modify-table-cell-field,
+.modify-table-dialog .modify-table-combo,
+.modify-table-dialog .modify-table-type-combo {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-background-radius: 4px;
+    -fx-padding: 2 6 2 6;
+    -fx-font-size: 12px;
+    -fx-text-fill: #d6d9de;
+}
+
+.modify-table-dialog .modify-table-cell-field:focused,
+.modify-table-dialog .modify-table-combo:focused,
+.modify-table-dialog .modify-table-type-combo:focused {
+    -fx-background-color: #2b2d31;
+}
+
+.modify-table-dialog .modify-table-combo .list-cell,
+.modify-table-dialog .modify-table-type-combo .list-cell {
+    -fx-text-fill: #d6d9de;
+}
+
+.modify-table-dialog .modify-table-check-combo {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0 4 0 0;
+    -fx-font-size: 12px;
+    -fx-max-width: infinity;
+}
+
+.modify-table-dialog .modify-table-check-combo > .label {
+    -fx-text-fill: #d6d9de;
+}
+
+.modify-table-dialog .modify-table-check-combo:hover {
+    -fx-background-color: #2b2d31;
 }
 
 /* ---------------------------------------------------------------- object viewer */

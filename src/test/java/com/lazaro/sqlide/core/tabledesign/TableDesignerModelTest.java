@@ -105,6 +105,47 @@ class TableDesignerModelTest {
     }
 
     @Test
+    void autoIncrementDefaultAndCommentAppearInAddAndModify() {
+        TableDesignerModel model = TableDesignerModel.from(sampleTable());
+        var col = model.addColumn();
+        col.setName("seq");
+        col.setDataType("INT");
+        col.setAutoIncrement(true);
+        col.setComment("row id");
+        String addSql = model.alterScript(ConnectionConfig.Driver.MYSQL);
+        assertTrue(addSql.contains("ADD COLUMN `seq` INT NOT NULL AUTO_INCREMENT COMMENT 'row id'"));
+
+        TableDesignerModel modify = TableDesignerModel.from(sampleTable());
+        modify.columns().getFirst().setDefaultValue("0");
+        modify.columns().getFirst().setComment("pk");
+        String modSql = modify.alterScript(ConnectionConfig.Driver.MYSQL);
+        assertTrue(modSql.contains("MODIFY COLUMN `id` INT NOT NULL DEFAULT 0 COMMENT 'pk'"));
+        assertTrue(modify.columns().getFirst().modified());
+    }
+
+    @Test
+    void hashIndexAndFkActionsEmitClauses() {
+        TableDesignerModel model = TableDesignerModel.from(sampleTable());
+        var idx = model.addIndex();
+        idx.setName("idx_hash");
+        idx.setColumns("name");
+        idx.setType("HASH");
+        var fk = model.addForeignKey();
+        fk.setName("fk_parent");
+        fk.setColumns("id");
+        fk.setRefTable("parents");
+        fk.setRefColumns("id");
+        fk.setOnDelete("CASCADE");
+        fk.setOnUpdate("RESTRICT");
+
+        String sql = model.alterScript(ConnectionConfig.Driver.MYSQL);
+        assertTrue(sql.contains("ADD INDEX `idx_hash` (`name`) USING HASH"));
+        assertTrue(sql.contains("ON DELETE CASCADE"));
+        assertTrue(sql.contains("ON UPDATE RESTRICT"));
+        assertTrue(model.dirty());
+    }
+
+    @Test
     void quotesReservedIdentifiers() {
         SchemaNode id = new SchemaNode("order", NodeType.COLUMN, List.of(), Map.of(
                 SchemaNode.META_DATA_TYPE, "INT",

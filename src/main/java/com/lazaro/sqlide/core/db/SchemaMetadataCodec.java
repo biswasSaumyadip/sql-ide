@@ -18,7 +18,11 @@ public final class SchemaMetadataCodec {
 
     // ---------------------------------------------------------------- foreign keys
 
-    public record ForeignKey(String name, String fkColumn, String pkTable, String pkColumn) {
+    public record ForeignKey(
+            String name, String fkColumn, String pkTable, String pkColumn, String onUpdate, String onDelete) {
+        public ForeignKey(String name, String fkColumn, String pkTable, String pkColumn) {
+            this(name, fkColumn, pkTable, pkColumn, "", "");
+        }
     }
 
     public static String encodeForeignKeys(List<ForeignKey> keys) {
@@ -28,7 +32,12 @@ public final class SchemaMetadataCodec {
         List<String> parts = new ArrayList<>(keys.size());
         for (ForeignKey key : keys) {
             parts.add(String.join(FIELD_SEP,
-                    safe(key.name()), safe(key.fkColumn()), safe(key.pkTable()), safe(key.pkColumn())));
+                    safe(key.name()),
+                    safe(key.fkColumn()),
+                    safe(key.pkTable()),
+                    safe(key.pkColumn()),
+                    safe(key.onUpdate()),
+                    safe(key.onDelete())));
         }
         return String.join(ENTRY_SEP, parts);
     }
@@ -41,7 +50,13 @@ public final class SchemaMetadataCodec {
         for (String entry : encoded.split(ENTRY_SEP)) {
             String[] fields = entry.split("\\" + FIELD_SEP, -1);
             if (fields.length >= 4) {
-                keys.add(new ForeignKey(fields[0], fields[1], fields[2], fields[3]));
+                keys.add(new ForeignKey(
+                        fields[0],
+                        fields[1],
+                        fields[2],
+                        fields[3],
+                        fields.length > 4 ? fields[4] : "",
+                        fields.length > 5 ? fields[5] : ""));
             }
         }
         return List.copyOf(keys);
@@ -49,9 +64,14 @@ public final class SchemaMetadataCodec {
 
     // ---------------------------------------------------------------- indexes
 
-    public record IndexInfo(String name, boolean unique, List<String> columns) {
+    public record IndexInfo(String name, boolean unique, List<String> columns, String type) {
         public IndexInfo {
             columns = List.copyOf(Objects.requireNonNullElse(columns, List.of()));
+            type = type == null || type.isBlank() ? "BTREE" : type;
+        }
+
+        public IndexInfo(String name, boolean unique, List<String> columns) {
+            this(name, unique, columns, "BTREE");
         }
     }
 
@@ -64,7 +84,8 @@ public final class SchemaMetadataCodec {
             parts.add(String.join(FIELD_SEP,
                     safe(index.name()),
                     index.unique() ? "UNIQUE" : "NON_UNIQUE",
-                    String.join(",", index.columns())));
+                    String.join(",", index.columns()),
+                    safe(index.type())));
         }
         return String.join(ENTRY_SEP, parts);
     }
@@ -81,7 +102,8 @@ public final class SchemaMetadataCodec {
                 List<String> columns = fields[2].isBlank()
                         ? List.of()
                         : List.of(fields[2].split(","));
-                indexes.add(new IndexInfo(fields[0], unique, columns));
+                String type = fields.length > 3 && !fields[3].isBlank() ? fields[3] : "BTREE";
+                indexes.add(new IndexInfo(fields[0], unique, columns, type));
             }
         }
         return List.copyOf(indexes);

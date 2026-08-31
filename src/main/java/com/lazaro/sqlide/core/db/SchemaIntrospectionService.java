@@ -850,6 +850,7 @@ public final class SchemaIntrospectionService {
         metadata.put(SchemaNode.META_NULLABLE, Boolean.toString(nullable));
         metadata.put(SchemaNode.META_PRIMARY_KEY, "false");
         metadata.put(SchemaNode.META_CATALOG, Objects.requireNonNullElse(firstNonBlank(catalog, schema), ""));
+        putColumnExtras(resultSet, metadata);
         return new PositionedColumn(SchemaNode.of(name, NodeType.COLUMN, metadata), position);
     }
 
@@ -1022,7 +1023,13 @@ public final class SchemaIntrospectionService {
                     continue;
                 }
                 String name = Objects.requireNonNullElse(resultSet.getString("FK_NAME"), fkColumn + "_fk");
-                keys.add(new SchemaMetadataCodec.ForeignKey(name, fkColumn, pkTable, pkColumn));
+                keys.add(new SchemaMetadataCodec.ForeignKey(
+                        name,
+                        fkColumn,
+                        pkTable,
+                        pkColumn,
+                        importedKeyAction(resultSet, "UPDATE_RULE"),
+                        importedKeyAction(resultSet, "DELETE_RULE")));
             }
         } catch (SQLException ignored) {
             return List.of();
@@ -1041,13 +1048,14 @@ public final class SchemaIntrospectionService {
                     continue;
                 }
                 boolean unique = !resultSet.getBoolean("NON_UNIQUE");
+                String type = indexType(resultSet);
                 SchemaMetadataCodec.IndexInfo existing = byName.get(name);
                 if (existing == null) {
-                    byName.put(name, new SchemaMetadataCodec.IndexInfo(name, unique, List.of(column)));
+                    byName.put(name, new SchemaMetadataCodec.IndexInfo(name, unique, List.of(column), type));
                 } else {
                     List<String> columns = new ArrayList<>(existing.columns());
                     columns.add(column);
-                    byName.put(name, new SchemaMetadataCodec.IndexInfo(name, existing.unique(), columns));
+                    byName.put(name, new SchemaMetadataCodec.IndexInfo(name, existing.unique(), columns, existing.type()));
                 }
             }
         } catch (SQLException ignored) {
@@ -1141,6 +1149,7 @@ public final class SchemaIntrospectionService {
                 metadata.put(SchemaNode.META_NULLABLE, Boolean.toString(nullable));
                 metadata.put(SchemaNode.META_PRIMARY_KEY, Boolean.toString(primaryKeys.contains(name)));
                 metadata.put(SchemaNode.META_CATALOG, Objects.requireNonNullElse(firstNonBlank(catalog, schema), ""));
+                putColumnExtras(resultSet, metadata);
 
                 columns.add(new PositionedColumn(SchemaNode.of(name, NodeType.COLUMN, metadata), position));
             }
@@ -1186,6 +1195,69 @@ public final class SchemaIntrospectionService {
         }
         boolean sized = size > 0 && (upper.contains("CHAR") || upper.contains("BINARY") || decimal);
         return sized ? "%s(%d)".formatted(name, size) : name;
+    }
+
+    private static void putColumnExtras(ResultSet resultSet, Map<String, String> metadata) {
+        try {
+            String auto = resultSet.getString("IS_AUTOINCREMENT");
+            metadata.put(SchemaNode.META_AUTO_INCREMENT, Boolean.toString("YES".equalsIgnoreCase(auto)));
+        } catch (SQLException ignored) {
+            metadata.putIfAbsent(SchemaNode.META_AUTO_INCREMENT, "false");
+        }
+        try {
+            String def = resultSet.getString("COLUMN_DEF");
+            if (def != null && !def.isBlank()) {
+                metadata.put(SchemaNode.META_DEFAULT, def);
+            }
+        } catch (SQLException ignored) {
+            // some drivers omit COLUMN_DEF
+        }
+        try {
+            String remarks = resultSet.getString("REMARKS");
+            if (remarks != null && !remarks.isBlank()) {
+                metadata.put(SchemaNode.META_COMMENT, remarks);
+            }
+        } catch (SQLException ignored) {
+            // some drivers omit REMARKS
+        }
+    }
+
+    private static String importedKeyAction(ResultSet resultSet, String column) {
+        try {
+            int rule = resultSet.getInt(column);
+            if (resultSet.wasNull()) {
+                return "";
+            }
+            return switch (rule) {
+                case DatabaseMetaData.importedKeyCascade -> "CASCADE";
+                case DatabaseMetaData.importedKeyRestrict -> "RESTRICT";
+                case DatabaseMetaData.importedKeySetNull -> "SET NULL";
+                case DatabaseMetaData.importedKeySetDefault -> "SET DEFAULT";
+                default -> "NO ACTION";
+            };
+        } catch (SQLException ignored) {
+            return "";
+        }
+    }
+
+    private static String indexType(ResultSet resultSet) {
+        try {
+            String mysql = resultSet.getString("INDEX_TYPE");
+            if (mysql != null && !mysql.isBlank()) {
+                return mysql.strip().toUpperCase(Locale.ROOT);
+            }
+        } catch (SQLException ignored) {
+            // standard JDBC has TYPE instead
+        }
+        try {
+            short type = resultSet.getShort("TYPE");
+            if (type == DatabaseMetaData.tableIndexHashed) {
+                return "HASH";
+            }
+        } catch (SQLException ignored) {
+            return "BTREE";
+        }
+        return "BTREE";
     }
 
     // ---------------------------------------------------------------- plumbing

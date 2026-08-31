@@ -83,6 +83,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -973,12 +974,12 @@ public final class MainController {
         SchemaCache cache = session.schemaCache();
         SchemaNode detailed = cache.findTable(node.name(), node.metadata(SchemaNode.META_CATALOG)).orElse(node);
         String catalog = detailed.metadata(SchemaNode.META_CATALOG);
-        List<String> tableNames = ModifyTableDialog.tableNames(cache, catalog);
+        Map<String, List<String>> columnsByTable = ModifyTableDialog.columnsByTable(cache, catalog);
         ModifyTableDialog dialog = new ModifyTableDialog(
                 owner(),
                 detailed,
                 session.config().driver(),
-                tableNames);
+                columnsByTable);
         dialog.showAndWait().ifPresent(sql -> editors.openGeneratedSql(
                 new SqlTemplateGenerator.Template(sql, "", "query-modify-table.sql"),
                 session.id()));

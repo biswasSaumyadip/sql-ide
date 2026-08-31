@@ -28,18 +28,50 @@ public final class TableDesignerModel {
 
     public static final class ColumnDraft {
         private final String originalName;
+        private final String snapshotName;
+        private final String snapshotType;
+        private final boolean snapshotNullable;
+        private final boolean snapshotPrimaryKey;
+        private final boolean snapshotAutoIncrement;
+        private final String snapshotDefault;
+        private final String snapshotComment;
         private String name;
         private String dataType;
         private boolean nullable;
         private boolean primaryKey;
+        private boolean autoIncrement;
+        private String defaultValue;
+        private String comment;
         private boolean dropped;
 
         public ColumnDraft(String originalName, String name, String dataType, boolean nullable, boolean primaryKey) {
+            this(originalName, name, dataType, nullable, primaryKey, false, "", "");
+        }
+
+        public ColumnDraft(
+                String originalName,
+                String name,
+                String dataType,
+                boolean nullable,
+                boolean primaryKey,
+                boolean autoIncrement,
+                String defaultValue,
+                String comment) {
             this.originalName = originalName;
             this.name = name == null ? "" : name;
             this.dataType = dataType == null ? "" : dataType;
             this.nullable = nullable;
             this.primaryKey = primaryKey;
+            this.autoIncrement = autoIncrement;
+            this.defaultValue = defaultValue == null ? "" : defaultValue;
+            this.comment = comment == null ? "" : comment;
+            this.snapshotName = this.name;
+            this.snapshotType = this.dataType;
+            this.snapshotNullable = nullable;
+            this.snapshotPrimaryKey = primaryKey;
+            this.snapshotAutoIncrement = autoIncrement;
+            this.snapshotDefault = this.defaultValue;
+            this.snapshotComment = this.comment;
         }
 
         public static ColumnDraft added(String name) {
@@ -52,6 +84,19 @@ public final class TableDesignerModel {
 
         public boolean added() {
             return originalName == null || originalName.isBlank();
+        }
+
+        public boolean modified() {
+            if (added() || dropped) {
+                return false;
+            }
+            return !name.equals(snapshotName)
+                    || !dataType.equalsIgnoreCase(snapshotType)
+                    || nullable != snapshotNullable
+                    || primaryKey != snapshotPrimaryKey
+                    || autoIncrement != snapshotAutoIncrement
+                    || !defaultValue.equals(snapshotDefault)
+                    || !comment.equals(snapshotComment);
         }
 
         public String name() {
@@ -89,6 +134,33 @@ public final class TableDesignerModel {
             }
         }
 
+        public boolean autoIncrement() {
+            return autoIncrement;
+        }
+
+        public void setAutoIncrement(boolean autoIncrement) {
+            this.autoIncrement = autoIncrement;
+            if (autoIncrement) {
+                this.nullable = false;
+            }
+        }
+
+        public String defaultValue() {
+            return defaultValue;
+        }
+
+        public void setDefaultValue(String defaultValue) {
+            this.defaultValue = defaultValue == null ? "" : defaultValue.strip();
+        }
+
+        public String comment() {
+            return comment;
+        }
+
+        public void setComment(String comment) {
+            this.comment = comment == null ? "" : comment;
+        }
+
         public boolean dropped() {
             return dropped;
         }
@@ -100,16 +172,30 @@ public final class TableDesignerModel {
 
     public static final class IndexDraft {
         private final String originalName;
+        private final String snapshotName;
+        private final boolean snapshotUnique;
+        private final String snapshotColumns;
+        private final String snapshotType;
         private String name;
         private boolean unique;
         private String columns;
+        private String type;
         private boolean dropped;
 
         public IndexDraft(String originalName, String name, boolean unique, String columns) {
+            this(originalName, name, unique, columns, "BTREE");
+        }
+
+        public IndexDraft(String originalName, String name, boolean unique, String columns, String type) {
             this.originalName = originalName;
             this.name = name == null ? "" : name;
             this.unique = unique;
             this.columns = columns == null ? "" : columns;
+            this.type = type == null || type.isBlank() ? "BTREE" : type.strip().toUpperCase(Locale.ROOT);
+            this.snapshotName = this.name;
+            this.snapshotUnique = unique;
+            this.snapshotColumns = this.columns;
+            this.snapshotType = this.type;
         }
 
         public static IndexDraft added(String name) {
@@ -118,6 +204,16 @@ public final class TableDesignerModel {
 
         public boolean added() {
             return originalName == null || originalName.isBlank();
+        }
+
+        public boolean modified() {
+            if (added() || dropped) {
+                return false;
+            }
+            return unique != snapshotUnique
+                    || !normalizeCsv(columns).equalsIgnoreCase(normalizeCsv(snapshotColumns))
+                    || !name.equalsIgnoreCase(snapshotName)
+                    || !type.equalsIgnoreCase(snapshotType);
         }
 
         public String originalName() {
@@ -148,6 +244,14 @@ public final class TableDesignerModel {
             this.columns = columns == null ? "" : columns.strip();
         }
 
+        public String type() {
+            return type;
+        }
+
+        public void setType(String type) {
+            this.type = type == null || type.isBlank() ? "BTREE" : type.strip().toUpperCase(Locale.ROOT);
+        }
+
         public boolean dropped() {
             return dropped;
         }
@@ -159,18 +263,45 @@ public final class TableDesignerModel {
 
     public static final class FkDraft {
         private final String originalName;
+        private final String snapshotName;
+        private final String snapshotColumns;
+        private final String snapshotRefTable;
+        private final String snapshotRefColumns;
+        private final String snapshotOnUpdate;
+        private final String snapshotOnDelete;
         private String name;
         private String columns;
         private String refTable;
         private String refColumns;
+        private String onUpdate;
+        private String onDelete;
         private boolean dropped;
 
         public FkDraft(String originalName, String name, String columns, String refTable, String refColumns) {
+            this(originalName, name, columns, refTable, refColumns, "NO ACTION", "NO ACTION");
+        }
+
+        public FkDraft(
+                String originalName,
+                String name,
+                String columns,
+                String refTable,
+                String refColumns,
+                String onUpdate,
+                String onDelete) {
             this.originalName = originalName;
             this.name = name == null ? "" : name;
             this.columns = columns == null ? "" : columns;
             this.refTable = refTable == null ? "" : refTable;
             this.refColumns = refColumns == null ? "" : refColumns;
+            this.onUpdate = normalizeAction(onUpdate);
+            this.onDelete = normalizeAction(onDelete);
+            this.snapshotName = this.name;
+            this.snapshotColumns = this.columns;
+            this.snapshotRefTable = this.refTable;
+            this.snapshotRefColumns = this.refColumns;
+            this.snapshotOnUpdate = this.onUpdate;
+            this.snapshotOnDelete = this.onDelete;
         }
 
         public static FkDraft added(String name) {
@@ -179,6 +310,18 @@ public final class TableDesignerModel {
 
         public boolean added() {
             return originalName == null || originalName.isBlank();
+        }
+
+        public boolean modified() {
+            if (added() || dropped) {
+                return false;
+            }
+            return !normalizeCsv(columns).equalsIgnoreCase(normalizeCsv(snapshotColumns))
+                    || !refTable.equalsIgnoreCase(snapshotRefTable)
+                    || !normalizeCsv(refColumns).equalsIgnoreCase(normalizeCsv(snapshotRefColumns))
+                    || !name.equalsIgnoreCase(snapshotName)
+                    || !onUpdate.equalsIgnoreCase(snapshotOnUpdate)
+                    || !onDelete.equalsIgnoreCase(snapshotOnDelete);
         }
 
         public String originalName() {
@@ -215,6 +358,22 @@ public final class TableDesignerModel {
 
         public void setRefColumns(String refColumns) {
             this.refColumns = refColumns == null ? "" : refColumns.strip();
+        }
+
+        public String onUpdate() {
+            return onUpdate;
+        }
+
+        public void setOnUpdate(String onUpdate) {
+            this.onUpdate = normalizeAction(onUpdate);
+        }
+
+        public String onDelete() {
+            return onDelete;
+        }
+
+        public void setOnDelete(String onDelete) {
+            this.onDelete = normalizeAction(onDelete);
         }
 
         public boolean dropped() {
@@ -261,7 +420,10 @@ public final class TableDesignerModel {
                     column.name(),
                     Objects.requireNonNullElse(column.metadata(SchemaNode.META_DATA_TYPE), "INT"),
                     column.metadataFlag(SchemaNode.META_NULLABLE),
-                    column.metadataFlag(SchemaNode.META_PRIMARY_KEY)));
+                    column.metadataFlag(SchemaNode.META_PRIMARY_KEY),
+                    column.metadataFlag(SchemaNode.META_AUTO_INCREMENT),
+                    Objects.requireNonNullElse(column.metadata(SchemaNode.META_DEFAULT), ""),
+                    Objects.requireNonNullElse(column.metadata(SchemaNode.META_COMMENT), "")));
         }
         List<IndexDraft> idxs = new ArrayList<>();
         for (IndexInfo index : SchemaMetadataCodec.decodeIndexes(table.metadata(SchemaNode.META_INDEXES))) {
@@ -272,7 +434,8 @@ public final class TableDesignerModel {
                     index.name(),
                     index.name(),
                     index.unique(),
-                    String.join(", ", index.columns())));
+                    String.join(", ", index.columns()),
+                    index.type()));
         }
         List<FkDraft> fks = new ArrayList<>();
         for (List<ForeignKey> group : groupForeignKeys(SchemaMetadataCodec.decodeForeignKeys(
@@ -280,7 +443,14 @@ public final class TableDesignerModel {
             ForeignKey first = group.getFirst();
             String colsJoined = group.stream().map(ForeignKey::fkColumn).collect(Collectors.joining(", "));
             String refsJoined = group.stream().map(ForeignKey::pkColumn).collect(Collectors.joining(", "));
-            fks.add(new FkDraft(first.name(), first.name(), colsJoined, first.pkTable(), refsJoined));
+            fks.add(new FkDraft(
+                    first.name(),
+                    first.name(),
+                    colsJoined,
+                    first.pkTable(),
+                    refsJoined,
+                    first.onUpdate(),
+                    first.onDelete()));
         }
         return new TableDesignerModel(catalog, table.name(), cols, idxs, fks);
     }
@@ -470,9 +640,10 @@ public final class TableDesignerModel {
             IndexDraft snapshot = current.added() ? null : snapshotIdx.get(key(current.originalName()));
             if (snapshot == null || indexChanged(snapshot, current)) {
                 String unique = current.unique() ? "UNIQUE " : "";
+                String using = usingClause(current.type());
                 out.add("ALTER TABLE " + table + " ADD " + unique + "INDEX "
                         + TransferSql.quote(current.name(), driver)
-                        + " (" + quoteList(current.columns(), driver) + ")");
+                        + " (" + quoteList(current.columns(), driver) + ")" + using);
             }
         }
 
@@ -486,7 +657,8 @@ public final class TableDesignerModel {
                 out.add("ALTER TABLE " + table + " ADD CONSTRAINT " + TransferSql.quote(cname, driver)
                         + " FOREIGN KEY (" + quoteList(current.columns(), driver) + ") REFERENCES "
                         + TransferSql.quote(current.refTable(), driver)
-                        + " (" + quoteList(current.refColumns().isBlank() ? "id" : current.refColumns(), driver) + ")");
+                        + " (" + quoteList(current.refColumns().isBlank() ? "id" : current.refColumns(), driver) + ")"
+                        + referentialClause(current));
             }
         }
         return out;
@@ -501,8 +673,84 @@ public final class TableDesignerModel {
 
     private static String columnDef(ColumnDraft column, Driver driver) {
         String type = column.dataType().isBlank() ? "INT" : column.dataType();
-        String nullSql = column.nullable() && !column.primaryKey() ? "NULL" : "NOT NULL";
-        return TransferSql.quote(column.name(), driver) + " " + type + " " + nullSql;
+        boolean notNull = column.autoIncrement() || column.primaryKey() || !column.nullable();
+        StringBuilder sql = new StringBuilder();
+        sql.append(TransferSql.quote(column.name(), driver)).append(' ').append(type);
+        sql.append(notNull ? " NOT NULL" : " NULL");
+        String defaultSql = defaultClause(column.defaultValue());
+        if (!defaultSql.isEmpty()) {
+            sql.append(' ').append(defaultSql);
+        }
+        if (column.autoIncrement()) {
+            sql.append(" AUTO_INCREMENT");
+        }
+        if (!column.comment().isBlank()) {
+            sql.append(" COMMENT '").append(column.comment().replace("'", "''")).append('\'');
+        }
+        return sql.toString();
+    }
+
+    private static String defaultClause(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "";
+        }
+        String value = raw.strip();
+        if (isBareDefault(value)) {
+            return "DEFAULT " + value;
+        }
+        return "DEFAULT '" + value.replace("'", "''") + "'";
+    }
+
+    private static boolean isBareDefault(String value) {
+        String upper = value.toUpperCase(Locale.ROOT);
+        if ("NULL".equals(upper) || "TRUE".equals(upper) || "FALSE".equals(upper)
+                || "CURRENT_TIMESTAMP".equals(upper) || "CURRENT_DATE".equals(upper)
+                || "CURRENT_TIME".equals(upper) || "NOW()".equals(upper)) {
+            return true;
+        }
+        if (upper.startsWith("CURRENT_TIMESTAMP(") || upper.startsWith("NOW(")) {
+            return true;
+        }
+        if ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith("(") && value.endsWith(")"))) {
+            return true;
+        }
+        return value.matches("-?\\d+(\\.\\d+)?");
+    }
+
+    private static String usingClause(String type) {
+        if (type == null || type.isBlank() || "BTREE".equalsIgnoreCase(type)) {
+            return "";
+        }
+        return " USING " + type.strip().toUpperCase(Locale.ROOT);
+    }
+
+    private static String referentialClause(FkDraft fk) {
+        StringBuilder sql = new StringBuilder();
+        if (isEmittedAction(fk.onDelete())) {
+            sql.append(" ON DELETE ").append(fk.onDelete());
+        }
+        if (isEmittedAction(fk.onUpdate())) {
+            sql.append(" ON UPDATE ").append(fk.onUpdate());
+        }
+        return sql.toString();
+    }
+
+    private static boolean isEmittedAction(String action) {
+        if (action == null || action.isBlank()) {
+            return false;
+        }
+        return !"NO ACTION".equalsIgnoreCase(action);
+    }
+
+    static String normalizeAction(String action) {
+        if (action == null || action.isBlank()) {
+            return "NO ACTION";
+        }
+        String normalized = action.strip().replace('_', ' ').toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case "CASCADE", "RESTRICT", "SET NULL", "SET DEFAULT", "NO ACTION" -> normalized;
+            default -> "NO ACTION";
+        };
     }
 
     private static String quoteList(String csv, Driver driver) {
@@ -523,7 +771,10 @@ public final class TableDesignerModel {
         }
         return !original.originalName().equalsIgnoreCase(current.name())
                 || !original.dataType().equalsIgnoreCase(current.dataType())
-                || original.nullable() != current.nullable();
+                || original.nullable() != current.nullable()
+                || original.autoIncrement() != current.autoIncrement()
+                || !original.defaultValue().equals(current.defaultValue())
+                || !original.comment().equals(current.comment());
     }
 
     private static boolean indexChanged(IndexDraft original, IndexDraft current) {
@@ -532,7 +783,8 @@ public final class TableDesignerModel {
         }
         return original.unique() != current.unique()
                 || !normalizeCsv(original.columns()).equalsIgnoreCase(normalizeCsv(current.columns()))
-                || !original.originalName().equalsIgnoreCase(current.name());
+                || !original.originalName().equalsIgnoreCase(current.name())
+                || !original.type().equalsIgnoreCase(current.type());
     }
 
     private static boolean fkChanged(FkDraft original, FkDraft current) {
@@ -542,7 +794,9 @@ public final class TableDesignerModel {
         return !normalizeCsv(original.columns()).equalsIgnoreCase(normalizeCsv(current.columns()))
                 || !original.refTable().equalsIgnoreCase(current.refTable())
                 || !normalizeCsv(original.refColumns()).equalsIgnoreCase(normalizeCsv(current.refColumns()))
-                || !original.originalName().equalsIgnoreCase(current.name());
+                || !original.originalName().equalsIgnoreCase(current.name())
+                || !original.onUpdate().equalsIgnoreCase(current.onUpdate())
+                || !original.onDelete().equalsIgnoreCase(current.onDelete());
     }
 
     private static String normalizeCsv(String csv) {
@@ -614,7 +868,14 @@ public final class TableDesignerModel {
         }
         for (ColumnDraft column : source) {
             copy.add(new ColumnDraft(
-                    column.originalName(), column.name(), column.dataType(), column.nullable(), column.primaryKey()));
+                    column.originalName(),
+                    column.name(),
+                    column.dataType(),
+                    column.nullable(),
+                    column.primaryKey(),
+                    column.autoIncrement(),
+                    column.defaultValue(),
+                    column.comment()));
         }
         return copy;
     }
@@ -625,7 +886,8 @@ public final class TableDesignerModel {
             return copy;
         }
         for (IndexDraft index : source) {
-            copy.add(new IndexDraft(index.originalName(), index.name(), index.unique(), index.columns()));
+            copy.add(new IndexDraft(
+                    index.originalName(), index.name(), index.unique(), index.columns(), index.type()));
         }
         return copy;
     }
@@ -636,12 +898,19 @@ public final class TableDesignerModel {
             return copy;
         }
         for (FkDraft fk : source) {
-            copy.add(new FkDraft(fk.originalName(), fk.name(), fk.columns(), fk.refTable(), fk.refColumns()));
+            copy.add(new FkDraft(
+                    fk.originalName(),
+                    fk.name(),
+                    fk.columns(),
+                    fk.refTable(),
+                    fk.refColumns(),
+                    fk.onUpdate(),
+                    fk.onDelete()));
         }
         return copy;
     }
 
-    static List<SchemaNode> columnNodes(SchemaNode table) {
+    public static List<SchemaNode> columnNodes(SchemaNode table) {
         List<SchemaNode> columns = new ArrayList<>();
         for (SchemaNode child : table.children()) {
             if (child.type() == NodeType.COLUMN) {
