@@ -48,6 +48,7 @@ import java.util.function.Consumer;
 public final class SchemaTreeView extends VBox {
 
     private static final String META_PLACEHOLDER = "__placeholder";
+    private static final String META_SHOW_MORE = "__showMore";
 
     private final TreeView<SchemaNode> tree = new TreeView<>();
     private final TextField filterField = new TextField();
@@ -130,10 +131,19 @@ public final class SchemaTreeView extends VBox {
         tree.setCellFactory(view -> new SchemaTreeCell(schemaSelection));
         tree.setRoot(new TreeItem<>(SchemaNode.of("root", NodeType.DATABASE)));
         tree.setOnMouseClicked(event -> {
-            if (event.getButton() != MouseButton.PRIMARY || event.getClickCount() != 2) {
+            if (event.getButton() != MouseButton.PRIMARY) {
                 return;
             }
             TreeItem<SchemaNode> selected = tree.getSelectionModel().getSelectedItem();
+            if (selected != null && isShowMore(selected.getValue())
+                    && selected.getParent() instanceof LazyItem parent) {
+                event.consume();
+                parent.showMore();
+                return;
+            }
+            if (event.getClickCount() != 2) {
+                return;
+            }
             if (selected == null || selected.getValue() == null || isPlaceholder(selected.getValue())) {
                 return;
             }
@@ -606,8 +616,12 @@ public final class SchemaTreeView extends VBox {
         return null;
     }
 
-    private static TreeItem<SchemaNode> findTableUnder(TreeItem<SchemaNode> db, String table) {
+    private TreeItem<SchemaNode> findTableUnder(TreeItem<SchemaNode> db, String table) {
         TreeItem<SchemaNode> inTables = findFolder(db, SchemaNode.FOLDER_TABLES);
+        if (inTables instanceof LazyItem tablesLazy) {
+            tablesLazy.ensureNamedChildVisible(NodeType.TABLE, table);
+            tablesLazy.ensureNamedChildVisible(NodeType.VIEW, table);
+        }
         if (inTables != null) {
             TreeItem<SchemaNode> hit = findChild(inTables, NodeType.TABLE, table);
             if (hit != null) {
@@ -619,6 +633,9 @@ public final class SchemaTreeView extends VBox {
             }
         }
         TreeItem<SchemaNode> inViews = findFolder(db, SchemaNode.FOLDER_VIEWS);
+        if (inViews instanceof LazyItem viewsLazy) {
+            viewsLazy.ensureNamedChildVisible(NodeType.VIEW, table);
+        }
         if (inViews != null) {
             TreeItem<SchemaNode> hit = findChild(inViews, NodeType.VIEW, table);
             if (hit != null) {
@@ -860,11 +877,7 @@ public final class SchemaTreeView extends VBox {
         }
         // Folders/tables may already carry children from the parent JDBC round-trip.
         if (!node.children().isEmpty()) {
-            List<TreeItem<SchemaNode>> items = new ArrayList<>();
-            for (SchemaNode child : node.children()) {
-                items.add(schemaItem(child));
-            }
-            item.replaceChildren(items);
+            item.presentSources(node.children());
             applyFilter();
             return;
         }
@@ -872,14 +885,10 @@ public final class SchemaTreeView extends VBox {
         driver.getChildren(node).whenComplete((children, error) -> Platform.runLater(() -> {
             if (error != null) {
                 item.replaceChildren(List.of(placeholderItem(rootCauseMessage(error))));
-            } else if (children.isEmpty()) {
+            } else if (children == null || children.isEmpty()) {
                 item.replaceChildren(List.of(placeholderItem("empty")));
             } else {
-                List<TreeItem<SchemaNode>> items = new ArrayList<>();
-                for (SchemaNode child : children) {
-                    items.add(schemaItem(child));
-                }
-                item.replaceChildren(items);
+                item.presentSources(children);
             }
             applyFilter();
         }));
@@ -1038,7 +1047,19 @@ public final class SchemaTreeView extends VBox {
     }
 
     private static boolean isPlaceholder(SchemaNode node) {
-        return node.metadataFlag(META_PLACEHOLDER);
+        return node != null && node.metadataFlag(META_PLACEHOLDER);
+    }
+
+    private static boolean isShowMore(SchemaNode node) {
+        return isPlaceholder(node) && node.metadataFlag(META_SHOW_MORE);
+    }
+
+    private TreeItem<SchemaNode> showMoreItem(int remaining, int matched) {
+        SchemaNode node = SchemaNode.of(
+                SchemaTreePaging.showMoreLabel(remaining, matched),
+                NodeType.COLUMN,
+                Map.of(META_PLACEHOLDER, "true", META_SHOW_MORE, "true"));
+        return new TreeItem<>(node);
     }
 
     private static String rootCauseMessage(Throwable error) {
@@ -1150,6 +1171,8 @@ public final class SchemaTreeView extends VBox {
     private final class LazyItem extends FilterableItem {
         private boolean loaded;
         private final Consumer<LazyItem> loader;
+        private List<SchemaNode> sourceNodes = List.of();
+        private int pageLimit = SchemaTreePaging.PAGE_SIZE;
 
         LazyItem(SchemaNode value, Consumer<LazyItem> loader) {
             super(value);
@@ -1162,8 +1185,68 @@ public final class SchemaTreeView extends VBox {
             });
         }
 
+        void presentSources(List<SchemaNode> nodes) {
+            sourceNodes = nodes == null ? List.of() : List.copyOf(nodes);
+            pageLimit = SchemaTreePaging.PAGE_SIZE;
+            loaded = true;
+            materialize(sliceNeedle(filterQuery));
+        }
+
+        void showMore() {
+            pageLimit += SchemaTreePaging.PAGE_SIZE;
+            materialize(sliceNeedle(filterQuery));
+        }
+
+        boolean ensureNamedChildVisible(NodeType type, String name) {
+            int index = SchemaTreePaging.indexOf(sourceNodes, type, name);
+            if (index < 0) {
+                return false;
+            }
+            if (index >= pageLimit) {
+                pageLimit = index + 1;
+                materialize(sliceNeedle(filterQuery));
+            }
+            return true;
+        }
+
+        private String sliceNeedle(String needle) {
+            return SchemaTreePaging.groupsByFolder(sourceNodes) ? "" : needle;
+        }
+
+        /**
+         * Rebuild the visible page, but keep already-loaded child {@link LazyItem}s.
+         * Parent {@code applyFilter()} used to call {@code schemaItem()} again, which
+         * threw away the expanded tables folder and made expand look like a no-op.
+         */
+        private SchemaTreePaging.Page materialize(String needle) {
+            SchemaTreePaging.Page page = SchemaTreePaging.slice(sourceNodes, needle, pageLimit);
+            Map<String, TreeItem<SchemaNode>> existing = new LinkedHashMap<>();
+            for (TreeItem<SchemaNode> child : getChildren()) {
+                SchemaNode value = child.getValue();
+                if (value == null || isPlaceholder(value)) {
+                    continue;
+                }
+                existing.put(SchemaTreePaging.identityKey(value), child);
+            }
+            List<TreeItem<SchemaNode>> items = new ArrayList<>(page.visible().size() + 1);
+            for (SchemaNode child : page.visible()) {
+                TreeItem<SchemaNode> prior = existing.remove(SchemaTreePaging.identityKey(child));
+                items.add(prior != null ? prior : schemaItem(child));
+            }
+            if (page.hasMore()) {
+                items.add(showMoreItem(page.remaining(), page.matched()));
+            }
+            if (items.isEmpty()) {
+                items.add(placeholderItem("empty"));
+            }
+            replaceChildren(items);
+            return page;
+        }
+
         void forceReload(Consumer<LazyItem> reload) {
             loaded = false;
+            sourceNodes = List.of();
+            pageLimit = SchemaTreePaging.PAGE_SIZE;
             fullChildren.clear();
             getChildren().clear();
             SchemaNode value = getValue();
@@ -1185,6 +1268,47 @@ public final class SchemaTreeView extends VBox {
 
         @Override
         void applyFilter(String needle) {
+            if (!sourceNodes.isEmpty()) {
+                String text = needle == null ? "" : needle;
+                boolean selfMatch = matchesNeedle(getValue(), text);
+                boolean grouping = SchemaTreePaging.groupsByFolder(sourceNodes);
+                if (!text.isBlank() && !grouping) {
+                    pageLimit = SchemaTreePaging.PAGE_SIZE;
+                }
+                SchemaTreePaging.Page page = materialize(sliceNeedle(text));
+                if (grouping) {
+                    List<TreeItem<SchemaNode>> shown = new ArrayList<>();
+                    boolean anyChild = false;
+                    for (TreeItem<SchemaNode> child : List.copyOf(getChildren())) {
+                        if (!(child instanceof FilterableItem filterable) || isPlaceholder(child.getValue())) {
+                            continue;
+                        }
+                        filterable.applyFilter(text);
+                        if (text.isBlank() || filterable.isVisibleUnderFilter()) {
+                            shown.add(child);
+                            anyChild = anyChild || filterable.isVisibleUnderFilter();
+                        }
+                    }
+                    if (!text.isBlank()) {
+                        getChildren().setAll(shown.isEmpty() && selfMatch ? List.copyOf(fullChildren) : shown);
+                    }
+                    visibleUnderFilter = text.isBlank() || selfMatch || anyChild;
+                    if (!text.isBlank() && anyChild) {
+                        setExpanded(true);
+                    }
+                    return;
+                }
+                for (TreeItem<SchemaNode> child : getChildren()) {
+                    if (child instanceof FilterableItem filterable && !isPlaceholder(child.getValue())) {
+                        filterable.applyFilter(text);
+                    }
+                }
+                visibleUnderFilter = text.isBlank() || selfMatch || page.matched() > 0;
+                if (!text.isBlank() && page.matched() > 0) {
+                    setExpanded(true);
+                }
+                return;
+            }
             if (needle == null || needle.isBlank()) {
                 visibleUnderFilter = true;
                 if (!fullChildren.isEmpty()) {
@@ -1215,7 +1339,6 @@ public final class SchemaTreeView extends VBox {
             visibleUnderFilter = selfMatch || anyChild;
             if (loaded || !fullChildren.isEmpty()) {
                 getChildren().setAll(selfMatch && shown.isEmpty() ? fullChildren : shown);
-                // If only self matches and children loaded, keep all children visible when name matches.
                 if (selfMatch && shown.isEmpty() && !fullChildren.isEmpty()) {
                     getChildren().setAll(fullChildren);
                 }

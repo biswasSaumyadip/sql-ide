@@ -130,10 +130,10 @@ class SchemaIntrospectionServiceTest {
                 .findFirst()
                 .orElseThrow();
         assertTrue(tablesFolder.childCountBadge() >= 1);
+        assertTrue(tablesFolder.children().isEmpty(),
+                "tables stay unloaded until the folder is expanded");
 
-        SchemaNode customer = find(tablesFolder.children().isEmpty()
-                ? driver.getChildren(tablesFolder).get(TIMEOUT_SECONDS, TIMEOUT_UNIT)
-                : tablesFolder.children(), "CUSTOMER");
+        SchemaNode customer = find(driver.getChildren(tablesFolder).get(TIMEOUT_SECONDS, TIMEOUT_UNIT), "CUSTOMER");
 
         List<SchemaNode> tableFolders = driver.getChildren(customer).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
         assertEquals(3, tableFolders.size());

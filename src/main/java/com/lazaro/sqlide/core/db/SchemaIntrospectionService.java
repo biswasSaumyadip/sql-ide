@@ -83,9 +83,11 @@ public final class SchemaIntrospectionService {
      * Loads the level below {@code parent}, dispatching on its node type. This is
      * what drives lazy expansion of the schema tree.
      *
-     * <p>Catalogs expand into logical {@code tables}/{@code views} folders; tables
-     * expand into {@code columns}/{@code keys}/{@code indexes} folders. The full-schema
-     * cache path stays flat (table → columns) and does not use these folders.
+     * <p>Catalogs expand into {@code tables}/{@code views}/{@code procedures} folders
+     * that carry a count only; the rows load when the folder expands so a large
+     * database does not materialise thousands of tree items up front. Tables expand
+     * into {@code columns}/{@code keys}/{@code indexes} folders. The full-schema cache
+     * path stays flat (table → columns) and does not use these folders.
      */
     public CompletableFuture<List<SchemaNode>> fetchChildrenAsync(SchemaNode parent) {
         Objects.requireNonNull(parent, "parent must not be null");
@@ -105,16 +107,13 @@ public final class SchemaIntrospectionService {
         List<SchemaNode> procedures = readRoutines(connection, catalog, false);
         Map<String, String> catalogMeta = Map.of(SchemaNode.META_CATALOG, catalog);
         List<SchemaNode> folders = new ArrayList<>(3);
-        folders.add(SchemaNode.folder(SchemaNode.FOLDER_TABLES, SchemaNode.FOLDER_TABLES, tables.size(), catalogMeta)
-                .withChildren(tables));
+        folders.add(SchemaNode.folder(SchemaNode.FOLDER_TABLES, SchemaNode.FOLDER_TABLES, tables.size(), catalogMeta));
         if (!views.isEmpty()) {
-            folders.add(SchemaNode.folder(SchemaNode.FOLDER_VIEWS, SchemaNode.FOLDER_VIEWS, views.size(), catalogMeta)
-                    .withChildren(views));
+            folders.add(SchemaNode.folder(SchemaNode.FOLDER_VIEWS, SchemaNode.FOLDER_VIEWS, views.size(), catalogMeta));
         }
         if (!procedures.isEmpty()) {
             folders.add(SchemaNode.folder(
-                            SchemaNode.FOLDER_PROCEDURES, SchemaNode.FOLDER_PROCEDURES, procedures.size(), catalogMeta)
-                    .withChildren(procedures));
+                    SchemaNode.FOLDER_PROCEDURES, SchemaNode.FOLDER_PROCEDURES, procedures.size(), catalogMeta));
         }
         return List.copyOf(folders);
     }
