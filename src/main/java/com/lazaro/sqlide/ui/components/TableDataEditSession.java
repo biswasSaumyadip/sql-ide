@@ -6,13 +6,14 @@ import com.lazaro.sqlide.core.db.SchemaNode;
 import com.lazaro.sqlide.core.db.SchemaNode.NodeType;
 import com.lazaro.sqlide.core.db.ScriptResult;
 import com.lazaro.sqlide.core.export.UpdateSqlGenerator;
+import com.lazaro.sqlide.ui.dialogs.UnsavedChangesDialog;
+import com.lazaro.sqlide.ui.dialogs.UnsavedChangesDialog.Choice;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.concurrent.Task;
 import javafx.scene.control.Alert;
-import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.MenuItem;
@@ -338,19 +339,15 @@ public final class TableDataEditSession {
         if (!isDirty()) {
             return true;
         }
-        ButtonType submit = new ButtonType("Submit", ButtonBar.ButtonData.YES);
-        ButtonType discard = new ButtonType("Discard", ButtonBar.ButtonData.NO);
-        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-        alert.setTitle("Unsaved data edits");
-        alert.setHeaderText("\"" + schemaTable.name() + "\" has unsaved INSERT / UPDATE / DELETE changes.");
-        alert.setContentText("Submit them to the database before closing?");
-        alert.getButtonTypes().setAll(submit, discard, ButtonType.CANCEL);
-        initOwner(alert);
-        Optional<ButtonType> choice = alert.showAndWait();
-        if (choice.isEmpty() || choice.get() == ButtonType.CANCEL) {
+        Optional<Choice> choice = UnsavedChangesDialog.confirm(
+                table.getScene() == null ? null : table.getScene().getWindow(),
+                schemaTable.name(),
+                "Your INSERT / UPDATE / DELETE changes will be lost if you don't submit them.",
+                "Submit");
+        if (choice.isEmpty() || choice.get() == Choice.CANCEL) {
             return false;
         }
-        if (choice.get() == discard) {
+        if (choice.get() == Choice.DISCARD) {
             return true;
         }
         return submitChanges(true);

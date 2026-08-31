@@ -4,12 +4,12 @@ import com.lazaro.sqlide.core.db.ConnectionConfig;
 import com.lazaro.sqlide.core.db.SchemaCache;
 import com.lazaro.sqlide.core.db.SchemaNode;
 import com.lazaro.sqlide.ui.autocomplete.SqlCompletionHygiene.Style;
+import com.lazaro.sqlide.ui.dialogs.UnsavedChangesDialog;
+import com.lazaro.sqlide.ui.dialogs.UnsavedChangesDialog.Choice;
 import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.scene.control.Alert;
-import javafx.scene.control.ButtonBar;
-import javafx.scene.control.ButtonType;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
 import javafx.stage.FileChooser;
@@ -329,22 +329,13 @@ public final class EditorTabPane extends TabPane {
             if (!dirty.get()) {
                 return true;
             }
-            ButtonType save = new ButtonType("Save", ButtonBar.ButtonData.YES);
-            ButtonType discard = new ButtonType("Discard", ButtonBar.ButtonData.NO);
-
-            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-            alert.setTitle("Unsaved changes");
-            alert.setHeaderText("\"%s\" has unsaved changes.".formatted(title));
-            alert.setContentText("Save before closing?");
-            alert.getButtonTypes().setAll(save, discard, ButtonType.CANCEL);
-            alert.initOwner(getTabPane() == null ? null : getTabPane().getScene().getWindow());
-
-            Optional<ButtonType> choice = alert.showAndWait();
-            if (choice.isEmpty() || choice.get() == ButtonType.CANCEL) {
+            Window owner = getTabPane() == null ? null : getTabPane().getScene().getWindow();
+            Optional<Choice> choice = UnsavedChangesDialog.confirm(owner, title);
+            if (choice.isEmpty() || choice.get() == Choice.CANCEL) {
                 return false;
             }
-            if (choice.get() == save) {
-                save(getTabPane() == null ? null : getTabPane().getScene().getWindow());
+            if (choice.get() == Choice.SAVE) {
+                save(owner);
                 return !dirty.get();
             }
             return true;

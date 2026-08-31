@@ -497,6 +497,26 @@ public final class Icons {
         return group(trunk, branch, leaf, root, mid, tip);
     }
 
+    /**
+     * Muted warning triangle for unsaved-changes prompts (dialog-sized, ~32px).
+     */
+    public static Node unsavedWarning() {
+        Polygon triangle = new Polygon(
+                16.0, 2.0,
+                30.0, 27.5,
+                2.0, 27.5);
+        triangle.setStrokeWidth(1.6);
+        triangle.getStyleClass().addAll(BASE_CLASS, "icon-unsaved-warning");
+
+        Line stem = outlined(new Line(16.0, 11.5, 16.0, 18.5), "icon-unsaved-warning-mark");
+        stem.setStrokeWidth(1.8);
+
+        Circle bangDot = new Circle(16.0, 22.8, 1.45);
+        bangDot.setStrokeWidth(0);
+        bangDot.getStyleClass().addAll(BASE_CLASS, "icon-unsaved-warning-mark");
+        return group(triangle, stem, bangDot);
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private static <T extends Shape> T outlined(T shape, String variantClass) {
