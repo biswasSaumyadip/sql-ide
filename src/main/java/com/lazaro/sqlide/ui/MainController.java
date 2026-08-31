@@ -251,6 +251,9 @@ public final class MainController {
         outcome.setPageSizeSupplier(() -> outcome.toolbar().maxRows());
         outcome.setPageLoader(this::loadResultPage);
         outcome.setRefreshEnabled(false);
+        outcome.setMockApiOwnerSupplier(editors::activeQueryTab);
+        outcome.setMockApiLatencyMs(state::mockApiLatencyMs);
+        editors.setOnQueryTabClosed(outcome::stopMockApiOwnedBy);
         outcome.toolbar().setStopAutoRefreshOnError(state.stopAutoRefreshOnError());
         outcome.toolbar().setOnStopOnErrorChanged(state::saveStopAutoRefreshOnError);
         outcome.toolbar().setMaxRows(state.maxRows());
@@ -499,6 +502,7 @@ public final class MainController {
     }
 
     public void shutdown() {
+        outcome.dispose();
         editors.dispose();
         sessions.close();
         backgroundTasks.shutdownNow();

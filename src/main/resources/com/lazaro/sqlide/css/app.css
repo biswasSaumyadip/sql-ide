@@ -328,6 +328,10 @@
     -fx-stroke: #a4acb9;
 }
 
+.icon-broadcast {
+    -fx-stroke: #6a9fb5;
+}
+
 .icon-pin {
     -fx-stroke: #c8a25e;
 }
@@ -1316,6 +1320,80 @@
 
 .result-load-more:disabled {
     -fx-opacity: 0.55;
+}
+
+/* ---------------------------------------------------------------- mock API live bar */
+
+.mock-api-panel {
+    -fx-background-color: #1a2420;
+    -fx-border-color: #2e4a3c transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+}
+
+.mock-api-status {
+    -fx-background-color: #1a2420;
+}
+
+.mock-api-live-dot {
+    -fx-fill: #3ddc84;
+    -fx-stroke: transparent;
+}
+
+.mock-api-live-label {
+    -fx-text-fill: #3ddc84;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+}
+
+.mock-api-url {
+    -fx-text-fill: #c8d6ce;
+    -fx-font-size: 12px;
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+}
+
+.mock-api-copy {
+    -fx-text-fill: #d6d9de;
+    -fx-background-color: #2a3d34;
+    -fx-background-radius: 4px;
+    -fx-padding: 2px 8px;
+    -fx-font-size: 11px;
+    -fx-cursor: hand;
+}
+
+.mock-api-copy:hover {
+    -fx-background-color: #345044;
+}
+
+.mock-api-log {
+    -fx-background-color: #151c19;
+    -fx-control-inner-background: #151c19;
+    -fx-pref-height: 72px;
+    -fx-max-height: 88px;
+    -fx-border-color: #2e4a3c transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+    -fx-padding: 0;
+}
+
+.mock-api-log .list-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: #8fa396;
+    -fx-font-size: 11px;
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+    -fx-padding: 1px 10px;
+}
+
+.mock-api-log .list-cell:filled:selected {
+    -fx-background-color: #24332c;
+    -fx-text-fill: #c8d6ce;
+}
+
+.mock-api-log .placeholder .label {
+    -fx-text-fill: #5c6f66;
+    -fx-font-size: 11px;
+}
+
+.result-toolbar .toggle-button:selected .icon-broadcast {
+    -fx-stroke: #3ddc84;
 }
 
 /* ---------------------------------------------------------------- split panes */

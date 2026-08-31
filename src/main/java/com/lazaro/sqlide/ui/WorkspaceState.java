@@ -46,6 +46,7 @@ public final class WorkspaceState {
     private static final String EDITOR_FONT_SIZE = "editor.fontSize";
     private static final String EDITOR_WORD_WRAP = "editor.wordWrap";
     private static final String CONFIRM_DANGEROUS_DML = "execution.confirmDangerousDml";
+    private static final String MOCK_API_LATENCY_MS = "results.mockApiLatencyMs";
     private static final String DEFAULT_EDITOR_FONT = "JetBrains Mono";
 
     private static final double DEFAULT_WIDTH = 1280;
@@ -179,6 +180,14 @@ public final class WorkspaceState {
 
     public void saveConfirmDangerousDml(boolean confirm) {
         preferences.putBoolean(CONFIRM_DANGEROUS_DML, confirm);
+    }
+
+    public int mockApiLatencyMs() {
+        return Math.clamp(preferences.getInt(MOCK_API_LATENCY_MS, 500), 0, 5_000);
+    }
+
+    public void saveMockApiLatencyMs(int latencyMs) {
+        preferences.putInt(MOCK_API_LATENCY_MS, Math.clamp(latencyMs, 0, 5_000));
     }
 
     // ---------------------------------------------------------------- editor

@@ -22,6 +22,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
@@ -43,6 +44,7 @@ public final class EditorTabPane extends TabPane {
     private String editorFontFamily = "JetBrains Mono";
     private int editorFontSize = 13;
     private boolean editorWordWrap;
+    private Consumer<Tab> onQueryTabClosed = tab -> { };
 
     public EditorTabPane() {
         getStyleClass().add("editor-tabs");
@@ -66,6 +68,20 @@ public final class EditorTabPane extends TabPane {
     /** Tracks the editor of the selected tab, for binding a status bar to it. */
     public ReadOnlyObjectProperty<SqlEditorPane> activeEditorProperty() {
         return activeEditor.getReadOnlyProperty();
+    }
+
+    /** The selected SQL console tab, or {@code null} when an object-viewer tab is focused. */
+    public Tab activeQueryTab() {
+        Tab selected = getSelectionModel().getSelectedItem();
+        return selected instanceof QueryTab ? selected : null;
+    }
+
+    /**
+     * Invoked after a query console is closed so listeners can release tab-scoped
+     * resources (e.g. a mock API server).
+     */
+    public void setOnQueryTabClosed(Consumer<Tab> handler) {
+        this.onQueryTabClosed = handler == null ? tab -> { } : handler;
     }
 
     /** Opens a new empty tab and selects it. */
@@ -190,7 +206,8 @@ public final class EditorTabPane extends TabPane {
     }
 
     private QueryTab createQueryTab(String title) {
-        QueryTab tab = new QueryTab(title, schemaCache, activeCatalog, dialect, completionStyle);
+        QueryTab tab = new QueryTab(title, schemaCache, activeCatalog, dialect, completionStyle,
+                () -> onQueryTabClosed);
         tab.editor().applyEditorPreferences(editorFontFamily, editorFontSize, editorWordWrap);
         return tab;
     }
@@ -284,14 +301,18 @@ public final class EditorTabPane extends TabPane {
         private String title;
         private String baseline = "";
         private Path file;
+        private boolean disposed;
+        private final Supplier<Consumer<Tab>> closedHook;
 
         QueryTab(
                 String title,
                 Supplier<SchemaCache> schemaCache,
                 Supplier<String> activeCatalog,
                 Supplier<ConnectionConfig.Driver> dialect,
-                Supplier<Style> completionStyle) {
+                Supplier<Style> completionStyle,
+                Supplier<Consumer<Tab>> closedHook) {
             this.title = title;
+            this.closedHook = closedHook == null ? () -> tab -> { } : closedHook;
             editor.setSchemaCache(schemaCache);
             editor.setActiveCatalog(activeCatalog);
             editor.setDialect(dialect);
@@ -317,7 +338,12 @@ public final class EditorTabPane extends TabPane {
         }
 
         void dispose() {
+            if (disposed) {
+                return;
+            }
+            disposed = true;
             editor.dispose();
+            closedHook.get().accept(this);
         }
 
         private void refreshTitle() {

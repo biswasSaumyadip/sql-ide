@@ -6,9 +6,12 @@ import com.lazaro.sqlide.core.db.SchemaNode;
 import com.lazaro.sqlide.core.db.ScriptResult;
 import com.lazaro.sqlide.core.explain.ExplainPlanNode;
 import com.lazaro.sqlide.core.explain.ExplainPlanParser;
+import com.lazaro.sqlide.core.mockapi.MockApiServer;
 import com.lazaro.sqlide.core.sql.ResultPager;
 import com.lazaro.sqlide.ui.dialogs.CompareDataDialog;
 import javafx.application.Platform;
+import javafx.collections.ListChangeListener;
+import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
@@ -22,12 +25,14 @@ import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 
 /**
@@ -61,6 +66,9 @@ public final class QueryOutcomePane extends VBox {
     private boolean awaitingRunResult;
     private Supplier<ConnectionConfig.ConnectionType> connectionType =
             () -> ConnectionConfig.ConnectionType.MYSQL;
+    private Supplier<Object> mockApiOwner = () -> null;
+    private IntSupplier mockApiLatencyMs = () -> 500;
+    private Object currentMockApiOwner;
 
     public QueryOutcomePane() {
         getStyleClass().add("query-outcome-pane");
@@ -102,6 +110,7 @@ public final class QueryOutcomePane extends VBox {
                 session.revertChanges();
             }
         });
+        toolbar.setOnToggleServe(this::toggleMockApi);
         resultTabs.getSelectionModel().selectedItemProperty().addListener((observable, previous, current) -> {
             syncToolbarState();
             onActionsChanged.run();
@@ -188,6 +197,38 @@ public final class QueryOutcomePane extends VBox {
         this.editableResolver = resolver == null ? sql -> java.util.Optional.empty() : resolver;
     }
 
+    /**
+     * Owner token captured when a query starts, so closing that SQL editor tab
+     * stops the mock API that was serving its result.
+     */
+    public void setMockApiOwnerSupplier(Supplier<Object> owner) {
+        this.mockApiOwner = owner == null ? () -> null : owner;
+    }
+
+    public void setMockApiLatencyMs(IntSupplier latencyMs) {
+        this.mockApiLatencyMs = latencyMs == null ? () -> 500 : latencyMs;
+    }
+
+    /** Stops every mock server started from the given editor tab (or all if {@code owner} is null). */
+    public void stopMockApiOwnedBy(Object owner) {
+        for (Tab tab : resultTabs.getTabs()) {
+            if (tab.getContent() instanceof ResultPage page) {
+                page.stopMockApiIfOwnedBy(owner);
+            }
+        }
+        syncToolbarState();
+    }
+
+    /** Releases every mock HTTP server. Call on application shutdown. */
+    public void dispose() {
+        for (Tab tab : List.copyOf(resultTabs.getTabs())) {
+            if (tab.getContent() instanceof ResultPage page) {
+                page.dispose();
+            }
+        }
+        toolbar.setServeSelected(false);
+    }
+
     public void setPageLoader(Function<PageRequest, CompletableFuture<QueryResult>> loader) {
         this.pageLoader = loader == null
                 ? request -> CompletableFuture.completedFuture(QueryResult.ofError("Not connected", 0))
@@ -272,6 +313,7 @@ public final class QueryOutcomePane extends VBox {
                 node, qualifiedName, primaryKeyColumns, scriptRunner, background,
                 onExportToFile, onExportJsonArray, output);
         page.enablePaging("SELECT * FROM " + qualifiedName, pageSizeSupplier, this::loadNextPage, this::onPageUpdated);
+        page.setLifecycleOwner(mockApiOwner.get());
         Tab tab = wrap(node.name() + " data", page, false, false);
         tab.getStyleClass().add(DATA_TAB_STYLE);
         page.editSession().setOnDirtyChanged(() -> {
@@ -294,7 +336,6 @@ public final class QueryOutcomePane extends VBox {
                 event.consume();
             }
         });
-        tab.setOnClosed(event -> page.disposeEditSession());
         resultTabs.getTabs().add(tab);
         resultTabs.getSelectionModel().select(tab);
         page.editSession().reload();
@@ -317,6 +358,7 @@ public final class QueryOutcomePane extends VBox {
     public void showLoading(List<String> statements) {
         errorPanel.clear();
         awaitingRunResult = true;
+        currentMockApiOwner = mockApiOwner.get();
         boolean redis = redis();
         output.appendRunning(statements, redis);
         String running = redis ? "Running command\u2026" : "Running query\u2026";
@@ -358,6 +400,7 @@ public final class QueryOutcomePane extends VBox {
             }
             output.appendInfo("Nothing executed");
             awaitingRunResult = false;
+            currentMockApiOwner = null;
             showIdle();
             return;
         }
@@ -367,6 +410,8 @@ public final class QueryOutcomePane extends VBox {
         }
         boolean redis = redis();
         output.appendScript(script, sourceStatements, redis);
+        Object owner = currentMockApiOwner != null ? currentMockApiOwner : mockApiOwner.get();
+        currentMockApiOwner = null;
         awaitingRunResult = false;
 
         List<QueryResult> results = script.results();
@@ -387,6 +432,7 @@ public final class QueryOutcomePane extends VBox {
             }
             String title = results.size() == 1 ? tabTitle(result, redis) : "Result " + (i + 1);
             ResultPage page = ResultPage.from(result, preferPlan && results.size() == 1, onExportToFile, onExportJsonArray);
+            page.setLifecycleOwner(owner);
             String sql = i < statements.size() ? statements.get(i) : null;
             maybeEnableEditing(page, result, sql);
             if (!preferPlan) {
@@ -404,7 +450,6 @@ public final class QueryOutcomePane extends VBox {
                         event.consume();
                     }
                 });
-                tab.setOnClosed(event -> page.disposeEditSession());
             }
             fresh.add(tab);
         }
@@ -658,6 +703,7 @@ public final class QueryOutcomePane extends VBox {
         if (hasPage) {
             ResultPage page = (ResultPage) selected.getContent();
             toolbar.setViewToggleAvailable(page.hasPlan(), page.showingPlan());
+            toolbar.setServeSelected(page.isMockApiRunning());
             TableDataEditSession session = page.editSession();
             if (session != null) {
                 toolbar.setDataEditMode(true, session.editable(), session.isDirty());
@@ -668,6 +714,7 @@ public final class QueryOutcomePane extends VBox {
         } else {
             toolbar.setViewToggleAvailable(false, false);
             toolbar.setDataEditMode(false, false, false);
+            toolbar.setServeSelected(false);
         }
         toolbar.reapplyFindIfOpen();
     }
@@ -709,9 +756,33 @@ public final class QueryOutcomePane extends VBox {
         onActionsChanged.run();
     }
 
+    private void toggleMockApi(boolean serve) {
+        Tab selected = resultTabs.getSelectionModel().getSelectedItem();
+        if (!(selected != null && selected.getContent() instanceof ResultPage page)) {
+            toolbar.setServeSelected(false);
+            return;
+        }
+        if (!serve) {
+            page.stopMockApi();
+            syncToolbarState();
+            return;
+        }
+        try {
+            page.startMockApi(mockApiLatencyMs);
+            toolbar.setSummary("Serving " + page.mockApiUrl());
+        } catch (IOException | RuntimeException ex) {
+            page.stopMockApi();
+            toolbar.setServeSelected(false);
+            toolbar.setSummary("Could not start mock API: "
+                    + (ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage()));
+        }
+        syncToolbarState();
+    }
+
     private static Tab wrap(String title, ResultPage page, boolean error, boolean pinned) {
         Tab tab = new Tab(title, page);
         tab.setClosable(!pinned);
+        tab.setOnClosed(event -> page.dispose());
         if (error) {
             tab.getStyleClass().add("result-tab-error");
         }
@@ -748,6 +819,7 @@ public final class QueryOutcomePane extends VBox {
         private final StackPane content = new StackPane();
         private final DynamicResultTable table = new DynamicResultTable();
         private final ExplainPlanTreeView planTree = new ExplainPlanTreeView();
+        private final MockApiPanel mockApiPanel = new MockApiPanel();
         private QueryResult result;
         private ExplainPlanNode plan;
         private boolean showingPlan;
@@ -757,6 +829,11 @@ public final class QueryOutcomePane extends VBox {
         private Function<PageRequest, CompletableFuture<QueryResult>> pageLoader;
         private Consumer<ResultPage> onPageUpdated = page -> { };
         private boolean pagingBusy;
+        private Object lifecycleOwner;
+        private MockApiServer mockApiServer;
+        private volatile QueryResult apiSnapshot;
+        private ListChangeListener<ObservableList<String>> apiItemsListener;
+        private boolean disposed;
 
         private ResultPage() {
             truncationBanner.getStyleClass().add("result-truncation-text");
@@ -785,7 +862,7 @@ public final class QueryOutcomePane extends VBox {
             planTree.setManaged(false);
             VBox.setVgrow(content, Priority.ALWAYS);
 
-            getChildren().addAll(truncationBar, content);
+            getChildren().addAll(truncationBar, content, mockApiPanel);
         }
 
         static ResultPage message(String text) {
@@ -878,6 +955,64 @@ public final class QueryOutcomePane extends VBox {
             return table;
         }
 
+        void setLifecycleOwner(Object owner) {
+            this.lifecycleOwner = owner;
+        }
+
+        void startMockApi(IntSupplier latencyMs) throws IOException {
+            if (disposed) {
+                throw new IllegalStateException("Result tab is closed");
+            }
+            QueryResult live = table.exportableResult(false);
+            if (live == null || !live.isResultSet() || live.isError()) {
+                throw new IllegalStateException("No result set is loaded in the grid");
+            }
+            refreshApiSnapshot();
+            if (mockApiServer != null && mockApiServer.isRunning()) {
+                return;
+            }
+            MockApiServer server = new MockApiServer(
+                    () -> apiSnapshot,
+                    latencyMs,
+                    mockApiPanel::appendLog);
+            server.start();
+            mockApiServer = server;
+            attachApiSnapshotListener();
+            mockApiPanel.show(server.url());
+        }
+
+        void stopMockApi() {
+            detachApiSnapshotListener();
+            if (mockApiServer != null) {
+                mockApiServer.stop();
+                mockApiServer = null;
+            }
+            mockApiPanel.hide();
+        }
+
+        void stopMockApiIfOwnedBy(Object owner) {
+            if (owner == null || owner.equals(lifecycleOwner)) {
+                stopMockApi();
+            }
+        }
+
+        boolean isMockApiRunning() {
+            return mockApiServer != null && mockApiServer.isRunning();
+        }
+
+        String mockApiUrl() {
+            return mockApiServer == null ? "" : mockApiServer.url();
+        }
+
+        void dispose() {
+            if (disposed) {
+                return;
+            }
+            disposed = true;
+            stopMockApi();
+            disposeEditSession();
+        }
+
         QueryResult result() {
             return result != null ? result : table.currentResult();
         }
@@ -885,6 +1020,9 @@ public final class QueryOutcomePane extends VBox {
         void syncFromResult(QueryResult next) {
             this.result = next;
             applyTruncationBanner(next);
+            if (isMockApiRunning()) {
+                refreshApiSnapshot();
+            }
         }
 
         TableDataEditSession editSession() {
@@ -894,6 +1032,26 @@ public final class QueryOutcomePane extends VBox {
         void disposeEditSession() {
             table.detachEditSession();
             editSession = null;
+        }
+
+        private void refreshApiSnapshot() {
+            QueryResult live = table.exportableResult(false);
+            if (live != null && live.isResultSet() && !live.isError()) {
+                apiSnapshot = live;
+            }
+        }
+
+        private void attachApiSnapshotListener() {
+            detachApiSnapshotListener();
+            apiItemsListener = change -> refreshApiSnapshot();
+            table.getItems().addListener(apiItemsListener);
+        }
+
+        private void detachApiSnapshotListener() {
+            if (apiItemsListener != null) {
+                table.getItems().removeListener(apiItemsListener);
+                apiItemsListener = null;
+            }
         }
 
         boolean hasPlan() {
@@ -967,6 +1125,9 @@ public final class QueryOutcomePane extends VBox {
             }
             result = combined;
             applyTruncationBanner(combined);
+            if (isMockApiRunning()) {
+                refreshApiSnapshot();
+            }
             if (firstNew < table.getItems().size()) {
                 table.scrollTo(firstNew);
             }

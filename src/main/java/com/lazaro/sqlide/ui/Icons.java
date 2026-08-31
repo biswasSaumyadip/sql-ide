@@ -406,6 +406,14 @@ public final class Icons {
         return group(shaft, head, tray);
     }
 
+    /** Radio waves for serving the result grid as a localhost API. */
+    public static Node broadcast() {
+        Circle core = outlined(new Circle(4.2, 7.0, 1.3), "icon-broadcast");
+        Arc near = outlined(new Arc(4.2, 7.0, 3.6, 3.6, -55, 110), "icon-broadcast");
+        Arc far = outlined(new Arc(4.2, 7.0, 6.2, 6.2, -55, 110), "icon-broadcast");
+        return group(core, near, far);
+    }
+
     /** Pushpin for pinning a result tab. */
     public static Node pin() {
         Line shaft = outlined(new Line(7, 8.5, 7, 12.5), "icon-pin");

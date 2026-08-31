@@ -2,6 +2,8 @@ package com.lazaro.sqlide.core.json;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -33,5 +35,6 @@ class JsonPayloadsTest {
         assertEquals(null, JsonPayloads.coerceValue(null));
         Object nested = JsonPayloads.coerceValue("{\"x\":1}");
         assertTrue(nested.toString().contains("x"));
+        assertEquals("[1,2]", JsonPayloads.writeCompact(List.of(1, 2)).replace(" ", ""));
     }
 }

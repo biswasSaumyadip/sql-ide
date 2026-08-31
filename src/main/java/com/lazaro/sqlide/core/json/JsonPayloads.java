@@ -121,6 +121,16 @@ public final class JsonPayloads {
         }
     }
 
+    /** Compact JSON (no whitespace) for HTTP responses. */
+    public static String writeCompact(Object value) {
+        Objects.requireNonNull(value, "value");
+        try {
+            return MAPPER.writer().without(SerializationFeature.INDENT_OUTPUT).writeValueAsString(value);
+        } catch (JsonProcessingException ex) {
+            throw new IllegalArgumentException("Cannot serialize value as JSON", ex);
+        }
+    }
+
     private static boolean isIntegral(String text) {
         if (text.isEmpty()) {
             return false;

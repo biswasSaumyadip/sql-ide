@@ -88,6 +88,7 @@ public final class SettingsDialog extends Dialog<Boolean> {
     private final CheckBox autoTableAliases = new CheckBox("Auto-generate table aliases");
     private final CheckBox suggestJoinColumns = new CheckBox("Suggest columns on JOIN");
     private final Spinner<Integer> resultLimit = new Spinner<>();
+    private final Spinner<Integer> mockApiLatency = new Spinner<>();
     private final CheckBox confirmDangerousDml = new CheckBox(
             "Confirm before executing DELETE/UPDATE without WHERE");
 
@@ -311,14 +312,22 @@ public final class SettingsDialog extends Dialog<Boolean> {
         resultLimit.setPrefWidth(110);
         resultLimit.setTooltip(new Tooltip("Maximum rows fetched per query (100–10,000)."));
 
+        mockApiLatency.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(0, 5_000, 500, 50));
+        mockApiLatency.setEditable(true);
+        mockApiLatency.setPrefWidth(110);
+        mockApiLatency.setTooltip(new Tooltip(
+                "Artificial delay added to the Serve as API mock endpoint, for UI lag testing."));
+
         confirmDangerousDml.setTooltip(new Tooltip(
                 "Ask for confirmation before running DELETE or UPDATE statements that have no WHERE clause."));
         confirmDangerousDml.setWrapText(true);
 
         HBox limitRow = labeledRow("Default result limit", resultLimit);
+        HBox latencyRow = labeledRow("Mock API latency (ms)", mockApiLatency);
         return page("Execution",
                 "How statements are run and how large result sets are fetched.",
                 limitRow,
+                latencyRow,
                 confirmDangerousDml);
     }
 
@@ -374,12 +383,14 @@ public final class SettingsDialog extends Dialog<Boolean> {
 
         int rows = Math.clamp(state.maxRows(), 100, 10_000);
         resultLimit.getValueFactory().setValue(rows);
+        mockApiLatency.getValueFactory().setValue(state.mockApiLatencyMs());
         confirmDangerousDml.setSelected(state.confirmDangerousDml());
     }
 
     private void saveToState() {
         commitSpinner(fontSize);
         commitSpinner(resultLimit);
+        commitSpinner(mockApiLatency);
 
         state.saveAutoCommit(autoCommit.isSelected());
 
@@ -401,6 +412,8 @@ public final class SettingsDialog extends Dialog<Boolean> {
 
         Integer limit = resultLimit.getValue();
         state.saveMaxRows(limit == null ? 1_000 : limit);
+        Integer latency = mockApiLatency.getValue();
+        state.saveMockApiLatencyMs(latency == null ? 500 : latency);
         state.saveConfirmDangerousDml(confirmDangerousDml.isSelected());
     }
 

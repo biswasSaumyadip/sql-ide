@@ -94,6 +94,7 @@ public final class ResultToolbar extends HBox {
     }
 
     private final MenuButton exportButton = new MenuButton();
+    private final ToggleButton serveButton = new ToggleButton();
     private final Button copyButton = new Button();
     private final ToggleButton findButton = new ToggleButton();
     private final ToggleButton columnFilterButton = new ToggleButton();
@@ -128,6 +129,7 @@ public final class ResultToolbar extends HBox {
     private Runnable onRevertEdits = () -> { };
     private Consumer<QueryResult> onExportToFile = result -> { };
     private Consumer<QueryResult> onExportJsonArray = result -> { };
+    private Consumer<Boolean> onToggleServe = serving -> { };
     private IntConsumer onMaxRowsChanged = rows -> { };
     private Consumer<Boolean> onStopOnErrorChanged = stop -> { };
     private Supplier<DynamicResultTable> tableSupplier = () -> null;
@@ -150,6 +152,11 @@ public final class ResultToolbar extends HBox {
         exportButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-button", "export-menu-button");
         exportButton.setGraphicTextGap(0);
         exportButton.setTooltip(new Tooltip("Export results (Ctrl+Shift+C / Ctrl+Shift+X)"));
+
+        serveButton.setGraphic(Icons.broadcast());
+        serveButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-icon-button");
+        serveButton.setTooltip(new Tooltip("Serve as API"));
+        serveButton.setOnAction(event -> onToggleServe.accept(serveButton.isSelected()));
 
         copyButton.setGraphic(Icons.copy());
         copyButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-icon-button");
@@ -253,6 +260,7 @@ public final class ResultToolbar extends HBox {
 
         getChildren().addAll(
                 exportButton,
+                serveButton,
                 copyButton,
                 findButton,
                 columnFilterButton,
@@ -290,6 +298,18 @@ public final class ResultToolbar extends HBox {
 
     public void setOnExportJsonArray(Consumer<QueryResult> action) {
         this.onExportJsonArray = action == null ? result -> { } : action;
+    }
+
+    public void setOnToggleServe(Consumer<Boolean> action) {
+        this.onToggleServe = action == null ? serving -> { } : action;
+    }
+
+    /** Syncs the toggle with whether the active result tab is currently serving. */
+    public void setServeSelected(boolean serving) {
+        serveButton.setSelected(serving);
+        serveButton.setTooltip(new Tooltip(serving
+                ? "Stop mock API"
+                : "Serve as API"));
     }
 
     public void setOnRefresh(Runnable action) {
@@ -494,6 +514,7 @@ public final class ResultToolbar extends HBox {
                 table.itemsProperty(),
                 table.getItems());
         exportButton.disableProperty().bind(tableEmptyBinding);
+        serveButton.disableProperty().bind(tableEmptyBinding);
         copyButton.disableProperty().bind(tableEmptyBinding);
         findButton.disableProperty().bind(tableEmptyBinding);
         columnFilterButton.disableProperty().bind(tableEmptyBinding);
@@ -550,6 +571,7 @@ public final class ResultToolbar extends HBox {
 
     private void unbindDataActions() {
         exportButton.disableProperty().unbind();
+        serveButton.disableProperty().unbind();
         copyButton.disableProperty().unbind();
         findButton.disableProperty().unbind();
         columnFilterButton.disableProperty().unbind();
@@ -562,6 +584,7 @@ public final class ResultToolbar extends HBox {
 
     private void setDataActionsDisabled(boolean disabled) {
         exportButton.setDisable(disabled);
+        serveButton.setDisable(disabled);
         copyButton.setDisable(disabled);
         findButton.setDisable(disabled);
         columnFilterButton.setDisable(disabled);
