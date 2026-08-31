@@ -7,6 +7,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.BorderPane;
@@ -57,7 +58,8 @@ public final class JsonViewerDialog extends Dialog<Void> {
         top.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
         top.getStyleClass().add("json-viewer-toolbar");
 
-        VirtualizedScrollPane<CodeArea> scroll = new VirtualizedScrollPane<>(codeArea);
+        VirtualizedScrollPane<CodeArea> scroll = new VirtualizedScrollPane<>(
+                codeArea, ScrollPane.ScrollBarPolicy.AS_NEEDED, ScrollPane.ScrollBarPolicy.AS_NEEDED);
         scroll.getStyleClass().add("json-viewer-scroll");
 
         BorderPane root = new BorderPane();

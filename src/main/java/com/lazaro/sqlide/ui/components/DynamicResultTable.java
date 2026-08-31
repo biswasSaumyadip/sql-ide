@@ -2,6 +2,8 @@ package com.lazaro.sqlide.ui.components;
 
 import com.lazaro.sqlide.core.db.JdbcSqlDriver;
 import com.lazaro.sqlide.core.db.QueryResult;
+import com.lazaro.sqlide.core.db.ResultColumn;
+import com.lazaro.sqlide.core.db.ResultGridFilter;
 import com.lazaro.sqlide.core.db.ResultSetMapper;
 import com.lazaro.sqlide.core.export.ResultExporter;
 import com.lazaro.sqlide.core.json.JsonPayloads;
@@ -12,6 +14,7 @@ import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.collections.FXCollections;
 import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
+import javafx.collections.transformation.FilteredList;
 import javafx.css.PseudoClass;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
@@ -57,8 +60,12 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
 
     private final Label placeholder = new Label(PLACEHOLDER_IDLE);
     private final ObservableList<ObservableList<String>> allRows = FXCollections.observableArrayList();
+    private final FilteredList<ObservableList<String>> filteredRows = new FilteredList<>(allRows);
+    private final List<String> columnFilters = new ArrayList<>();
+    private final List<ResultColumnHeader> columnHeaders = new ArrayList<>();
     private QueryResult currentResult;
     private String rowFilter = "";
+    private boolean columnFiltersVisible;
     private Consumer<QueryResult> onExportToFile = result -> { };
     private Consumer<QueryResult> onExportJsonArray = result -> { };
     private TableDataEditSession editSession;
@@ -78,6 +85,7 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
         getSelectionModel().setCellSelectionEnabled(true);
         getSelectionModel().setSelectionMode(javafx.scene.control.SelectionMode.MULTIPLE);
         setContextMenu(buildExportMenu());
+        setItems(filteredRows);
     }
 
     /** Live backing store used by both read-only results and data-edit mode. */
@@ -93,7 +101,10 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
         Objects.requireNonNull(result, "result must not be null");
         currentResult = result;
         rowFilter = "";
+        columnHeaders.clear();
+        resetColumnFilters(result.columnCount());
         placeholder.setText(PLACEHOLDER_IDLE);
+        refreshPredicate();
     }
 
     public boolean isDataEditMode() {
@@ -131,6 +142,11 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
 
     public boolean hasExportableResult() {
         return currentResult != null && !currentResult.isError() && currentResult.isResultSet();
+    }
+
+    /** {@code true} when the backing store (not the filtered view) has rows. */
+    public boolean hasLoadedRows() {
+        return hasExportableResult() && !allRows.isEmpty();
     }
 
     public boolean hasRowSelection() {
@@ -225,6 +241,7 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
         for (List<String> row : result.rows()) {
             allRows.add(FXCollections.observableArrayList(row));
         }
+        resetColumnFilters(result.columnCount());
         applyRowFilter(rowFilter);
 
         if (allRows.isEmpty()) {
@@ -258,29 +275,97 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
     }
 
     /**
-     * Case-insensitive substring filter across all cells. Blank clears the filter.
+     * Case-insensitive substring filter across all cells. Blank clears the global
+     * find needle; per-column quick filters stay in effect.
      */
     public void applyRowFilter(String query) {
         rowFilter = query == null ? "" : query.strip();
-        if (rowFilter.isEmpty()) {
-            setItems(allRows);
-            return;
-        }
-        String needle = rowFilter.toLowerCase();
-        ObservableList<ObservableList<String>> filtered = FXCollections.observableArrayList();
-        for (ObservableList<String> row : allRows) {
-            if (rowMatches(row, needle)) {
-                filtered.add(row);
-            }
-        }
-        setItems(filtered);
-        if (filtered.isEmpty() && !allRows.isEmpty()) {
-            placeholder.setText("No rows match \u201c" + rowFilter + "\u201d");
-        }
+        refreshPredicate();
     }
 
     public String rowFilter() {
         return rowFilter;
+    }
+
+    public void setColumnFiltersVisible(boolean visible) {
+        columnFiltersVisible = visible;
+        getStyleClass().remove("result-table-filters");
+        if (visible) {
+            getStyleClass().add("result-table-filters");
+        }
+        for (ResultColumnHeader header : columnHeaders) {
+            header.setFilterVisible(visible);
+        }
+        if (!visible) {
+            boolean changed = false;
+            for (int i = 0; i < columnFilters.size(); i++) {
+                if (!columnFilters.get(i).isEmpty()) {
+                    columnFilters.set(i, "");
+                    changed = true;
+                }
+            }
+            for (ResultColumnHeader header : columnHeaders) {
+                header.clearFilterText();
+            }
+            if (changed) {
+                refreshPredicate();
+            }
+        }
+    }
+
+    public boolean columnFiltersVisible() {
+        return columnFiltersVisible;
+    }
+
+    public void setColumnFilter(int index, String query) {
+        if (index < 0) {
+            return;
+        }
+        while (columnFilters.size() <= index) {
+            columnFilters.add("");
+        }
+        String next = query == null ? "" : query;
+        if (next.equals(columnFilters.get(index))) {
+            return;
+        }
+        columnFilters.set(index, next);
+        refreshPredicate();
+    }
+
+    void registerColumnHeader(ResultColumnHeader header) {
+        if (header != null) {
+            columnHeaders.add(header);
+        }
+    }
+
+    void resetColumnFilters(int columnCount) {
+        columnFilters.clear();
+        int count = Math.max(0, columnCount);
+        for (int i = 0; i < count; i++) {
+            columnFilters.add("");
+        }
+        refreshPredicate();
+    }
+
+    private void refreshPredicate() {
+        String global = rowFilter;
+        List<String> needles = List.copyOf(columnFilters);
+        filteredRows.setPredicate(row -> ResultGridFilter.matches(row, global, needles));
+        if (filteredRows.isEmpty() && !allRows.isEmpty() && hasActiveFilter()) {
+            placeholder.setText("No rows match the current filter");
+        }
+    }
+
+    private boolean hasActiveFilter() {
+        if (!rowFilter.isBlank()) {
+            return true;
+        }
+        for (String query : columnFilters) {
+            if (query != null && !query.isBlank()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Re-estimates preferred widths from headers and sampled cell values. */
@@ -342,21 +427,40 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
     private void clearGridOnly() {
         currentResult = null;
         rowFilter = "";
+        columnHeaders.clear();
+        columnFilters.clear();
         allRows.clear();
-        setItems(FXCollections.observableArrayList());
+        refreshPredicate();
         getColumns().clear();
         setEditable(false);
         setRowFactory(null);
         getStyleClass().remove("table-data-grid");
     }
 
-    private static boolean rowMatches(ObservableList<String> row, String needleLower) {
-        for (String cell : row) {
-            if (cell != null && cell.toLowerCase().contains(needleLower)) {
-                return true;
-            }
+    private void buildColumns(QueryResult result) {
+        getColumns().add(rowNumberColumn(result.rowCount()));
+        columnHeaders.clear();
+
+        List<ResultColumn> metas = result.columns();
+        List<String> names = result.columnNames();
+        for (int i = 0; i < names.size(); i++) {
+            int columnIndex = i;
+            ResultColumn meta = i < metas.size() ? metas.get(i) : ResultColumn.named(names.get(i));
+
+            TableColumn<ObservableList<String>, String> column = new TableColumn<>();
+            ResultColumnHeader header = ResultColumnHeader.attach(
+                    column, meta, columnFiltersVisible, text -> setColumnFilter(columnIndex, text));
+            columnHeaders.add(header);
+            column.setCellValueFactory(features -> {
+                ObservableList<String> row = features.getValue();
+                String value = columnIndex < row.size() ? row.get(columnIndex) : null;
+                return new ReadOnlyStringWrapper(value);
+            });
+            column.setCellFactory(ignored -> new ValueCell());
+            TableColumnAutoSizer.apply(column, names.get(i), result.rows(), columnIndex);
+            column.setSortable(true);
+            getColumns().add(column);
         }
-        return false;
     }
 
     /** Shows a message in place of results, e.g. while a query is running. */
@@ -421,27 +525,6 @@ public final class DynamicResultTable extends TableView<ObservableList<String>> 
             }
         }
         return indices;
-    }
-
-    private void buildColumns(QueryResult result) {
-        getColumns().add(rowNumberColumn(result.rowCount()));
-
-        List<String> names = result.columnNames();
-        for (int i = 0; i < names.size(); i++) {
-            int columnIndex = i;
-            String name = names.get(i);
-
-            TableColumn<ObservableList<String>, String> column = new TableColumn<>(name);
-            column.setCellValueFactory(features -> {
-                ObservableList<String> row = features.getValue();
-                String value = columnIndex < row.size() ? row.get(columnIndex) : null;
-                return new ReadOnlyStringWrapper(value);
-            });
-            column.setCellFactory(ignored -> new ValueCell());
-            TableColumnAutoSizer.apply(column, name, result.rows(), columnIndex);
-            column.setSortable(true);
-            getColumns().add(column);
-        }
     }
 
     private TableColumn<ObservableList<String>, Void> rowNumberColumn() {

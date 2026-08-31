@@ -20,6 +20,7 @@ import java.util.Objects;
  * @param errorMessage    failure description, or {@code null} on success
  * @param truncated       {@code true} when more rows existed than were materialised
  * @param statusText      Redis status reply ({@code OK}, {@code (integer) 1}), or {@code null}
+ * @param columns         JDBC type / key metadata aligned with {@code columnNames}
  */
 public record QueryResult(
         List<String> columnNames,
@@ -29,11 +30,17 @@ public record QueryResult(
         boolean isResultSet,
         String errorMessage,
         boolean truncated,
-        String statusText
+        String statusText,
+        List<ResultColumn> columns
 ) {
 
     public QueryResult {
-        columnNames = List.copyOf(Objects.requireNonNullElse(columnNames, List.of()));
+        columns = columns == null || columns.isEmpty()
+                ? ResultColumn.fromNames(columnNames)
+                : List.copyOf(columns);
+        columnNames = columns.isEmpty()
+                ? List.copyOf(Objects.requireNonNullElse(columnNames, List.of()))
+                : columns.stream().map(ResultColumn::name).toList();
         rows = deepCopy(rows);
     }
 
@@ -43,12 +50,23 @@ public record QueryResult(
 
     public static QueryResult ofRows(
             List<String> columnNames, List<List<String>> rows, long executionTimeMs, boolean truncated) {
-        return new QueryResult(columnNames, rows, rows.size(), executionTimeMs, true, null, truncated, null);
+        return ofRows(columnNames, rows, executionTimeMs, truncated, ResultColumn.fromNames(columnNames));
+    }
+
+    public static QueryResult ofRows(
+            List<String> columnNames,
+            List<List<String>> rows,
+            long executionTimeMs,
+            boolean truncated,
+            List<ResultColumn> columns) {
+        int count = rows == null ? 0 : rows.size();
+        return new QueryResult(columnNames, rows, count, executionTimeMs, true, null, truncated, null, columns);
     }
 
     /**
      * Concatenates {@code next} onto this result. Timing is summed; truncation
-     * follows the later page. Column labels must match.
+     * follows the later page. Column labels must match. Metadata is kept from
+     * this (left-hand) page.
      */
     public QueryResult appended(QueryResult next) {
         if (next == null || next.isError() || !next.isResultSet() || isError() || !isResultSet()) {
@@ -60,11 +78,12 @@ public record QueryResult(
         List<List<String>> combined = new ArrayList<>(rows.size() + next.rows().size());
         combined.addAll(rows);
         combined.addAll(next.rows());
-        return ofRows(columnNames, combined, executionTimeMs + next.executionTimeMs(), next.truncated());
+        return ofRows(columnNames, combined, executionTimeMs + next.executionTimeMs(), next.truncated(), columns);
     }
 
     public static QueryResult ofUpdate(int updateCount, long executionTimeMs) {
-        return new QueryResult(List.of(), List.of(), Math.max(updateCount, 0), executionTimeMs, false, null, false, null);
+        return new QueryResult(
+                List.of(), List.of(), Math.max(updateCount, 0), executionTimeMs, false, null, false, null, List.of());
     }
 
     /**
@@ -73,12 +92,12 @@ public record QueryResult(
      */
     public static QueryResult ofStatus(String reply, long executionTimeMs) {
         String text = reply == null || reply.isBlank() ? "OK" : reply;
-        return new QueryResult(List.of(), List.of(), 0, executionTimeMs, false, null, false, text);
+        return new QueryResult(List.of(), List.of(), 0, executionTimeMs, false, null, false, text, List.of());
     }
 
     public static QueryResult ofError(String errorMessage, long executionTimeMs) {
         return new QueryResult(List.of(), List.of(), 0, executionTimeMs, false,
-                Objects.requireNonNullElse(errorMessage, "Unknown error"), false, null);
+                Objects.requireNonNullElse(errorMessage, "Unknown error"), false, null, List.of());
     }
 
     public boolean isError() {

@@ -705,16 +705,23 @@ public final class MainController {
                 if (generation != schemaIndexGeneration.get() || !session.isConnected()) {
                     return;
                 }
+                if (outlineError != null) {
+                    clearSchemaIndexing(generation);
+                    statusBar.setIndexingError("Indexing failed: " + rootCauseMessage(outlineError));
+                    return;
+                }
                 if (outline != null) {
                     cache.replace(outline);
                     editors.refreshAutocompleteEngines();
                 }
             });
-            if (active.schemaOutlineIsAuthoritative()) {
-                javafx.application.Platform.runLater(() -> clearSchemaIndexing(generation));
+            if (outlineError != null || active.schemaOutlineIsAuthoritative()) {
+                if (outlineError == null) {
+                    javafx.application.Platform.runLater(() -> clearSchemaIndexing(generation));
+                }
                 return;
             }
-            active.getFullSchema().whenComplete((nodes, error) -> javafx.application.Platform.runLater(() -> {
+            active.enrichSchema(outline).whenComplete((nodes, error) -> javafx.application.Platform.runLater(() -> {
                 if (generation != schemaIndexGeneration.get() || !session.isConnected()) {
                     return;
                 }
@@ -726,6 +733,9 @@ public final class MainController {
                     showSchemaIndexing("Indexing other databases\u2026");
                 } else {
                     clearSchemaIndexing(generation);
+                    if (error != null) {
+                        statusBar.setIndexingError("Indexing failed: " + rootCauseMessage(error));
+                    }
                 }
                 active.getSecondarySchema().whenComplete((secondary, secondaryError) ->
                         javafx.application.Platform.runLater(() -> {
@@ -737,6 +747,10 @@ public final class MainController {
                                 editors.refreshAutocompleteEngines();
                             }
                             clearSchemaIndexing(generation);
+                            if (secondaryError != null) {
+                                statusBar.setIndexingError(
+                                        "Indexing other databases failed: " + rootCauseMessage(secondaryError));
+                            }
                         }));
             }));
         });

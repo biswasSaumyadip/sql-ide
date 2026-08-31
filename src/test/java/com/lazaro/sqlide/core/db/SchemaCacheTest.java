@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -142,5 +143,15 @@ class SchemaCacheTest {
         List<SchemaCache.JoinSuggestion> fromOrders = cache.joinSuggestions(List.of("orders"));
         assertTrue(fromOrders.stream().anyMatch(j ->
                 j.toTable().equals("users") && j.insertText().contains("orders")), fromOrders.toString());
+    }
+
+    @Test
+    void cachedChildrenBuildsCatalogFoldersFromTheSnapshot() {
+        Optional<List<SchemaNode>> folders = cache.cachedChildren(
+                SchemaNode.of("app", NodeType.DATABASE));
+        assertTrue(folders.isPresent());
+        assertTrue(folders.get().stream().anyMatch(n ->
+                SchemaNode.FOLDER_TABLES.equals(n.folderKind()) && !n.children().isEmpty()));
+        assertTrue(cache.cachedChildren(SchemaNode.of("missing", NodeType.DATABASE)).isEmpty());
     }
 }

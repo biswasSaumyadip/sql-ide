@@ -1,10 +1,15 @@
 package com.lazaro.sqlide.ui.components;
 
 import com.lazaro.sqlide.core.db.QueryResult;
+import com.lazaro.sqlide.core.runtime.HeapMemory;
+import com.lazaro.sqlide.ui.Icons;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.beans.value.ObservableValue;
 import javafx.css.PseudoClass;
 import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
+import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.Separator;
@@ -14,6 +19,7 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.shape.Circle;
+import javafx.util.Duration;
 
 /**
  * Thin strip along the bottom: connection + active database on the left, last query
@@ -37,6 +43,9 @@ public final class StatusBar extends HBox {
     private final Label indexingLabel = new Label();
     private final Label resultLabel = new Label();
     private final Label caretLabel = new Label("Ln 1, Col 1");
+    private final Label heapLabel = new Label();
+    private final Button gcButton = new Button();
+    private final Timeline heapTimeline;
 
     private String endpointText = "Not connected";
     private boolean queryBusy;
@@ -71,6 +80,16 @@ public final class StatusBar extends HBox {
         indexingLabel.setMinWidth(0);
         resultLabel.getStyleClass().addAll("status-text", "status-result");
         caretLabel.getStyleClass().addAll("status-text", "status-caret");
+        heapLabel.getStyleClass().addAll("status-text", "status-heap");
+        heapLabel.setMinWidth(Region.USE_PREF_SIZE);
+        gcButton.setGraphic(Icons.gc());
+        gcButton.getStyleClass().add("status-gc-button");
+        gcButton.setFocusTraversable(false);
+        gcButton.setTooltip(new Tooltip("Run garbage collection to free unused heap"));
+        gcButton.setOnAction(event -> {
+            System.gc();
+            refreshHeap();
+        });
 
         databaseLabel.setMinWidth(Region.USE_PREF_SIZE);
         transactionLabel.setMinWidth(Region.USE_PREF_SIZE);
@@ -82,7 +101,13 @@ public final class StatusBar extends HBox {
         getChildren().addAll(
                 dot, activitySlot, connectionLabel, databaseLabel, transactionLabel, indexingLabel,
                 spacer,
-                resultLabel, new Separator(Orientation.VERTICAL), caretLabel);
+                resultLabel, new Separator(Orientation.VERTICAL), caretLabel,
+                new Separator(Orientation.VERTICAL), heapLabel, gcButton);
+
+        heapTimeline = new Timeline(new KeyFrame(Duration.seconds(1), event -> refreshHeap()));
+        heapTimeline.setCycleCount(Timeline.INDEFINITE);
+        heapTimeline.play();
+        refreshHeap();
 
         setDisconnected();
     }
@@ -217,6 +242,7 @@ public final class StatusBar extends HBox {
      */
     public void setIndexing(String message) {
         indexing = message != null && !message.isBlank();
+        indexingLabel.pseudoClassStateChanged(ERROR, false);
         if (indexing) {
             indexingLabel.setText("· " + message);
             indexingLabel.setTooltip(new Tooltip(message));
@@ -225,6 +251,18 @@ public final class StatusBar extends HBox {
         }
         indexingLabel.setVisible(indexing);
         indexingLabel.setManaged(true);
+        syncActivity();
+    }
+
+    /** Spinner off; keep a visible failure on the indexing slot. */
+    public void setIndexingError(String message) {
+        indexing = false;
+        String text = message == null || message.isBlank() ? "Indexing failed" : message;
+        indexingLabel.setText("· " + abbreviate(text, 80));
+        indexingLabel.setTooltip(new Tooltip(text));
+        indexingLabel.setVisible(true);
+        indexingLabel.setManaged(true);
+        indexingLabel.pseudoClassStateChanged(ERROR, true);
         syncActivity();
     }
 
@@ -268,6 +306,12 @@ public final class StatusBar extends HBox {
         }
     }
 
+    private void refreshHeap() {
+        HeapMemory.Snapshot snapshot = HeapMemory.current();
+        heapLabel.setText(snapshot.display());
+        heapLabel.setTooltip(new Tooltip("JVM heap \u2014 " + snapshot.display()));
+    }
+
     private void syncActivity() {
         boolean active = queryBusy || indexing || lifecycleBusy;
         activity.setVisible(active);
@@ -277,6 +321,7 @@ public final class StatusBar extends HBox {
         indexingLabel.setText("");
         indexingLabel.setTooltip(null);
         indexingLabel.setVisible(false);
+        indexingLabel.pseudoClassStateChanged(ERROR, false);
     }
 
     private void applyDotClass(String styleClass) {

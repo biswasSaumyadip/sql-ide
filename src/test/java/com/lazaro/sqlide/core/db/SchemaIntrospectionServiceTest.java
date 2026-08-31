@@ -141,10 +141,10 @@ class SchemaIntrospectionServiceTest {
                 .findFirst()
                 .orElseThrow();
         assertTrue(tablesFolder.childCountBadge() >= 1);
-        assertTrue(tablesFolder.children().isEmpty(),
-                "tables stay unloaded until the folder is expanded");
-
-        SchemaNode customer = find(driver.getChildren(tablesFolder).get(TIMEOUT_SECONDS, TIMEOUT_UNIT), "CUSTOMER");
+        List<SchemaNode> tableRows = tablesFolder.children().isEmpty()
+                ? driver.getChildren(tablesFolder).get(TIMEOUT_SECONDS, TIMEOUT_UNIT)
+                : tablesFolder.children();
+        SchemaNode customer = find(tableRows, "CUSTOMER");
 
         List<SchemaNode> tableFolders = driver.getChildren(customer).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
         assertEquals(3, tableFolders.size());
@@ -253,6 +253,35 @@ class SchemaIntrospectionServiceTest {
         String ddl = customer.metadata(SchemaNode.META_DDL);
         assertTrue(ddl != null && ddl.toUpperCase(Locale.ROOT).contains("CREATE TABLE"),
                 "expected generated DDL, got: " + ddl);
+    }
+
+    @Test
+    @DisplayName("enriching an outline does not drop names and still attaches FKs")
+    void enrichOutlineReusesLoadedNames() throws Exception {
+        List<SchemaNode> outline = schemaService.fetchSchemaOutlineAsync(catalog)
+                .get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        SchemaNode outlined = find(find(outline, catalog).children(), "ORDERS");
+        assertTrue(outlined.children().isEmpty(), "outline is names only");
+
+        List<SchemaNode> enriched = schemaService.enrichSchemaAsync(outline, catalog)
+                .get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        SchemaNode orders = find(find(enriched, catalog).children(), "ORDERS");
+        assertFalse(orders.children().isEmpty());
+        String fks = orders.metadata(SchemaNode.META_FOREIGN_KEYS);
+        assertTrue(fks != null && fks.contains("CUSTOMER"), "expected FK metadata, got: " + fks);
+    }
+
+    @Test
+    @DisplayName("catalogs past the per-table key limit still get batched foreign keys")
+    void largeCatalogStillLoadsForeignKeys() throws Exception {
+        for (int i = 0; i < 201; i++) {
+            execute("CREATE TABLE bulk_" + i + " (id INT PRIMARY KEY)");
+        }
+        List<SchemaNode> full = driver.getFullSchema().get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        SchemaNode orders = find(find(full, catalog).children(), "ORDERS");
+        String fks = orders.metadata(SchemaNode.META_FOREIGN_KEYS);
+        assertTrue(fks != null && fks.toUpperCase(Locale.ROOT).contains("CUSTOMER"),
+                "batched FKs must survive 200+ tables, got: " + fks);
     }
 
     @Test

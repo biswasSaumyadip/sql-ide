@@ -240,6 +240,11 @@ public final class RedisDriver implements DataSourceDriver {
     }
 
     @Override
+    public CompletableFuture<List<SchemaNode>> enrichSchema(List<SchemaNode> outline) {
+        return CompletableFuture.completedFuture(outline == null ? List.of() : outline);
+    }
+
+    @Override
     public CompletableFuture<Void> setActiveCatalog(String catalog) {
         return CompletableFuture.completedFuture(null);
     }

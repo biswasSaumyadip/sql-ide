@@ -5,6 +5,7 @@ import com.lazaro.sqlide.core.config.ConnectionProfileManager;
 import com.lazaro.sqlide.core.db.ConnectionConfig;
 import com.lazaro.sqlide.core.db.DataSourceDriver;
 import com.lazaro.sqlide.core.db.RedisDriver;
+import com.lazaro.sqlide.core.db.SchemaCache;
 import com.lazaro.sqlide.core.db.SchemaNode;
 import com.lazaro.sqlide.core.db.SchemaNode.NodeType;
 import com.lazaro.sqlide.core.redis.RedisKeyspace;
@@ -841,6 +842,14 @@ public final class SchemaTreeView extends VBox {
         return sessionManager.find(sessionId).map(ConnectionSession::driver).orElse(null);
     }
 
+    private SchemaCache cacheFor(TreeItem<SchemaNode> item) {
+        String sessionId = sessionIdOf(item);
+        if (sessionManager == null || sessionId == null) {
+            return null;
+        }
+        return sessionManager.find(sessionId).map(ConnectionSession::schemaCache).orElse(null);
+    }
+
     private LazyItem schemaItem(SchemaNode node) {
         return new LazyItem(node, this::loadSchemaChildren);
     }
@@ -857,6 +866,15 @@ public final class SchemaTreeView extends VBox {
             item.presentSources(node.children());
             applyFilter();
             return;
+        }
+        SchemaCache cache = cacheFor(item);
+        if (cache != null) {
+            Optional<List<SchemaNode>> cached = cache.cachedChildren(node);
+            if (cached.isPresent()) {
+                item.presentSources(cached.get());
+                applyFilter();
+                return;
+            }
         }
         driver.getChildren(node).whenComplete((children, error) -> Platform.runLater(() -> {
             if (error != null) {

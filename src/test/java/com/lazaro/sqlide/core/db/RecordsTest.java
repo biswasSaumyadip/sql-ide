@@ -76,6 +76,8 @@ class RecordsTest {
 
         assertEquals(List.of("id"), result.columnNames());
         assertEquals(1, result.rowCount());
+        assertEquals(1, result.columns().size());
+        assertEquals("id", result.columns().getFirst().name());
     }
 
     @Test
@@ -123,6 +125,19 @@ class RecordsTest {
         assertEquals(4, combined.rowCount());
         assertFalse(combined.truncated());
         assertEquals(12L, combined.executionTimeMs());
+    }
+
+    @Test
+    @DisplayName("QueryResult keeps column metadata when appending pages")
+    void appendedKeepsColumnMetadata() {
+        ResultColumn id = new ResultColumn("id", "INT", java.sql.Types.INTEGER, true, false);
+        QueryResult first = QueryResult.ofRows(
+                List.of("id"), List.of(List.of("1")), 3L, true, List.of(id));
+        QueryResult second = QueryResult.ofRows(List.of("id"), List.of(List.of("2")), 2L, false);
+        QueryResult combined = first.appended(second);
+        assertEquals(1, combined.columns().size());
+        assertTrue(combined.columns().getFirst().primaryKey());
+        assertEquals("INT", combined.columns().getFirst().typeName());
     }
 
     @Test

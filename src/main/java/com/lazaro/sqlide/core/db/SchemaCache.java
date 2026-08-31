@@ -9,6 +9,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -31,6 +32,10 @@ public final class SchemaCache {
     private volatile List<FkEdge> foreignKeyEdges = List.of();
     private volatile Map<String, SchemaPrefixIndex> prefixByCatalog = Map.of();
     private volatile SchemaPrefixIndex allPrefixIndex = SchemaPrefixIndex.EMPTY;
+    private volatile Map<String, List<SchemaNode>> proceduresByLowerCatalog = Map.of();
+    private volatile List<SchemaNode> allProcedures = List.of();
+    private volatile Map<String, SchemaPrefixIndex> procedurePrefixByCatalog = Map.of();
+    private volatile SchemaPrefixIndex allProcedurePrefixIndex = SchemaPrefixIndex.EMPTY;
     private volatile boolean ready;
 
     private record FkEdge(
@@ -87,6 +92,10 @@ public final class SchemaCache {
         foreignKeyEdges = List.of();
         prefixByCatalog = Map.of();
         allPrefixIndex = SchemaPrefixIndex.EMPTY;
+        proceduresByLowerCatalog = Map.of();
+        allProcedures = List.of();
+        procedurePrefixByCatalog = Map.of();
+        allProcedurePrefixIndex = SchemaPrefixIndex.EMPTY;
         ready = false;
     }
 
@@ -135,11 +144,139 @@ public final class SchemaCache {
         return index.prefixHits(prefix);
     }
 
+    /**
+     * Stored procedures (not functions), optionally restricted to {@code catalog}.
+     * When {@code catalog} is null/blank, returns every loaded catalog.
+     */
+    public List<SchemaNode> procedures(String catalog) {
+        if (catalog == null || catalog.isBlank()) {
+            return allProcedures;
+        }
+        List<SchemaNode> snapshot = proceduresByLowerCatalog.get(catalog.toLowerCase(Locale.ROOT));
+        return snapshot == null ? List.of() : snapshot;
+    }
+
+    public List<SchemaNode> proceduresWithPrefix(String catalog, String prefix) {
+        if (prefix == null || prefix.isEmpty()) {
+            return List.of();
+        }
+        SchemaPrefixIndex index;
+        if (catalog == null || catalog.isBlank()) {
+            index = allProcedurePrefixIndex;
+        } else {
+            index = procedurePrefixByCatalog.getOrDefault(
+                    catalog.toLowerCase(Locale.ROOT), SchemaPrefixIndex.EMPTY);
+        }
+        return index.prefixHits(prefix);
+    }
+
+    /**
+     * Tree children from the snapshot. Empty when this level is not indexed yet
+     * so the caller can fall back to JDBC.
+     */
+    public Optional<List<SchemaNode>> cachedChildren(SchemaNode parent) {
+        if (!ready || parent == null) {
+            return Optional.empty();
+        }
+        return switch (parent.type()) {
+            case DATABASE, SCHEMA -> {
+                String catalog = parent.name();
+                List<SchemaNode> tables = tables(catalog);
+                List<SchemaNode> procs = procedures(catalog);
+                if (tables.isEmpty() && procs.isEmpty()) {
+                    yield Optional.empty();
+                }
+                yield Optional.of(SchemaFolders.forCatalog(catalog, tables, procs));
+            }
+            case FOLDER -> cachedFolderChildren(parent);
+            case TABLE, VIEW -> findTable(parent.name(), parent.metadata(SchemaNode.META_CATALOG))
+                    .map(SchemaCache::tableDetailFolders);
+            default -> Optional.empty();
+        };
+    }
+
+    private Optional<List<SchemaNode>> cachedFolderChildren(SchemaNode folder) {
+        String kind = Objects.requireNonNullElse(folder.folderKind(), "");
+        String catalog = folder.metadata(SchemaNode.META_CATALOG);
+        String table = folder.metadata(SchemaNode.META_TABLE);
+        return switch (kind) {
+            case SchemaNode.FOLDER_TABLES -> {
+                List<SchemaNode> tables = tables(catalog).stream()
+                        .filter(node -> node.type() == NodeType.TABLE)
+                        .toList();
+                yield tables.isEmpty() ? Optional.empty() : Optional.of(tables);
+            }
+            case SchemaNode.FOLDER_VIEWS -> {
+                List<SchemaNode> views = tables(catalog).stream()
+                        .filter(node -> node.type() == NodeType.VIEW)
+                        .toList();
+                yield views.isEmpty() ? Optional.empty() : Optional.of(views);
+            }
+            case SchemaNode.FOLDER_PROCEDURES -> {
+                List<SchemaNode> procs = procedures(catalog);
+                yield procs.isEmpty() ? Optional.empty() : Optional.of(procs);
+            }
+            case SchemaNode.FOLDER_COLUMNS -> findTable(table, catalog)
+                    .map(SchemaNode::children)
+                    .filter(cols -> !cols.isEmpty());
+            case SchemaNode.FOLDER_KEYS -> findTable(table, catalog)
+                    .map(SchemaCache::keyNodesFrom)
+                    .filter(keys -> !keys.isEmpty());
+            case SchemaNode.FOLDER_INDEXES -> findTable(table, catalog)
+                    .map(SchemaCache::indexNodesFrom)
+                    .filter(indexes -> !indexes.isEmpty());
+            default -> Optional.empty();
+        };
+    }
+
+    private static List<SchemaNode> tableDetailFolders(SchemaNode table) {
+        String catalog = Objects.requireNonNullElse(table.metadata(SchemaNode.META_CATALOG), "");
+        return SchemaFolders.forTable(
+                catalog, table.name(), table.children(), keyNodesFrom(table), indexNodesFrom(table));
+    }
+
+    private static List<SchemaNode> keyNodesFrom(SchemaNode table) {
+        String catalog = Objects.requireNonNullElse(table.metadata(SchemaNode.META_CATALOG), "");
+        Map<String, String> shared = Map.of(
+                SchemaNode.META_CATALOG, catalog,
+                SchemaNode.META_TABLE, table.name());
+        List<SchemaNode> keys = new ArrayList<>();
+        List<String> pkColumns = new ArrayList<>();
+        for (SchemaNode child : table.children()) {
+            if (child.type() == NodeType.COLUMN && child.metadataFlag(SchemaNode.META_PRIMARY_KEY)) {
+                pkColumns.add(child.name());
+            }
+        }
+        if (!pkColumns.isEmpty()) {
+            keys.add(SchemaNode.key("PRIMARY", "PRIMARY", pkColumns, shared));
+        }
+        for (ForeignKey fk : SchemaMetadataCodec.decodeForeignKeys(table.metadata(SchemaNode.META_FOREIGN_KEYS))) {
+            keys.add(SchemaNode.key(fk.name(), "FOREIGN", List.of(fk.fkColumn()), shared));
+        }
+        return List.copyOf(keys);
+    }
+
+    private static List<SchemaNode> indexNodesFrom(SchemaNode table) {
+        String catalog = Objects.requireNonNullElse(table.metadata(SchemaNode.META_CATALOG), "");
+        Map<String, String> shared = Map.of(
+                SchemaNode.META_CATALOG, catalog,
+                SchemaNode.META_TABLE, table.name());
+        List<SchemaNode> nodes = new ArrayList<>();
+        for (SchemaMetadataCodec.IndexInfo index :
+                SchemaMetadataCodec.decodeIndexes(table.metadata(SchemaNode.META_INDEXES))) {
+            nodes.add(SchemaNode.index(index.name(), index.unique(), index.columns(), shared));
+        }
+        return List.copyOf(nodes);
+    }
+
     private void rebuildIndexes() {
         Map<String, List<SchemaNode>> byCatalog = new LinkedHashMap<>();
         Map<String, List<SchemaNode>> byName = new LinkedHashMap<>();
         Map<String, SchemaPrefixIndex> prefixes = new LinkedHashMap<>();
+        Map<String, List<SchemaNode>> procsByCatalog = new LinkedHashMap<>();
+        Map<String, SchemaPrefixIndex> procPrefixes = new LinkedHashMap<>();
         List<SchemaNode> all = new ArrayList<>();
+        List<SchemaNode> allProcs = new ArrayList<>();
         List<FkEdge> edges = new ArrayList<>();
         for (SchemaNode db : catalogs) {
             if (db == null || db.name() == null || db.name().isBlank()) {
@@ -150,6 +287,12 @@ public final class SchemaCache {
             List<SchemaNode> frozenCatalog = List.copyOf(catalogTables);
             byCatalog.put(db.name().toLowerCase(Locale.ROOT), frozenCatalog);
             prefixes.put(db.name().toLowerCase(Locale.ROOT), SchemaPrefixIndex.of(frozenCatalog));
+            List<SchemaNode> catalogProcs = new ArrayList<>();
+            collectProcedures(db, db.name(), catalogProcs);
+            List<SchemaNode> frozenProcs = List.copyOf(catalogProcs);
+            procsByCatalog.put(db.name().toLowerCase(Locale.ROOT), frozenProcs);
+            procPrefixes.put(db.name().toLowerCase(Locale.ROOT), SchemaPrefixIndex.of(frozenProcs));
+            allProcs.addAll(frozenProcs);
             for (SchemaNode table : frozenCatalog) {
                 all.add(table);
                 byName.computeIfAbsent(table.name().toLowerCase(Locale.ROOT), key -> new ArrayList<>()).add(table);
@@ -178,6 +321,10 @@ public final class SchemaCache {
         foreignKeyEdges = List.copyOf(edges);
         prefixByCatalog = Map.copyOf(prefixes);
         allPrefixIndex = SchemaPrefixIndex.of(allTables);
+        proceduresByLowerCatalog = Map.copyOf(procsByCatalog);
+        allProcedures = List.copyOf(allProcs);
+        procedurePrefixByCatalog = Map.copyOf(procPrefixes);
+        allProcedurePrefixIndex = SchemaPrefixIndex.of(allProcedures);
     }
 
     private static void collectTables(SchemaNode parent, String catalogName, List<SchemaNode> out) {
@@ -193,22 +340,6 @@ public final class SchemaCache {
                 collectTables(child, catalogName, out);
             }
         }
-    }
-
-    /**
-     * Stored procedures (not functions), optionally restricted to {@code catalog}.
-     * When {@code catalog} is null/blank, returns every loaded catalog.
-     */
-    public List<SchemaNode> procedures(String catalog) {
-        List<SchemaNode> procedures = new ArrayList<>();
-        String filter = catalog == null || catalog.isBlank() ? null : catalog;
-        for (SchemaNode db : catalogs) {
-            if (filter != null && !db.name().equalsIgnoreCase(filter)) {
-                continue;
-            }
-            collectProcedures(db, filter, procedures);
-        }
-        return List.copyOf(procedures);
     }
 
     private static void collectProcedures(SchemaNode parent, String catalogFilter, List<SchemaNode> out) {

@@ -103,11 +103,6 @@ public final class SqlAutocompleteEngine {
     }
 
     private static final int DISPLAY_CAP = 50;
-    /**
-     * Auto-popup scores prefix hits from the sorted name index. Typo / mid-token /
-     * substring matching runs only when that set is small, or on Ctrl+Space.
-     */
-    static final int FUZZY_WHEN_PREFIX_HITS_BELOW = 8;
 
     private static final Pattern WORD = Pattern.compile("[A-Za-z0-9_]*$");
     private static final Pattern DOT_QUALIFIER = Pattern.compile(
@@ -272,19 +267,19 @@ public final class SqlAutocompleteEngine {
             List<Suggestion> out = new ArrayList<>();
             out.addAll(joinSuggestions(aliases.keySet(), prefix, replaceStart, caret));
             out.addAll(tableSuggestions(prefix, replaceStart, caret, scope, invoked));
-            out.addAll(schemaSuggestions(prefix, replaceStart, caret));
+            out.addAll(schemaSuggestions(prefix, replaceStart, caret, invoked));
             if (invoked || !prefix.isEmpty()) {
-                out.addAll(keywordSuggestions(prefix, replaceStart, caret, Set.of("JOIN", "ON", "AS")));
+                out.addAll(keywordSuggestions(prefix, replaceStart, caret, Set.of("JOIN", "ON", "AS"), invoked));
             }
             return rank(out);
         }
 
         if (CALL_CONTEXTS.contains(previousUpper)) {
-            return rank(procedureSuggestions(prefix, replaceStart, caret));
+            return rank(procedureSuggestions(prefix, replaceStart, caret, invoked));
         }
 
         if (SCHEMA_CONTEXTS.contains(previousUpper)) {
-            return rank(schemaSuggestions(prefix, replaceStart, caret));
+            return rank(schemaSuggestions(prefix, replaceStart, caret, invoked));
         }
 
         if (INDEX_CONTEXTS.contains(previousUpper) && cache.isReady()) {
@@ -295,9 +290,9 @@ public final class SqlAutocompleteEngine {
 
         if (TABLE_CONTEXTS.contains(previousUpper)) {
             List<Suggestion> out = new ArrayList<>(tableSuggestions(prefix, replaceStart, caret, scope, invoked));
-            out.addAll(schemaSuggestions(prefix, replaceStart, caret));
+            out.addAll(schemaSuggestions(prefix, replaceStart, caret, invoked));
             if (invoked || prefix.length() >= 1) {
-                out.addAll(keywordSuggestions(prefix, replaceStart, caret, Set.of("AS", "JOIN", "ON", "WHERE")));
+                out.addAll(keywordSuggestions(prefix, replaceStart, caret, Set.of("AS", "JOIN", "ON", "WHERE"), invoked));
             }
             return rank(out);
         }
@@ -324,13 +319,13 @@ public final class SqlAutocompleteEngine {
             }
             if (cache.isReady() || !scope.virtualColumns().isEmpty()) {
                 out.addAll(columnsInScope(aliases, prefix, replaceStart, caret, usedInSelect, scope));
-                if (aliases.isEmpty() && ("SELECT".equals(previousUpper) || invoked)) {
+                if (aliases.isEmpty() && invoked) {
                     out.addAll(allColumnSuggestions(prefix, replaceStart, caret, usedInSelect));
                 }
             }
             if (invoked || prefix.length() >= 2) {
-                out.addAll(functionSuggestions(prefix, replaceStart, caret));
-                out.addAll(keywordSuggestions(prefix, replaceStart, caret, null));
+                out.addAll(functionSuggestions(prefix, replaceStart, caret, invoked));
+                out.addAll(keywordSuggestions(prefix, replaceStart, caret, null, invoked));
             }
             return rank(out);
         }
@@ -339,12 +334,12 @@ public final class SqlAutocompleteEngine {
         List<Suggestion> out = new ArrayList<>();
         if (invoked || prefix.length() >= 2) {
             out.addAll(snippetSuggestions(prefix, replaceStart, caret));
-            out.addAll(functionSuggestions(prefix, replaceStart, caret));
-            out.addAll(keywordSuggestions(prefix, replaceStart, caret, null));
+            out.addAll(functionSuggestions(prefix, replaceStart, caret, invoked));
+            out.addAll(keywordSuggestions(prefix, replaceStart, caret, null, invoked));
             out.addAll(parameterSuggestions(prefix, replaceStart, caret, false));
         }
         if ((cache.isReady() || !scope.cteNames().isEmpty()) && (invoked || prefix.length() >= 1)) {
-            out.addAll(schemaSuggestions(prefix, replaceStart, caret));
+            out.addAll(schemaSuggestions(prefix, replaceStart, caret, invoked));
             out.addAll(tableSuggestions(prefix, replaceStart, caret, scope, invoked));
             out.addAll(indexSuggestions(aliases, prefix, replaceStart, caret));
             if (!aliases.isEmpty()) {
@@ -424,12 +419,26 @@ public final class SqlAutocompleteEngine {
     }
 
     private List<Suggestion> keywordSuggestions(
-            String prefix, int start, int end, Set<String> only) {
+            String prefix, int start, int end, Set<String> only, boolean invoked) {
         ConnectionConfig.Driver driver = currentDialect();
         List<Suggestion> out = new ArrayList<>();
         String dialect = SqlCompletionDialect.dialectLabel(driver);
-        for (String keyword : SqlCompletionDialect.keywords(driver)) {
+        String[] keywords = SqlCompletionDialect.keywords(driver);
+        boolean anyPrefix = prefix == null || prefix.isEmpty();
+        if (!anyPrefix) {
+            for (String keyword : keywords) {
+                if ((only == null || only.contains(keyword)) && startsWithIgnoreCase(keyword, prefix)) {
+                    anyPrefix = true;
+                    break;
+                }
+            }
+        }
+        boolean fuzzy = invoked || !anyPrefix;
+        for (String keyword : keywords) {
             if (only != null && !only.contains(keyword)) {
+                continue;
+            }
+            if (!fuzzy && !startsWithIgnoreCase(keyword, prefix)) {
                 continue;
             }
             int score = matchScore(keyword, prefix);
@@ -445,6 +454,10 @@ public final class SqlAutocompleteEngine {
         }
         if (only == null) {
             for (String phrase : SqlCompletionDialect.keywordPhrases(driver)) {
+                if (!fuzzy && !startsWithIgnoreCase(phrase, prefix)
+                        && !startsWithIgnoreCase(phrase.split("\\s+")[0], prefix)) {
+                    continue;
+                }
                 int score = matchScore(phrase, prefix);
                 if (score < 0) {
                     String firstWord = phrase.split("\\s+")[0];
@@ -464,9 +477,25 @@ public final class SqlAutocompleteEngine {
         return out;
     }
 
-    private List<Suggestion> functionSuggestions(String prefix, int start, int end) {
+    private List<Suggestion> functionSuggestions(String prefix, int start, int end, boolean invoked) {
         List<Suggestion> out = new ArrayList<>();
-        for (Function function : SqlCompletionDialect.functions(currentDialect())) {
+        List<Function> functions = SqlCompletionDialect.functions(currentDialect());
+        boolean anyPrefix = prefix == null || prefix.isEmpty();
+        if (!anyPrefix) {
+            for (Function function : functions) {
+                if (startsWithIgnoreCase(function.name(), prefix)
+                        || startsWithIgnoreCase(function.insertText(), prefix)) {
+                    anyPrefix = true;
+                    break;
+                }
+            }
+        }
+        boolean fuzzy = invoked || !anyPrefix;
+        for (Function function : functions) {
+            if (!fuzzy && !startsWithIgnoreCase(function.name(), prefix)
+                    && !startsWithIgnoreCase(function.insertText(), prefix)) {
+                continue;
+            }
             int score = matchScore(function.name(), prefix);
             if (score < 0) {
                 score = matchScore(function.insertText(), prefix);
@@ -505,13 +534,27 @@ public final class SqlAutocompleteEngine {
         return out;
     }
 
-    private List<Suggestion> schemaSuggestions(String prefix, int start, int end) {
+    private List<Suggestion> schemaSuggestions(String prefix, int start, int end, boolean invoked) {
         if (!cache.isReady()) {
             return List.of();
         }
         List<Suggestion> out = new ArrayList<>();
         ConnectionConfig.Driver driver = currentDialect();
-        for (SchemaNode catalog : cache.catalogs()) {
+        List<SchemaNode> catalogs = cache.catalogs();
+        boolean anyPrefix = prefix == null || prefix.isEmpty();
+        if (!anyPrefix) {
+            for (SchemaNode catalog : catalogs) {
+                if (startsWithIgnoreCase(catalog.name(), prefix)) {
+                    anyPrefix = true;
+                    break;
+                }
+            }
+        }
+        boolean fuzzy = invoked || !anyPrefix;
+        for (SchemaNode catalog : catalogs) {
+            if (!fuzzy && !startsWithIgnoreCase(catalog.name(), prefix)) {
+                continue;
+            }
             int score = matchScore(catalog.name(), prefix);
             if (score < 0) {
                 continue;
@@ -574,7 +617,7 @@ public final class SqlAutocompleteEngine {
             addTableSuggestion(out, table, catalog, score, start, end, driver);
         }
 
-        if (invoked || prefixHits.size() < FUZZY_WHEN_PREFIX_HITS_BELOW) {
+        if (invoked || prefixHits.isEmpty()) {
             for (SchemaNode table : cache.tables(catalog)) {
                 if (!scored.add(table.name().toLowerCase(Locale.ROOT))) {
                     continue;
@@ -611,13 +654,29 @@ public final class SqlAutocompleteEngine {
                 doc, List.of()));
     }
 
-    private List<Suggestion> procedureSuggestions(String prefix, int start, int end) {
+    private List<Suggestion> procedureSuggestions(String prefix, int start, int end, boolean invoked) {
         if (!cache.isReady()) {
             return List.of();
         }
         List<Suggestion> out = new ArrayList<>();
         ConnectionConfig.Driver driver = currentDialect();
-        for (SchemaNode procedure : cache.procedures(activeCatalog())) {
+        String catalog = activeCatalog();
+        Iterable<SchemaNode> candidates;
+        if (prefix == null || prefix.isEmpty()) {
+            candidates = cache.procedures(catalog);
+        } else {
+            List<SchemaNode> prefixHits = cache.proceduresWithPrefix(catalog, prefix);
+            if (invoked || prefixHits.isEmpty()) {
+                candidates = cache.procedures(catalog);
+            } else {
+                candidates = prefixHits;
+            }
+        }
+        Set<String> seen = new LinkedHashSet<>();
+        for (SchemaNode procedure : candidates) {
+            if (!seen.add(procedure.name().toLowerCase(Locale.ROOT))) {
+                continue;
+            }
             int score = matchScore(procedure.name(), prefix);
             if (score < 0) {
                 continue;
@@ -625,9 +684,9 @@ public final class SqlAutocompleteEngine {
             String quoted = SqlCompletionHygiene.finalizeInsert(
                     procedure.name(), procedure.name(), Kind.PROCEDURE, driver, style);
             String insert = quoted + "()";
-            String catalog = procedure.metadata(SchemaNode.META_CATALOG);
+            String owner = procedure.metadata(SchemaNode.META_CATALOG);
             String doc = "Procedure `" + procedure.name() + "`"
-                    + (catalog == null || catalog.isBlank() ? "" : " in " + catalog) + ".";
+                    + (owner == null || owner.isBlank() ? "" : " in " + owner) + ".";
             out.add(suggestion(
                     insert, procedure.name(), "procedure", Kind.PROCEDURE, start, end, score + 90, false,
                     doc, List.of()));
@@ -969,6 +1028,13 @@ public final class SqlAutocompleteEngine {
     }
 
     // ---------------------------------------------------------------- ranking / match
+
+    static boolean startsWithIgnoreCase(String value, String prefix) {
+        if (prefix == null || prefix.isEmpty()) {
+            return true;
+        }
+        return value != null && value.regionMatches(true, 0, prefix, 0, prefix.length());
+    }
 
     /**
      * Higher is better. {@code -1} means no match.

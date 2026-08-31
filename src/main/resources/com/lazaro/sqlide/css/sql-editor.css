@@ -86,6 +86,36 @@
     -fx-background-color: #1e1f22;
 }
 
+.sql-editor-body {
+    -fx-background-color: #1e1f22;
+}
+
+.sql-editor-minimap {
+    -fx-background-color: #16171a;
+    -fx-border-color: transparent transparent transparent #303237;
+    -fx-border-width: 0 0 0 1px;
+    -fx-cursor: hand;
+    -fx-min-width: 0;
+}
+
+.sql-minimap-toggle {
+    -fx-padding: 2px 4px;
+}
+
+.editor-scrollbar-markers {
+    -fx-padding: 0;
+    -fx-background-color: transparent;
+}
+
+.editor-scrollbar-error {
+    -fx-cursor: hand;
+}
+
+.virtualized-scroll-pane > .scroll-bar:vertical {
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+}
+
 .inlay-layer {
     -fx-padding: 0;
     -fx-background-color: null;

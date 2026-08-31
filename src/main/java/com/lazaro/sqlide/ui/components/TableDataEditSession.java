@@ -1,6 +1,7 @@
 package com.lazaro.sqlide.ui.components;
 
 import com.lazaro.sqlide.core.db.QueryResult;
+import com.lazaro.sqlide.core.db.ResultColumn;
 import com.lazaro.sqlide.core.db.SchemaNode;
 import com.lazaro.sqlide.core.db.SchemaNode.NodeType;
 import com.lazaro.sqlide.core.db.ScriptResult;
@@ -377,9 +378,15 @@ public final class TableDataEditSession {
             int columnIndex = i;
             String name = columnNames.get(i);
             boolean pk = containsIgnoreCase(primaryKeyColumns, name);
-            String header = pk ? name + " (PK)" : name;
-            TableColumn<ObservableList<String>, String> column = new TableColumn<>(header);
-            TableColumnAutoSizer.apply(column, header, result.rows(), columnIndex);
+            ResultColumn meta = i < result.columns().size() ? result.columns().get(i) : ResultColumn.named(name);
+            if (pk) {
+                meta = meta.withKeys(true, meta.foreignKey());
+            }
+            TableColumn<ObservableList<String>, String> column = new TableColumn<>();
+            ResultColumnHeader header = ResultColumnHeader.attach(
+                    column, meta, table.columnFiltersVisible(), text -> table.setColumnFilter(columnIndex, text));
+            table.registerColumnHeader(header);
+            TableColumnAutoSizer.apply(column, name, result.rows(), columnIndex);
             column.setEditable(editable);
             column.setCellValueFactory(features -> {
                 ObservableList<String> row = features.getValue();

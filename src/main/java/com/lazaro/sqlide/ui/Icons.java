@@ -170,6 +170,45 @@ public final class Icons {
         return group(ring, shaft, tooth);
     }
 
+    /** Compact gold key for a primary-key result column. */
+    public static Node primaryKeyBadge() {
+        return key();
+    }
+
+    /** Silver/blue key for a foreign-key result column. */
+    public static Node foreignKey() {
+        Circle ring = outlined(new Circle(4.5, 7, 2.4), "icon-key-fk");
+        Line shaft = outlined(new Line(7, 7, 12, 7), "icon-key-fk");
+        Line tooth = outlined(new Line(10.5, 7, 10.5, 9.5), "icon-key-fk");
+        return group(ring, shaft, tooth);
+    }
+
+    /** Small analog clock for TIMESTAMP / DATE columns. */
+    public static Node clock() {
+        Circle face = outlined(new Circle(7, 7, 4.6), "icon-clock");
+        Line hour = outlined(new Line(7, 7, 7, 4.4), "icon-clock");
+        Line minute = outlined(new Line(7, 7, 10.2, 7), "icon-clock");
+        return group(face, hour, minute);
+    }
+
+    /** Trash can for suggesting a JVM garbage collection. */
+    public static Node gc() {
+        Line lid = outlined(new Line(3.5, 4.5, 10.5, 4.5), "icon-gc");
+        Line handle = outlined(new Line(5.5, 3.0, 8.5, 3.0), "icon-gc");
+        Rectangle body = outlined(new Rectangle(4.0, 5.0, 6.0, 7.5), "icon-gc");
+        body.setArcWidth(1.5);
+        body.setArcHeight(1.5);
+        Line crease = outlined(new Line(7.0, 6.5, 7.0, 10.5), "icon-gc");
+        return group(lid, handle, body, crease);
+    }
+
+    /** Tall strip with a viewport — editor minimap toggle. */
+    public static Node minimap() {
+        Rectangle strip = outlined(new Rectangle(4.0, 1.5, 6.0, 11.0), "icon-minimap");
+        Rectangle view = outlined(new Rectangle(4.0, 4.0, 6.0, 4.0), "icon-minimap");
+        return group(strip, view);
+    }
+
     /** Lightning bolt for indexes. */
     public static Node index() {
         Polygon bolt = new Polygon(

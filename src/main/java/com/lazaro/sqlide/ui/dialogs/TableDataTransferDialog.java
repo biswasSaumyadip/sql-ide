@@ -4,6 +4,7 @@ import atlantafx.base.theme.Styles;
 import com.lazaro.sqlide.core.config.ConnectionProfile;
 import com.lazaro.sqlide.core.config.ConnectionProfileManager;
 import com.lazaro.sqlide.core.db.ConnectionConfig;
+import com.lazaro.sqlide.core.db.JdbcMetadataLayout;
 import com.lazaro.sqlide.core.db.SchemaNode;
 import com.lazaro.sqlide.core.transfer.TransferJdbc;
 import com.lazaro.sqlide.core.transfer.TransferRequest;
@@ -82,6 +83,7 @@ public final class TableDataTransferDialog extends Dialog<TransferRequest> {
 
     private final Map<String, ConnectionProfile> profilesByLabel = new LinkedHashMap<>();
     private List<String> targetColumns = List.of();
+    private final JdbcMetadataLayout targetLayout = new JdbcMetadataLayout();
 
     public TableDataTransferDialog(
             Window owner,
@@ -235,6 +237,7 @@ public final class TableDataTransferDialog extends Dialog<TransferRequest> {
             if (current) {
                 targetPassword.clear();
             }
+            targetLayout.clear();
             reloadSchemas();
             updateStrategyHint();
         });
@@ -254,7 +257,7 @@ public final class TableDataTransferDialog extends Dialog<TransferRequest> {
         }
         metaExecutor.execute(() -> {
             try (Connection connection = TransferJdbc.open(config)) {
-                List<String> catalogs = TransferJdbc.listCatalogs(connection).stream()
+                List<String> catalogs = TransferJdbc.listCatalogs(connection, targetLayout).stream()
                         .filter(name -> !TransferJdbc.looksLikeSystemCatalog(name))
                         .toList();
                 Platform.runLater(() -> {
@@ -285,7 +288,7 @@ public final class TableDataTransferDialog extends Dialog<TransferRequest> {
         }
         metaExecutor.execute(() -> {
             try (Connection connection = TransferJdbc.open(config)) {
-                List<String> tables = TransferJdbc.listTables(connection, schema);
+                List<String> tables = TransferJdbc.listTables(connection, schema, targetLayout);
                 Platform.runLater(() -> {
                     targetTableBox.getItems().setAll(tables);
                     if (tables.stream().anyMatch(t -> t.equalsIgnoreCase(sourceTable))) {
@@ -312,7 +315,7 @@ public final class TableDataTransferDialog extends Dialog<TransferRequest> {
         }
         metaExecutor.execute(() -> {
             try (Connection connection = TransferJdbc.open(config)) {
-                List<String> columns = TransferJdbc.listColumns(connection, schema, table);
+                List<String> columns = TransferJdbc.listColumns(connection, schema, table, targetLayout);
                 Platform.runLater(() -> {
                     targetColumns = columns;
                     rebuildMapping(columns);

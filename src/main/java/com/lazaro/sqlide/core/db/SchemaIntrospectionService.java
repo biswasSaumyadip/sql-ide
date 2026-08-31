@@ -4,6 +4,7 @@ import com.lazaro.sqlide.core.db.SchemaNode.NodeType;
 
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -112,21 +113,9 @@ public final class SchemaIntrospectionService {
     }
 
     private List<SchemaNode> catalogFolders(Connection connection, String catalog) throws SQLException {
-        List<SchemaNode> all = readTables(connection, catalog);
-        List<SchemaNode> tables = all.stream().filter(node -> node.type() == NodeType.TABLE).toList();
-        List<SchemaNode> views = all.stream().filter(node -> node.type() == NodeType.VIEW).toList();
+        List<SchemaNode> tablesAndViews = readTables(connection, catalog);
         List<SchemaNode> procedures = readRoutines(connection, catalog, false);
-        Map<String, String> catalogMeta = Map.of(SchemaNode.META_CATALOG, catalog);
-        List<SchemaNode> folders = new ArrayList<>(3);
-        folders.add(SchemaNode.folder(SchemaNode.FOLDER_TABLES, SchemaNode.FOLDER_TABLES, tables.size(), catalogMeta));
-        if (!views.isEmpty()) {
-            folders.add(SchemaNode.folder(SchemaNode.FOLDER_VIEWS, SchemaNode.FOLDER_VIEWS, views.size(), catalogMeta));
-        }
-        if (!procedures.isEmpty()) {
-            folders.add(SchemaNode.folder(
-                    SchemaNode.FOLDER_PROCEDURES, SchemaNode.FOLDER_PROCEDURES, procedures.size(), catalogMeta));
-        }
-        return List.copyOf(folders);
+        return SchemaFolders.forCatalog(catalog, tablesAndViews, procedures);
     }
 
     private List<SchemaNode> folderChildren(Connection connection, SchemaNode folder) throws SQLException {
@@ -134,38 +123,35 @@ public final class SchemaIntrospectionService {
         String catalog = Objects.requireNonNullElse(folder.metadata(SchemaNode.META_CATALOG), "");
         String table = folder.metadata(SchemaNode.META_TABLE);
         return switch (kind) {
-            case SchemaNode.FOLDER_TABLES -> readTables(connection, catalog).stream()
-                    .filter(node -> node.type() == NodeType.TABLE)
-                    .toList();
-            case SchemaNode.FOLDER_VIEWS -> readTables(connection, catalog).stream()
-                    .filter(node -> node.type() == NodeType.VIEW)
-                    .toList();
-            case SchemaNode.FOLDER_PROCEDURES -> readRoutines(connection, catalog, false);
-            case SchemaNode.FOLDER_COLUMNS -> readColumns(connection, catalog, table);
-            case SchemaNode.FOLDER_KEYS -> readKeyNodes(connection, catalog, table);
-            case SchemaNode.FOLDER_INDEXES -> readIndexNodes(connection, catalog, table);
+            case SchemaNode.FOLDER_TABLES -> folder.children().isEmpty()
+                    ? readTables(connection, catalog).stream()
+                            .filter(node -> node.type() == NodeType.TABLE)
+                            .toList()
+                    : folder.children();
+            case SchemaNode.FOLDER_VIEWS -> folder.children().isEmpty()
+                    ? readTables(connection, catalog).stream()
+                            .filter(node -> node.type() == NodeType.VIEW)
+                            .toList()
+                    : folder.children();
+            case SchemaNode.FOLDER_PROCEDURES -> folder.children().isEmpty()
+                    ? readRoutines(connection, catalog, false)
+                    : folder.children();
+            case SchemaNode.FOLDER_COLUMNS -> folder.children().isEmpty()
+                    ? readColumns(connection, catalog, table)
+                    : folder.children();
+            case SchemaNode.FOLDER_KEYS -> folder.children().isEmpty()
+                    ? readKeyNodes(connection, catalog, table)
+                    : folder.children();
+            case SchemaNode.FOLDER_INDEXES -> folder.children().isEmpty()
+                    ? readIndexNodes(connection, catalog, table)
+                    : folder.children();
             default -> List.of();
         };
     }
 
-    private List<SchemaNode> tableFolders(Connection connection, SchemaNode table) throws SQLException {
+    private List<SchemaNode> tableFolders(Connection connection, SchemaNode table) {
         String catalog = Objects.requireNonNullElse(table.metadata(SchemaNode.META_CATALOG), "");
-        String tableName = table.name();
-        List<SchemaNode> columns = readColumns(connection, catalog, tableName);
-        List<SchemaNode> keys = readKeyNodes(connection, catalog, tableName);
-        List<SchemaNode> indexes = readIndexNodes(connection, catalog, tableName);
-
-        Map<String, String> shared = new LinkedHashMap<>();
-        shared.put(SchemaNode.META_CATALOG, catalog);
-        shared.put(SchemaNode.META_TABLE, tableName);
-
-        return List.of(
-                SchemaNode.folder(SchemaNode.FOLDER_COLUMNS, SchemaNode.FOLDER_COLUMNS, columns.size(), shared)
-                        .withChildren(columns),
-                SchemaNode.folder(SchemaNode.FOLDER_KEYS, SchemaNode.FOLDER_KEYS, keys.size(), shared)
-                        .withChildren(keys),
-                SchemaNode.folder(SchemaNode.FOLDER_INDEXES, SchemaNode.FOLDER_INDEXES, indexes.size(), shared)
-                        .withChildren(indexes));
+        return SchemaFolders.emptyTableFolders(catalog, table.name());
     }
 
     private List<SchemaNode> readKeyNodes(Connection connection, String catalog, String table)
@@ -257,6 +243,18 @@ public final class SchemaIntrospectionService {
     }
 
     /**
+     * Attaches columns and keys to an already-loaded outline. Does not re-list
+     * tables or routines.
+     */
+    public CompletableFuture<List<SchemaNode>> enrichSchemaAsync(
+            List<SchemaNode> outline, String preferredCatalog) {
+        if (outline == null || outline.isEmpty()) {
+            return fetchFullSchemaAsync(preferredCatalog);
+        }
+        return supplyAsync(connection -> enrichLoadedOutline(connection, outline, preferredCatalog));
+    }
+
+    /**
      * Tables / columns for every catalog except {@code preferredCatalog}. System
      * catalogs stay name-only. Empty when {@code preferredCatalog} is blank.
      */
@@ -331,6 +329,31 @@ public final class SchemaIntrospectionService {
         return List.copyOf(loaded);
     }
 
+    private List<SchemaNode> enrichLoadedOutline(
+            Connection connection, List<SchemaNode> outline, String preferredCatalog) {
+        SchemaNode preferred = findPreferred(outline, preferredCatalog);
+        List<SchemaNode> loaded = new ArrayList<>(outline.size());
+        for (SchemaNode database : outline) {
+            if (preferred != null && !database.name().equalsIgnoreCase(preferred.name())) {
+                loaded.add(database);
+            } else {
+                SchemaNode withNames = database.children().isEmpty()
+                        ? loadOutlineChildrenSafe(connection, database)
+                        : database;
+                loaded.add(enrichCatalog(connection, withNames));
+            }
+        }
+        return List.copyOf(loaded);
+    }
+
+    private SchemaNode loadOutlineChildrenSafe(Connection connection, SchemaNode database) {
+        try {
+            return loadOutlineChildren(connection, database);
+        } catch (SQLException ignored) {
+            return database;
+        }
+    }
+
     private List<SchemaNode> readSecondarySchema(Connection connection, String preferredCatalog)
             throws SQLException {
         if (preferredCatalog == null || preferredCatalog.isBlank()) {
@@ -394,6 +417,9 @@ public final class SchemaIntrospectionService {
         }
         boolean loadKeys = tableCount <= DETAILED_KEYS_TABLE_LIMIT;
         Map<String, List<SchemaNode>> columnsByTable = readAllColumnsGrouped(connection, catalog);
+        Map<String, List<SchemaMetadataCodec.ForeignKey>> fksByTable = loadKeys
+                ? Map.of()
+                : readAllForeignKeysGrouped(connection, catalog);
         List<SchemaNode> children = new ArrayList<>(database.children().size());
         for (SchemaNode child : database.children()) {
             if (child.type() == NodeType.TABLE || child.type() == NodeType.VIEW) {
@@ -402,10 +428,10 @@ public final class SchemaIntrospectionService {
                             child.name().toLowerCase(Locale.ROOT), List.of());
                     if (loadKeys) {
                         children.add(readTableDetails(connection, catalog, child.name(), child, columns));
-                    } else if (!columns.isEmpty()) {
-                        children.add(withBatchedColumns(child, columns, catalog));
                     } else {
-                        children.add(child);
+                        List<SchemaMetadataCodec.ForeignKey> fks = fksByTable.getOrDefault(
+                                child.name().toLowerCase(Locale.ROOT), List.of());
+                        children.add(withBatchedColumns(child, columns, catalog, fks));
                     }
                 } catch (SQLException ignored) {
                     children.add(child);
@@ -417,11 +443,19 @@ public final class SchemaIntrospectionService {
         return database.withChildren(children);
     }
 
-    private static SchemaNode withBatchedColumns(SchemaNode base, List<SchemaNode> columns, String catalog) {
+    private static SchemaNode withBatchedColumns(
+            SchemaNode base,
+            List<SchemaNode> columns,
+            String catalog,
+            List<SchemaMetadataCodec.ForeignKey> foreignKeys) {
         Map<String, String> metadata = new LinkedHashMap<>(base.metadata());
         metadata.put(SchemaNode.META_CATALOG, Objects.requireNonNullElse(
                 firstNonBlank(base.metadata(SchemaNode.META_CATALOG), catalog), ""));
-        metadata.put(SchemaNode.META_DDL, generateDdl(base.type(), base.name(), columns, List.of(), List.of()));
+        List<SchemaMetadataCodec.ForeignKey> fks = foreignKeys == null ? List.of() : foreignKeys;
+        if (!fks.isEmpty()) {
+            metadata.put(SchemaNode.META_FOREIGN_KEYS, SchemaMetadataCodec.encodeForeignKeys(fks));
+        }
+        metadata.put(SchemaNode.META_DDL, generateDdl(base.type(), base.name(), columns, fks, List.of()));
         return new SchemaNode(base.name(), base.type(), columns, metadata);
     }
 
@@ -898,6 +932,82 @@ public final class SchemaIntrospectionService {
         metadata.put(SchemaNode.META_DDL, generateDdl(base.type(), table, columns, foreignKeys, indexes));
 
         return new SchemaNode(base.name(), base.type(), columns, metadata);
+    }
+
+    /**
+     * One INFORMATION_SCHEMA round-trip for every FK in {@code catalog}. Used when
+     * per-table {@code getImportedKeys} would be thousands of calls.
+     */
+    private static Map<String, List<SchemaMetadataCodec.ForeignKey>> readAllForeignKeysGrouped(
+            Connection connection, String catalog) {
+        if (catalog == null || catalog.isBlank()) {
+            return Map.of();
+        }
+        Map<String, List<SchemaMetadataCodec.ForeignKey>> mysql = queryForeignKeys(connection, catalog, """
+                SELECT CONSTRAINT_NAME, TABLE_NAME, COLUMN_NAME,
+                       REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+                WHERE REFERENCED_TABLE_NAME IS NOT NULL
+                  AND (UPPER(TABLE_SCHEMA) = UPPER(?) OR UPPER(TABLE_CATALOG) = UPPER(?))
+                """);
+        if (!mysql.isEmpty()) {
+            return mysql;
+        }
+        Map<String, List<SchemaMetadataCodec.ForeignKey>> standard = queryForeignKeys(connection, catalog, """
+                SELECT kcu.CONSTRAINT_NAME, kcu.TABLE_NAME, kcu.COLUMN_NAME,
+                       ccu.TABLE_NAME AS REFERENCED_TABLE_NAME,
+                       ccu.COLUMN_NAME AS REFERENCED_COLUMN_NAME
+                FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc
+                JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+                  ON kcu.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
+                 AND kcu.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA
+                JOIN INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE ccu
+                  ON ccu.CONSTRAINT_NAME = rc.UNIQUE_CONSTRAINT_NAME
+                 AND ccu.CONSTRAINT_SCHEMA = rc.UNIQUE_CONSTRAINT_SCHEMA
+                WHERE UPPER(kcu.TABLE_SCHEMA) = UPPER(?) OR UPPER(kcu.TABLE_CATALOG) = UPPER(?)
+                """);
+        if (!standard.isEmpty()) {
+            return standard;
+        }
+        return queryForeignKeys(connection, catalog, """
+                SELECT FK_NAME AS CONSTRAINT_NAME, FKTABLE_NAME AS TABLE_NAME, FKCOLUMN_NAME AS COLUMN_NAME,
+                       PKTABLE_NAME AS REFERENCED_TABLE_NAME, PKCOLUMN_NAME AS REFERENCED_COLUMN_NAME
+                FROM INFORMATION_SCHEMA.CROSS_REFERENCES
+                WHERE UPPER(FKTABLE_SCHEM) = UPPER(?) OR UPPER(FKTABLE_CAT) = UPPER(?)
+                """);
+    }
+
+    private static Map<String, List<SchemaMetadataCodec.ForeignKey>> queryForeignKeys(
+            Connection connection, String catalog, String sql) {
+        Map<String, List<SchemaMetadataCodec.ForeignKey>> grouped = new LinkedHashMap<>();
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, catalog);
+            statement.setString(2, catalog);
+            try (ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    String table = resultSet.getString("TABLE_NAME");
+                    String fkColumn = resultSet.getString("COLUMN_NAME");
+                    String pkTable = resultSet.getString("REFERENCED_TABLE_NAME");
+                    String pkColumn = resultSet.getString("REFERENCED_COLUMN_NAME");
+                    if (table == null || fkColumn == null || pkTable == null || pkColumn == null) {
+                        continue;
+                    }
+                    String name = Objects.requireNonNullElse(resultSet.getString("CONSTRAINT_NAME"), fkColumn + "_fk");
+                    grouped.computeIfAbsent(table.toLowerCase(Locale.ROOT), key -> new ArrayList<>())
+                            .add(new SchemaMetadataCodec.ForeignKey(name, fkColumn, pkTable, pkColumn));
+                }
+            }
+        } catch (SQLException ignored) {
+            return Map.of();
+        }
+        if (grouped.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, List<SchemaMetadataCodec.ForeignKey>> frozen = new LinkedHashMap<>();
+        for (Map.Entry<String, List<SchemaMetadataCodec.ForeignKey>> entry : grouped.entrySet()) {
+            frozen.put(entry.getKey(), List.copyOf(entry.getValue()));
+        }
+        return Map.copyOf(frozen);
     }
 
     private static List<SchemaMetadataCodec.ForeignKey> readForeignKeys(

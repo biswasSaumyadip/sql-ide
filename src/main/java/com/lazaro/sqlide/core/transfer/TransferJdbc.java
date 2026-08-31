@@ -1,6 +1,7 @@
 package com.lazaro.sqlide.core.transfer;
 
 import com.lazaro.sqlide.core.db.ConnectionConfig;
+import com.lazaro.sqlide.core.db.JdbcMetadataLayout;
 
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -38,6 +39,12 @@ public final class TransferJdbc {
     }
 
     public static List<String> listCatalogs(Connection connection) throws SQLException {
+        return listCatalogs(connection, new JdbcMetadataLayout());
+    }
+
+    public static List<String> listCatalogs(Connection connection, JdbcMetadataLayout layout)
+            throws SQLException {
+        JdbcMetadataLayout ns = layout == null ? new JdbcMetadataLayout() : layout;
         List<String> catalogs = new ArrayList<>();
         DatabaseMetaData meta = connection.getMetaData();
         try (ResultSet rs = meta.getCatalogs()) {
@@ -48,7 +55,9 @@ public final class TransferJdbc {
                 }
             }
         }
-        if (catalogs.isEmpty()) {
+        if (!catalogs.isEmpty()) {
+            ns.remember(JdbcMetadataLayout.Slot.CATALOG);
+        } else {
             try (ResultSet rs = meta.getSchemas()) {
                 while (rs.next()) {
                     String name = rs.getString("TABLE_SCHEM");
@@ -57,57 +66,60 @@ public final class TransferJdbc {
                     }
                 }
             }
+            if (!catalogs.isEmpty()) {
+                ns.remember(JdbcMetadataLayout.Slot.SCHEMA);
+            }
         }
         catalogs.sort(String.CASE_INSENSITIVE_ORDER);
         return catalogs;
     }
 
     public static List<String> listTables(Connection connection, String catalog) throws SQLException {
-        List<String> tables = new ArrayList<>();
+        return listTables(connection, catalog, new JdbcMetadataLayout());
+    }
+
+    public static List<String> listTables(Connection connection, String catalog, JdbcMetadataLayout layout)
+            throws SQLException {
+        JdbcMetadataLayout ns = layout == null ? new JdbcMetadataLayout() : layout;
         DatabaseMetaData meta = connection.getMetaData();
         String cat = blankToNull(catalog);
-        try (ResultSet rs = meta.getTables(cat, null, "%", new String[]{"TABLE", "BASE TABLE"})) {
-            while (rs.next()) {
-                String name = rs.getString("TABLE_NAME");
-                if (name != null && !name.isBlank()) {
-                    tables.add(name);
-                }
-            }
-        }
-        if (tables.isEmpty()) {
-            try (ResultSet rs = meta.getTables(null, cat, "%", new String[]{"TABLE", "BASE TABLE"})) {
+        return ns.read(cat, (slotCatalog, slotSchema) -> {
+            List<String> tables = new ArrayList<>();
+            try (ResultSet rs = meta.getTables(
+                    slotCatalog, slotSchema, "%", new String[]{"TABLE", "BASE TABLE"})) {
                 while (rs.next()) {
                     String name = rs.getString("TABLE_NAME");
-                    if (name != null && !name.isBlank() && !tables.contains(name)) {
+                    if (name != null && !name.isBlank()) {
                         tables.add(name);
                     }
                 }
             }
-        }
-        tables.sort(String.CASE_INSENSITIVE_ORDER);
-        return tables;
+            tables.sort(String.CASE_INSENSITIVE_ORDER);
+            return tables;
+        }, List::isEmpty);
     }
 
     public static List<String> listColumns(Connection connection, String catalog, String table) throws SQLException {
-        List<String> columns = new ArrayList<>();
+        return listColumns(connection, catalog, table, new JdbcMetadataLayout());
+    }
+
+    public static List<String> listColumns(
+            Connection connection, String catalog, String table, JdbcMetadataLayout layout) throws SQLException {
+        JdbcMetadataLayout ns = layout == null ? new JdbcMetadataLayout() : layout;
         DatabaseMetaData meta = connection.getMetaData();
         String cat = blankToNull(catalog);
-        try (ResultSet rs = meta.getColumns(cat, null, table, "%")) {
-            while (rs.next()) {
-                columns.add(rs.getString("COLUMN_NAME"));
-            }
-        }
-        if (columns.isEmpty()) {
-            try (ResultSet rs = meta.getColumns(null, cat, table, "%")) {
+        return ns.read(cat, (slotCatalog, slotSchema) -> {
+            List<String> columns = new ArrayList<>();
+            try (ResultSet rs = meta.getColumns(slotCatalog, slotSchema, table, "%")) {
                 while (rs.next()) {
                     String name = rs.getString("COLUMN_NAME");
-                    if (!columns.contains(name)) {
+                    if (name != null && !name.isBlank() && !columns.contains(name)) {
                         columns.add(name);
                     }
                 }
             }
-        }
-        return columns;
+            return columns;
+        }, List::isEmpty);
     }
 
     public static long countRows(Connection connection, String catalog, String table, ConnectionConfig.Driver driver)

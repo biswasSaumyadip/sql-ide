@@ -96,6 +96,7 @@ public final class ResultToolbar extends HBox {
     private final MenuButton exportButton = new MenuButton("Export", Icons.export());
     private final Button copyButton = new Button();
     private final ToggleButton findButton = new ToggleButton();
+    private final ToggleButton columnFilterButton = new ToggleButton();
     private final TextField findField = new TextField();
     private final Button fitColumnsButton = new Button();
     private final ToggleButton viewToggle = new ToggleButton();
@@ -158,6 +159,11 @@ public final class ResultToolbar extends HBox {
         findButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-icon-button");
         findButton.setTooltip(new Tooltip("Find in results (Ctrl+F)"));
         findButton.setOnAction(event -> toggleFindBar(findButton.isSelected()));
+
+        columnFilterButton.setGraphic(Icons.schemaFilter());
+        columnFilterButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-icon-button");
+        columnFilterButton.setTooltip(new Tooltip("Column filters (in-memory)"));
+        columnFilterButton.setOnAction(event -> toggleColumnFilters(columnFilterButton.isSelected()));
 
         findField.getStyleClass().add("result-toolbar-find");
         findField.setPromptText("Find in results\u2026");
@@ -248,6 +254,7 @@ public final class ResultToolbar extends HBox {
                 exportButton,
                 copyButton,
                 findButton,
+                columnFilterButton,
                 findField,
                 fitColumnsButton,
                 viewToggle,
@@ -463,6 +470,10 @@ public final class ResultToolbar extends HBox {
         if (findField.isVisible()) {
             applyFind(findField.getText());
         }
+        DynamicResultTable table = tableSupplier.get();
+        if (table != null) {
+            table.setColumnFiltersVisible(columnFilterButton.isSelected());
+        }
     }
 
     public boolean copyAsTsv() {
@@ -484,6 +495,7 @@ public final class ResultToolbar extends HBox {
         exportButton.disableProperty().bind(tableEmptyBinding);
         copyButton.disableProperty().bind(tableEmptyBinding);
         findButton.disableProperty().bind(tableEmptyBinding);
+        columnFilterButton.disableProperty().bind(tableEmptyBinding);
         fitColumnsButton.disableProperty().bind(tableEmptyBinding);
         if (tableEmptyBinding.get()) {
             closeFindIfNeeded();
@@ -539,6 +551,7 @@ public final class ResultToolbar extends HBox {
         exportButton.disableProperty().unbind();
         copyButton.disableProperty().unbind();
         findButton.disableProperty().unbind();
+        columnFilterButton.disableProperty().unbind();
         fitColumnsButton.disableProperty().unbind();
         if (tableEmptyBinding != null) {
             tableEmptyBinding.dispose();
@@ -550,20 +563,25 @@ public final class ResultToolbar extends HBox {
         exportButton.setDisable(disabled);
         copyButton.setDisable(disabled);
         findButton.setDisable(disabled);
+        columnFilterButton.setDisable(disabled);
         fitColumnsButton.setDisable(disabled);
     }
 
     private void closeFindIfNeeded() {
         toggleFindBar(false);
         findButton.setSelected(false);
+        columnFilterButton.setSelected(false);
+        DynamicResultTable table = tableSupplier.get();
+        if (table != null) {
+            table.setColumnFiltersVisible(false);
+        }
     }
 
     private static boolean isTableDataEmpty(DynamicResultTable table) {
         if (table == null || !table.hasExportableResult()) {
             return true;
         }
-        ObservableList<?> items = table.getItems();
-        return items == null || items.isEmpty();
+        return !table.hasLoadedRows();
     }
 
     private void toggleFindBar(boolean show) {
@@ -575,6 +593,13 @@ public final class ResultToolbar extends HBox {
         } else {
             findField.clear();
             applyFind("");
+        }
+    }
+
+    private void toggleColumnFilters(boolean show) {
+        DynamicResultTable table = tableSupplier.get();
+        if (table != null) {
+            table.setColumnFiltersVisible(show);
         }
     }
 

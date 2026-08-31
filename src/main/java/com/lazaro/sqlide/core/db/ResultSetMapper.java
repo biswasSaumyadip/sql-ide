@@ -49,6 +49,7 @@ public final class ResultSetMapper {
             throws SQLException {
         ResultSetMetaData metaData = resultSet.getMetaData();
         int columnCount = metaData.getColumnCount();
+        List<ResultColumn> columns = ResultColumnMetadata.fromResultSet(resultSet);
         List<String> columnNames = columnLabels(metaData, columnCount);
 
         int skip = Math.max(0, skipRows);
@@ -68,7 +69,7 @@ public final class ResultSetMapper {
         }
         // Peek one past the cap so the UI can warn that more rows exist.
         boolean truncated = limit > 0 && rows.size() == limit && resultSet.next();
-        return QueryResult.ofRows(columnNames, rows, elapsedMs(startNanos), truncated);
+        return QueryResult.ofRows(columnNames, rows, elapsedMs(startNanos), truncated, columns);
     }
 
     private static List<String> columnLabels(ResultSetMetaData metaData, int columnCount) throws SQLException {

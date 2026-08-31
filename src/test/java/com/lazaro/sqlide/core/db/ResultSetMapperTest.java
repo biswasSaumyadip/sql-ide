@@ -70,4 +70,43 @@ class ResultSetMapperTest {
             assertFalse(result.truncated());
         }
     }
+
+    @Test
+    void capturesTypeAndKeyFlagsFromJdbcMetadata() throws Exception {
+        try (Statement statement = connection.createStatement()) {
+            statement.execute("""
+                    CREATE TABLE parent (
+                      id INT PRIMARY KEY,
+                      label VARCHAR(32)
+                    )
+                    """);
+            statement.execute("""
+                    CREATE TABLE child (
+                      id INT PRIMARY KEY,
+                      parent_id INT,
+                      created_at TIMESTAMP,
+                      FOREIGN KEY (parent_id) REFERENCES parent(id)
+                    )
+                    """);
+            statement.execute("INSERT INTO parent VALUES (1, 'root')");
+            statement.execute("INSERT INTO child VALUES (10, 1, CURRENT_TIMESTAMP)");
+        }
+        try (Statement statement = connection.createStatement();
+             ResultSet resultSet = statement.executeQuery(
+                     "SELECT id, parent_id, created_at FROM child")) {
+            QueryResult result = ResultSetMapper.drain(resultSet, 10, System.nanoTime());
+            assertEquals(3, result.columns().size());
+            ResultColumn id = result.columns().get(0);
+            ResultColumn parentId = result.columns().get(1);
+            ResultColumn created = result.columns().get(2);
+            assertTrue(id.name().equalsIgnoreCase("id"));
+            assertTrue(id.primaryKey(), "id should be marked as a primary key");
+            assertEquals(ResultColumn.Kind.NUMERIC, id.kind());
+            assertEquals("123", id.typeBadge());
+            assertTrue(parentId.name().equalsIgnoreCase("parent_id"));
+            assertTrue(parentId.foreignKey(), "parent_id should be marked as a foreign key");
+            assertEquals(ResultColumn.Kind.TEMPORAL, created.kind());
+            assertEquals("", created.typeBadge());
+        }
+    }
 }

@@ -192,6 +192,22 @@
     -fx-stroke: #e8c547;
 }
 
+.icon-key-fk {
+    -fx-stroke: #8ab4d8;
+}
+
+.icon-clock {
+    -fx-stroke: #57b5a6;
+}
+
+.icon-gc {
+    -fx-stroke: #8b919a;
+}
+
+.icon-minimap {
+    -fx-stroke: #8b919a;
+}
+
 .icon-index {
     -fx-stroke: #6ec6e0;
 }
@@ -1241,6 +1257,31 @@
 
 .status-caret {
     -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+}
+
+.status-heap {
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 11px;
+    -fx-text-fill: #8b919a;
+}
+
+.status-gc-button {
+    -fx-background-color: transparent;
+    -fx-background-radius: 3px;
+    -fx-padding: 1px 4px;
+    -fx-min-width: 18px;
+    -fx-min-height: 18px;
+    -fx-pref-width: 20px;
+    -fx-pref-height: 20px;
+    -fx-cursor: hand;
+}
+
+.status-gc-button:hover {
+    -fx-background-color: #2b2d31;
+}
+
+.status-gc-button:pressed {
+    -fx-background-color: #34373d;
 }
 
 .status-database {

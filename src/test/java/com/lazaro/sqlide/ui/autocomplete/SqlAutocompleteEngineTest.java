@@ -282,6 +282,17 @@ class SqlAutocompleteEngineTest {
     }
 
     @Test
+    @DisplayName("SELECT without FROM does not dump every column unless Ctrl+Space")
+    void selectDoesNotDumpAllColumnsOnAutoPopup() {
+        List<Suggestion> auto = suggest("SELECT ");
+        assertTrue(auto.stream().noneMatch(s -> s.kind() == Kind.COLUMN && s.insertText().equals("email")),
+                "auto-popup must not walk every table's columns: " + auto);
+        List<Suggestion> invoked = suggest("SELECT ", true);
+        assertTrue(invoked.stream().anyMatch(s -> s.kind() == Kind.COLUMN && s.insertText().equals("email")),
+                "Ctrl+Space may still list columns: " + invoked);
+    }
+
+    @Test
     @DisplayName("Ctrl+Space (invoked) surfaces keywords even with a short prefix")
     void invokedShowsKeywords() {
         String sql = "S";
@@ -308,10 +319,12 @@ class SqlAutocompleteEngineTest {
     void midTokenUnderscoreMatch() {
         assertTrue(SqlAutocompleteEngine.matchScore("sales_orders", "orders") > 0);
         String sql = "SELECT * FROM orders";
-        // prefix "orders" should still list sales_orders via mid-token
-        List<Suggestion> suggestions = suggest(sql);
-        assertTrue(suggestions.stream().anyMatch(s -> s.insertText().equals("sales_orders")),
-                "expected sales_orders for mid-token orders: " + suggestions);
+        List<Suggestion> auto = suggest(sql);
+        assertTrue(auto.stream().noneMatch(s -> s.insertText().equals("sales_orders")),
+                "prefix hits skip mid-token unless Ctrl+Space: " + auto);
+        List<Suggestion> invoked = suggest(sql, true);
+        assertTrue(invoked.stream().anyMatch(s -> s.insertText().equals("sales_orders")),
+                "expected sales_orders for mid-token orders on Ctrl+Space: " + invoked);
     }
 
     @Test

@@ -28,6 +28,69 @@
     -fx-font-size: 11.5px;
 }
 
+.result-table.result-table-filters .column-header {
+    -fx-padding: 4px 6px 6px 6px;
+}
+
+.result-column-header {
+    -fx-spacing: 2px;
+}
+
+.result-column-title {
+    -fx-alignment: CENTER_LEFT;
+}
+
+.result-column-name {
+    -fx-text-fill: #8b919a;
+    -fx-font-size: 11.5px;
+}
+
+.result-type-badge {
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 9px;
+    -fx-font-weight: bold;
+    -fx-padding: 0 1 0 0;
+    -fx-opacity: 0.95;
+}
+
+.result-type-numeric {
+    -fx-text-fill: #b5cea8;
+}
+
+.result-type-text {
+    -fx-text-fill: #4fa6ee;
+}
+
+.result-type-boolean {
+    -fx-text-fill: #c8a25e;
+}
+
+.result-type-binary {
+    -fx-text-fill: #b48ead;
+}
+
+.result-type-other {
+    -fx-text-fill: #8b919a;
+}
+
+.result-column-filter {
+    -fx-font-size: 11px;
+    -fx-pref-height: 20px;
+    -fx-min-height: 20px;
+    -fx-background-color: #17181b;
+    -fx-background-insets: 0;
+    -fx-background-radius: 3px;
+    -fx-border-color: #3d4048;
+    -fx-border-radius: 3px;
+    -fx-text-fill: #d6d9de;
+    -fx-prompt-text-fill: #6b7280;
+    -fx-padding: 1px 5px;
+}
+
+.result-column-filter:focused {
+    -fx-border-color: #4fa6ee;
+}
+
 .result-table .table-row-cell {
     -fx-background-color: transparent;
     -fx-border-color: transparent;

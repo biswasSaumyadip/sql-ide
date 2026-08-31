@@ -102,6 +102,14 @@ public interface DataSourceDriver extends AutoCloseable {
     CompletableFuture<List<SchemaNode>> getFullSchema();
 
     /**
+     * Attaches columns / keys to an outline that was already loaded by
+     * {@link #getSchemaOutline()}. Skips re-listing tables and routines.
+     */
+    default CompletableFuture<List<SchemaNode>> enrichSchema(List<SchemaNode> outline) {
+        return getFullSchema();
+    }
+
+    /**
      * Columns, keys, indexes and DDL for one table / view / routine. Used when the
      * cache only has a name (large schemas skip per-object details until needed).
      */

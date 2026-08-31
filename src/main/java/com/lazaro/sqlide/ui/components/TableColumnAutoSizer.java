@@ -12,7 +12,7 @@ public final class TableColumnAutoSizer {
 
     private static final double CHAR_WIDTH = 8.4;
     private static final double CELL_PADDING = 20;   // 8px + 8px + grid borders
-    private static final double HEADER_EXTRA = 28;   // sort arrow / header chrome
+    private static final double HEADER_EXTRA = 44;   // sort arrow / type badge / key icons
     private static final double MIN_WIDTH = 56;
     private static final double MAX_WIDTH = 480;
     private static final int SAMPLE_ROWS = 120;

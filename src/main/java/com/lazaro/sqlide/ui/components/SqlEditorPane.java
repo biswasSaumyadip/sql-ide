@@ -4,6 +4,7 @@ import com.lazaro.sqlide.core.db.ConnectionConfig;
 import com.lazaro.sqlide.core.db.SchemaCache;
 import com.lazaro.sqlide.core.doc.SqlDocResolver;
 import com.lazaro.sqlide.core.doc.SqlDocResolver.Doc;
+import com.lazaro.sqlide.core.editor.EditorScrollAnnotations;
 import com.lazaro.sqlide.core.inspection.InspectionHighlights;
 import com.lazaro.sqlide.core.inspection.InspectionIssue;
 import com.lazaro.sqlide.core.inspection.Severity;
@@ -38,6 +39,8 @@ import javafx.geometry.Pos;
 import javafx.geometry.Rectangle2D;
 import javafx.scene.Cursor;
 import javafx.scene.Node;
+import javafx.scene.Parent;
+import javafx.scene.control.CheckMenuItem;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.IndexRange;
@@ -45,6 +48,10 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
 import javafx.scene.control.MenuItem;
+import javafx.scene.control.ScrollBar;
+import javafx.scene.control.ScrollPane;
+import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.control.ToggleButton;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyCodeCombination;
@@ -116,6 +123,14 @@ public final class SqlEditorPane extends BorderPane {
     private final Pane inlayLayer = new PassThroughPane();
     private final Pane statementLayer = new PassThroughPane();
     private final Rectangle statementFrame = new Rectangle();
+    private final VirtualizedScrollPane<CodeArea> scroll;
+    private final SqlEditorMinimap minimap;
+    private final EditorScrollbarMarkers scrollbarMarkers;
+    private final ToggleButton minimapToggle = new ToggleButton();
+    /**
+     * {@code null} follows document length; otherwise the user's last minimap toggle.
+     */
+    private Boolean minimapOverride;
     private final EditorFindBar findBar;
     private final ExecutorService highlightExecutor;
     private final ExecutorService inspectionExecutor;
@@ -265,7 +280,15 @@ public final class SqlEditorPane extends BorderPane {
         });
         Region sessionSpacer = new Region();
         HBox.setHgrow(sessionSpacer, Priority.ALWAYS);
-        sessionBar.getChildren().setAll(sessionSpacer, sessionLabel, sessionBox);
+
+        minimapToggle.setGraphic(Icons.minimap());
+        minimapToggle.getStyleClass().addAll("icon-button", "sql-minimap-toggle");
+        minimapToggle.setTooltip(new Tooltip("Show code minimap"));
+        minimapToggle.setSelected(false);
+        minimapToggle.setFocusTraversable(false);
+        minimapToggle.setOnAction(event -> setMinimapVisible(minimapToggle.isSelected()));
+
+        sessionBar.getChildren().setAll(minimapToggle, sessionSpacer, sessionLabel, sessionBox);
         sessionBar.getStyleClass().add("console-session-bar");
         sessionBar.setAlignment(Pos.CENTER_RIGHT);
         sessionBar.setPadding(new Insets(2, 8, 2, 8));
@@ -292,10 +315,23 @@ public final class SqlEditorPane extends BorderPane {
         statementLayer.setBackground(null);
         statementLayer.getStyleClass().add("current-statement-layer");
         statementLayer.getChildren().add(statementFrame);
-        VirtualizedScrollPane<CodeArea> scroll = new VirtualizedScrollPane<>(codeArea);
-        StackPane editorStack = new StackPane(scroll, inlayLayer, statementLayer);
+        scroll = new VirtualizedScrollPane<>(
+                codeArea, ScrollPane.ScrollBarPolicy.AS_NEEDED, ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        wireScrollbarCollapse(scroll);
+        scrollbarMarkers = new EditorScrollbarMarkers(codeArea);
+        StackPane editorStack = new StackPane(scroll, inlayLayer, statementLayer, scrollbarMarkers);
         editorStack.getStyleClass().add("sql-editor-stack");
-        setCenter(editorStack);
+        minimap = new SqlEditorMinimap(codeArea, scroll);
+        HBox editorBody = new HBox(editorStack, minimap);
+        editorBody.getStyleClass().add("sql-editor-body");
+        HBox.setHgrow(editorStack, Priority.ALWAYS);
+        setCenter(editorBody);
+        applyMinimapVisibility();
+        codeArea.textProperty().addListener((observable, previous, next) -> {
+            if (minimapOverride == null) {
+                applyMinimapVisibility();
+            }
+        });
         installEditorContextMenu();
         wireCurrentStatementHighlight();
 
@@ -709,6 +745,7 @@ public final class SqlEditorPane extends BorderPane {
         inlayExecutor.shutdownNow();
         docExecutor.shutdownNow();
         completionExecutor.shutdownNow();
+        minimap.dispose();
     }
 
     private void installEditorContextMenu() {
@@ -727,8 +764,14 @@ public final class SqlEditorPane extends BorderPane {
         MenuItem replace = new MenuItem("Replace\u2026");
         replace.setAccelerator(new KeyCodeCombination(KeyCode.H, KeyCombination.SHORTCUT_DOWN));
         replace.setOnAction(event -> showFind(true));
+        CheckMenuItem showMinimap = new CheckMenuItem("Show Minimap");
+        showMinimap.setSelected(false);
+        showMinimap.setOnAction(event -> setMinimapVisible(showMinimap.isSelected()));
+        minimapToggle.selectedProperty().addListener((observable, previous, next) ->
+                showMinimap.setSelected(Boolean.TRUE.equals(next)));
 
-        ContextMenu menu = new ContextMenu(selectInDatabase, viewAsJson, format, find, replace);
+        ContextMenu menu = new ContextMenu(
+                selectInDatabase, viewAsJson, format, find, replace, new SeparatorMenuItem(), showMinimap);
         menu.setOnShowing(event -> viewAsJson.setDisable(findJsonAtCaret().isEmpty()));
         codeArea.setContextMenu(menu);
 
@@ -1889,6 +1932,7 @@ public final class SqlEditorPane extends BorderPane {
             if (!lastIssues.isEmpty()) {
                 lastIssues = List.of();
                 paintCombinedStyles();
+                refreshInspectionChrome();
             }
             inspectionDebounce.playFromStart();
         });
@@ -1923,6 +1967,50 @@ public final class SqlEditorPane extends BorderPane {
     private void applyInspections(List<InspectionIssue> issues) {
         lastIssues = List.copyOf(issues);
         paintCombinedStyles();
+        refreshInspectionChrome();
+    }
+
+    private void refreshInspectionChrome() {
+        scrollbarMarkers.setIssues(lastIssues);
+        minimap.setIssues(lastIssues);
+    }
+
+    public void setMinimapVisible(boolean visible) {
+        minimapOverride = visible;
+        applyMinimapVisibility();
+    }
+
+    public boolean isMinimapVisible() {
+        return minimap.isVisible();
+    }
+
+    private void applyMinimapVisibility() {
+        boolean show = minimapOverride != null
+                ? minimapOverride
+                : EditorScrollAnnotations.shouldAutoShowMinimap(codeArea.getParagraphs().size());
+        minimap.setVisible(show);
+        if (minimapToggle.isSelected() != show) {
+            minimapToggle.setSelected(show);
+        }
+        minimapToggle.setTooltip(new Tooltip(show ? "Hide code minimap" : "Show code minimap"));
+    }
+
+    private void wireScrollbarCollapse(VirtualizedScrollPane<?> pane) {
+        Runnable bind = () -> bindScrollBarManaged(pane);
+        pane.sceneProperty().addListener((observable, previous, scene) -> {
+            if (scene != null) {
+                Platform.runLater(bind);
+            }
+        });
+        pane.layoutBoundsProperty().addListener((observable, previous, next) -> bindScrollBarManaged(pane));
+    }
+
+    private static void bindScrollBarManaged(Parent pane) {
+        for (Node node : pane.lookupAll(".scroll-bar")) {
+            if (node instanceof ScrollBar bar && !bar.managedProperty().isBound()) {
+                bar.managedProperty().bind(bar.visibleProperty());
+            }
+        }
     }
 
     /** Immediate inspect (schema/catalog change) — still cancels redundant in-flight work. */

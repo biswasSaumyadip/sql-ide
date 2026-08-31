@@ -45,7 +45,8 @@ public final class ResultExporter {
             throw new IllegalArgumentException("Only successful result sets can be sliced");
         }
         List<List<String>> copy = rows == null ? List.of() : List.copyOf(rows);
-        return QueryResult.ofRows(source.columnNames(), copy, source.executionTimeMs(), false);
+        return QueryResult.ofRows(
+                source.columnNames(), copy, source.executionTimeMs(), false, source.columns());
     }
 
     public static String toCsv(QueryResult result) {
