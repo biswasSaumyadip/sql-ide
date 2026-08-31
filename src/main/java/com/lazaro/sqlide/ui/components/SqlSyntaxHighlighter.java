@@ -21,7 +21,7 @@ import java.util.regex.Pattern;
  * are expanded into nested JSON token spans with an {@code injected-language} marker.
  * Active fold summary strings are styled as {@code fold-placeholder}.
  */
-final class SqlSyntaxHighlighter {
+public final class SqlSyntaxHighlighter {
 
     static final String KEYWORD = "sql-keyword";
     static final String FUNCTION = "sql-function";
@@ -134,7 +134,7 @@ final class SqlSyntaxHighlighter {
         return driver != null && driver.connectionType().isRedis() ? ".redis" : ".sql";
     }
 
-    static StyleSpans<Collection<String>> computeHighlighting(String text) {
+    public static StyleSpans<Collection<String>> computeHighlighting(String text) {
         return computeHighlighting(text, List.of(), ConnectionConfig.Driver.MYSQL);
     }
 
@@ -145,7 +145,7 @@ final class SqlSyntaxHighlighter {
         return computeHighlighting(text, foldRanges, ConnectionConfig.Driver.MYSQL);
     }
 
-    static StyleSpans<Collection<String>> computeHighlighting(
+    public static StyleSpans<Collection<String>> computeHighlighting(
             String text, List<int[]> foldRanges, ConnectionConfig.Driver driver) {
         String source = text == null ? "" : text;
         StyleSpansBuilder<Collection<String>> builder = new StyleSpansBuilder<>();

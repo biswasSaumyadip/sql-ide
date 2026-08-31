@@ -425,6 +425,26 @@ public final class Icons {
         return group(lid, handle, body, crease);
     }
 
+    /** Compact up chevron for reorder toolbars. */
+    public static Node arrowUp() {
+        Polygon head = new Polygon(7.0, 3.0, 2.5, 9.0, 11.5, 9.0);
+        head.setFill(null);
+        head.setStrokeWidth(STROKE);
+        head.getStyleClass().addAll(BASE_CLASS, "icon-arrow");
+        Line shaft = outlined(new Line(7.0, 8.0, 7.0, 12.0), "icon-arrow");
+        return group(head, shaft);
+    }
+
+    /** Compact down chevron for reorder toolbars. */
+    public static Node arrowDown() {
+        Polygon head = new Polygon(7.0, 12.0, 2.5, 6.0, 11.5, 6.0);
+        head.setFill(null);
+        head.setStrokeWidth(STROKE);
+        head.getStyleClass().addAll(BASE_CLASS, "icon-arrow");
+        Line shaft = outlined(new Line(7.0, 3.0, 7.0, 7.0), "icon-arrow");
+        return group(head, shaft);
+    }
+
     /** Funnel glyph for the schema-filter toolbar action. */
     public static Node schemaFilter() {
         Polygon funnel = new Polygon(

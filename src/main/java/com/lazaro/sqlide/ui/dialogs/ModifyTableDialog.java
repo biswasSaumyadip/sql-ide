@@ -9,6 +9,8 @@ import com.lazaro.sqlide.core.tabledesign.TableDesignerModel;
 import com.lazaro.sqlide.core.tabledesign.TableDesignerModel.ColumnDraft;
 import com.lazaro.sqlide.core.tabledesign.TableDesignerModel.FkDraft;
 import com.lazaro.sqlide.core.tabledesign.TableDesignerModel.IndexDraft;
+import com.lazaro.sqlide.ui.Icons;
+import com.lazaro.sqlide.ui.components.SqlSyntaxHighlighter;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
@@ -22,20 +24,25 @@ import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableRow;
 import javafx.scene.control.TableView;
-import javafx.scene.control.TextArea;
+import javafx.scene.control.Tooltip;
 import javafx.scene.control.cell.CheckBoxTableCell;
 import javafx.scene.control.cell.ComboBoxTableCell;
 import javafx.scene.control.cell.TextFieldTableCell;
+import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
+import javafx.stage.StageStyle;
 import javafx.stage.Window;
+import org.fxmisc.flowless.VirtualizedScrollPane;
+import org.fxmisc.richtext.CodeArea;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -62,11 +69,12 @@ public final class ModifyTableDialog extends Dialog<String> {
     private final TableDesignerModel model;
     private final Driver driver;
     private final ObservableList<String> tableNames;
+    private final DialogChrome chrome;
 
     private final TableView<ColumnDraft> columnsTable = new TableView<>();
     private final TableView<IndexDraft> indexesTable = new TableView<>();
     private final TableView<FkDraft> fksTable = new TableView<>();
-    private final TextArea preview = new TextArea();
+    private final CodeArea preview = new CodeArea();
     private Node openButton;
 
     public ModifyTableDialog(Window owner, SchemaNode table, Driver driver, List<String> tableNames) {
@@ -74,23 +82,29 @@ public final class ModifyTableDialog extends Dialog<String> {
         this.model = TableDesignerModel.from(table);
         this.driver = driver == null ? Driver.MYSQL : driver;
         this.tableNames = FXCollections.observableArrayList(tableNames == null ? List.of() : tableNames);
+        this.chrome = new DialogChrome(this, 720, 480);
 
         String qualified = table.qualifiedName();
+        initStyle(StageStyle.UNDECORATED);
         setTitle("Modify Table");
-        setHeaderText("Modify " + qualified);
+        setHeaderText(null);
+        setGraphic(null);
         setResizable(true);
         if (owner != null) {
             initOwner(owner);
         }
 
         getDialogPane().getButtonTypes().setAll(OPEN_IN_EDITOR, ButtonType.CANCEL);
-        getDialogPane().lookupButton(OPEN_IN_EDITOR).getStyleClass().add(Styles.ACCENT);
         openButton = getDialogPane().lookupButton(OPEN_IN_EDITOR);
+        openButton.getStyleClass().addAll(Styles.ACCENT, "modify-table-open");
 
-        getDialogPane().setContent(buildRoot());
         getDialogPane().getStyleClass().add("modify-table-dialog");
+        getDialogPane().getStylesheets().addAll(appStylesheet(), editorStylesheet());
+        getDialogPane().setContent(buildRoot(qualified));
         getDialogPane().setPrefSize(920, 640);
+        getDialogPane().setMinSize(720, 480);
 
+        setOnShown(event -> chrome.installResize());
         setResultConverter(button -> {
             if (button != OPEN_IN_EDITOR || !model.dirty()) {
                 return null;
@@ -114,7 +128,7 @@ public final class ModifyTableDialog extends Dialog<String> {
         return names;
     }
 
-    private VBox buildRoot() {
+    private BorderPane buildRoot(String qualified) {
         Tab columnsTab = new Tab("Columns", columnsPane());
         Tab indexesTab = new Tab("Indexes", indexesPane());
         Tab fksTab = new Tab("Foreign keys", fksPane());
@@ -124,27 +138,44 @@ public final class ModifyTableDialog extends Dialog<String> {
         TabPane tabs = new TabPane(columnsTab, indexesTab, fksTab);
         tabs.getStyleClass().add("modify-table-tabs");
 
+        preview.getStyleClass().addAll("sql-editor", "modify-table-preview");
         preview.setEditable(false);
         preview.setWrapText(true);
-        preview.getStyleClass().add("modify-table-preview");
-        Label previewLabel = new Label("ALTER preview \u2014 nothing runs until you execute it in the editor");
-        previewLabel.getStyleClass().add("modify-table-hint");
-        VBox previewBox = new VBox(6, previewLabel, preview);
-        previewBox.setPadding(new Insets(8, 0, 0, 0));
-        VBox.setVgrow(preview, Priority.ALWAYS);
+        VirtualizedScrollPane<CodeArea> previewScroll = new VirtualizedScrollPane<>(
+                preview, ScrollPane.ScrollBarPolicy.AS_NEEDED, ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        previewScroll.getStyleClass().add("modify-table-preview-scroll");
+        VBox.setVgrow(previewScroll, Priority.ALWAYS);
+
+        Label previewHint = new Label("Nothing runs until you execute this ALTER in the editor");
+        previewHint.getStyleClass().add("modify-table-hint");
+        previewHint.setAlignment(Pos.CENTER_LEFT);
+        previewHint.setMaxWidth(Double.MAX_VALUE);
+
+        VBox previewBox = new VBox(6, previewHint, previewScroll);
+        previewBox.getStyleClass().add("modify-table-preview-box");
+        SplitPane.setResizableWithParent(previewBox, false);
 
         SplitPane split = new SplitPane(tabs, previewBox);
         split.setOrientation(Orientation.VERTICAL);
         split.setDividerPositions(0.62);
-        SplitPane.setResizableWithParent(previewBox, false);
-
-        VBox root = new VBox(split);
         VBox.setVgrow(split, Priority.ALWAYS);
+
+        Label subtitle = new Label(qualified);
+        subtitle.getStyleClass().add("modify-table-subtitle");
+
+        VBox body = new VBox(10, subtitle, split);
+        body.getStyleClass().add("modify-table-body");
+
+        BorderPane root = new BorderPane();
+        root.getStyleClass().add("modify-table-root");
+        root.setTop(chrome.titleBar("Modify Table"));
+        root.setCenter(body);
         return root;
     }
 
     private VBox columnsPane() {
         columnsTable.setEditable(true);
+        columnsTable.getStyleClass().add("modify-table-grid");
         columnsTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
         columnsTable.setItems(FXCollections.observableArrayList(model.columns()));
         columnsTable.setRowFactory(tv -> droppedRow(ColumnDraft::dropped, ColumnDraft::added));
@@ -172,10 +203,10 @@ public final class ModifyTableDialog extends Dialog<String> {
         TableColumn<ColumnDraft, Boolean> pk = boolColumn("PK", ColumnDraft::primaryKey, ColumnDraft::setPrimaryKey);
         columnsTable.getColumns().setAll(List.of(name, type, nullable, pk));
 
-        Button add = new Button("Add");
-        Button drop = new Button("Drop / Restore");
-        Button up = new Button("Up");
-        Button down = new Button("Down");
+        Button add = toolButton(Icons.newQuery(), "Add column");
+        Button drop = toolButton(Icons.clear(), "Drop / Restore");
+        Button up = toolButton(Icons.arrowUp(), "Move up");
+        Button down = toolButton(Icons.arrowDown(), "Move down");
         add.setOnAction(event -> {
             model.addColumn();
             reloadColumns();
@@ -193,6 +224,7 @@ public final class ModifyTableDialog extends Dialog<String> {
 
     private VBox indexesPane() {
         indexesTable.setEditable(true);
+        indexesTable.getStyleClass().add("modify-table-grid");
         indexesTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
         indexesTable.setItems(FXCollections.observableArrayList(model.indexes()));
         indexesTable.setRowFactory(tv -> droppedRow(IndexDraft::dropped, IndexDraft::added));
@@ -202,8 +234,8 @@ public final class ModifyTableDialog extends Dialog<String> {
         TableColumn<IndexDraft, String> cols = textColumn("Columns", IndexDraft::columns, IndexDraft::setColumns);
         indexesTable.getColumns().setAll(List.of(name, unique, cols));
 
-        Button add = new Button("Add");
-        Button drop = new Button("Drop / Restore");
+        Button add = toolButton(Icons.newQuery(), "Add index");
+        Button drop = toolButton(Icons.clear(), "Drop / Restore");
         add.setOnAction(event -> {
             model.addIndex();
             indexesTable.getItems().setAll(model.indexes());
@@ -221,6 +253,7 @@ public final class ModifyTableDialog extends Dialog<String> {
 
     private VBox fksPane() {
         fksTable.setEditable(true);
+        fksTable.getStyleClass().add("modify-table-grid");
         fksTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
         fksTable.setItems(FXCollections.observableArrayList(model.foreignKeys()));
         fksTable.setRowFactory(tv -> droppedRow(FkDraft::dropped, FkDraft::added));
@@ -242,8 +275,8 @@ public final class ModifyTableDialog extends Dialog<String> {
         TableColumn<FkDraft, String> refCols = textColumn("Ref. columns", FkDraft::refColumns, FkDraft::setRefColumns);
         fksTable.getColumns().setAll(List.of(name, cols, refTable, refCols));
 
-        Button add = new Button("Add");
-        Button drop = new Button("Drop / Restore");
+        Button add = toolButton(Icons.newQuery(), "Add foreign key");
+        Button drop = toolButton(Icons.clear(), "Drop / Restore");
         add.setOnAction(event -> {
             model.addForeignKey();
             fksTable.getItems().setAll(model.foreignKeys());
@@ -276,20 +309,33 @@ public final class ModifyTableDialog extends Dialog<String> {
     }
 
     private void refreshPreview() {
-        preview.setText(model.alterScript(driver));
+        String sql = Objects.requireNonNullElse(model.alterScript(driver), "");
+        if (!sql.equals(preview.getText())) {
+            preview.replaceText(sql);
+        }
+        preview.setStyleSpans(0, SqlSyntaxHighlighter.computeHighlighting(sql, List.of(), driver));
         if (openButton != null) {
             openButton.setDisable(!model.dirty());
         }
     }
 
     private VBox paneWithToolbar(TableView<?> table, Button... buttons) {
-        HBox bar = new HBox(6, buttons);
+        HBox bar = new HBox(2, buttons);
         bar.setAlignment(Pos.CENTER_LEFT);
         bar.getStyleClass().add("modify-table-toolbar");
         VBox pane = new VBox(8, bar, table);
-        pane.setPadding(new Insets(8));
+        pane.setPadding(new Insets(8, 0, 0, 0));
         VBox.setVgrow(table, Priority.ALWAYS);
         return pane;
+    }
+
+    private static Button toolButton(Node graphic, String tooltip) {
+        Button button = new Button();
+        button.setGraphic(graphic);
+        button.getStyleClass().addAll(Styles.FLAT, "modify-table-tool-button");
+        button.setTooltip(new Tooltip(tooltip));
+        button.setFocusTraversable(false);
+        return button;
     }
 
     private <S> TableColumn<S, String> textColumn(
@@ -348,5 +394,19 @@ public final class ModifyTableDialog extends Dialog<String> {
                 }
             }
         };
+    }
+
+    private static String appStylesheet() {
+        return Objects.requireNonNull(
+                        ModifyTableDialog.class.getResource("/com/lazaro/sqlide/css/app.css"),
+                        "app.css is missing from the classpath")
+                .toExternalForm();
+    }
+
+    private static String editorStylesheet() {
+        return Objects.requireNonNull(
+                        ModifyTableDialog.class.getResource("/com/lazaro/sqlide/css/sql-editor.css"),
+                        "sql-editor.css is missing from the classpath")
+                .toExternalForm();
     }
 }
