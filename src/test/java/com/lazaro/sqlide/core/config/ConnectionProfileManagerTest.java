@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -61,6 +62,46 @@ class ConnectionProfileManagerTest {
         String json = Files.readString(file).toLowerCase();
         assertFalse(json.contains("password"));
         assertFalse(json.contains("secret"));
+    }
+
+    @Test
+    void roundTripsEnvironmentTunnelAndJdbcProperties() {
+        String id = UUID.randomUUID().toString();
+        manager.saveProfile(new ConnectionProfile(
+                id,
+                "Prod",
+                "MYSQL",
+                "db.internal",
+                3306,
+                "app",
+                "root",
+                "PRODUCTION",
+                new com.lazaro.sqlide.core.db.ConnectionConfig.TunnelSettings(
+                        true, "bastion", 22, "ubuntu", "/home/ubuntu/.ssh/id_rsa",
+                        true, "/etc/ssl/ca.pem", ""),
+                Map.of("useSSL", "true")));
+
+        ConnectionProfile loaded = manager.loadProfiles().stream()
+                .filter(profile -> id.equals(profile.id()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("PRODUCTION", loaded.environment());
+        assertTrue(loaded.tunnel().sshEnabled());
+        assertEquals("bastion", loaded.tunnel().sshHost());
+        assertEquals("true", loaded.jdbcProperties().get("useSSL"));
+    }
+
+    @Test
+    void loadsLegacyJsonWithoutNewFields() throws Exception {
+        Files.writeString(file, """
+                [{"id":"legacy","name":"Legacy","driver":"MYSQL","host":"localhost","port":3306,"database":"app","username":"root"}]
+                """);
+        List<ConnectionProfile> loaded = manager.loadProfiles();
+        assertEquals(1, loaded.size());
+        assertEquals("Legacy", loaded.getFirst().name());
+        assertEquals("NONE", loaded.getFirst().environment());
+        assertTrue(loaded.getFirst().jdbcProperties().isEmpty());
+        assertFalse(loaded.getFirst().tunnel().sshEnabled());
     }
 
     @Test

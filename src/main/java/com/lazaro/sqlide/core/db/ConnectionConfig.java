@@ -1,5 +1,9 @@
 package com.lazaro.sqlide.core.db;
 
+import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -13,7 +17,10 @@ public record ConnectionConfig(
         String database,
         String user,
         String password,
-        Driver driver
+        Driver driver,
+        Environment environment,
+        Map<String, String> jdbcProperties,
+        TunnelSettings tunnel
 ) {
 
     /**
@@ -101,6 +108,84 @@ public record ConnectionConfig(
         }
     }
 
+    /**
+     * Workspace color tag so production sessions can be visually distinguished
+     * from local / staging (editor chrome, result grid).
+     */
+    public enum Environment {
+        NONE("None", "#7f848e"),
+        LOCAL("Local", "#3d8c40"),
+        STAGING("Staging", "#c9a227"),
+        PRODUCTION("Production", "#c42b1c");
+
+        private final String displayName;
+        private final String colorHex;
+
+        Environment(String displayName, String colorHex) {
+            this.displayName = displayName;
+            this.colorHex = colorHex;
+        }
+
+        public String displayName() {
+            return displayName;
+        }
+
+        public String colorHex() {
+            return colorHex;
+        }
+
+        public static Environment parse(String raw) {
+            if (raw == null || raw.isBlank()) {
+                return NONE;
+            }
+            try {
+                return valueOf(raw.strip().toUpperCase(Locale.ROOT));
+            } catch (IllegalArgumentException ignored) {
+                return NONE;
+            }
+        }
+
+        @Override
+        public String toString() {
+            return displayName;
+        }
+    }
+
+    /** SSH / SSL form values. Scaffolding for a future tunnel implementation. */
+    public record TunnelSettings(
+            boolean sshEnabled,
+            String sshHost,
+            int sshPort,
+            String sshUser,
+            String sshPrivateKeyPath,
+            boolean sslEnabled,
+            String sslCaCertPath,
+            String sslClientCertPath
+    ) {
+        public TunnelSettings {
+            sshHost = Objects.requireNonNullElse(sshHost, "").trim();
+            sshPort = sshPort < 1 || sshPort > 65_535 ? 22 : sshPort;
+            sshUser = Objects.requireNonNullElse(sshUser, "").trim();
+            sshPrivateKeyPath = Objects.requireNonNullElse(sshPrivateKeyPath, "").trim();
+            sslCaCertPath = Objects.requireNonNullElse(sslCaCertPath, "").trim();
+            sslClientCertPath = Objects.requireNonNullElse(sslClientCertPath, "").trim();
+        }
+
+        public static TunnelSettings disabled() {
+            return new TunnelSettings(false, "", 22, "", "", false, "", "");
+        }
+    }
+
+    public ConnectionConfig(
+            String host,
+            int port,
+            String database,
+            String user,
+            String password,
+            Driver driver) {
+        this(host, port, database, user, password, driver, Environment.NONE, Map.of(), TunnelSettings.disabled());
+    }
+
     public ConnectionConfig {
         Objects.requireNonNull(driver, "driver must not be null");
         host = requireText(host, "host");
@@ -110,6 +195,9 @@ public record ConnectionConfig(
         database = Objects.requireNonNullElse(database, "").trim();
         user = Objects.requireNonNullElse(user, "").trim();
         password = Objects.requireNonNullElse(password, "");
+        environment = environment == null ? Environment.NONE : environment;
+        jdbcProperties = copyProperties(jdbcProperties);
+        tunnel = tunnel == null ? TunnelSettings.disabled() : tunnel;
     }
 
     /** Convenience factory for the default MySQL endpoint. */
@@ -127,7 +215,38 @@ public record ConnectionConfig(
     }
 
     public String jdbcUrl() {
-        return driver.jdbcUrl(host, port, database);
+        return previewUrl(driver, host, port, database, jdbcProperties);
+    }
+
+    /**
+     * JDBC / Redis URI for the live preview. Tolerates incomplete form input
+     * (blank host, invalid port) so the dialog can update as the user types.
+     */
+    public static String previewUrl(
+            Driver driver,
+            String host,
+            String portText,
+            String database,
+            Map<String, String> jdbcProperties) {
+        Driver resolved = driver == null ? Driver.MYSQL : driver;
+        String endpoint = host == null || host.isBlank() ? "localhost" : host.trim();
+        int port = parsePreviewPort(portText, resolved.defaultPort());
+        String schema = database == null ? "" : database.trim();
+        return previewUrl(resolved, endpoint, port, schema, jdbcProperties);
+    }
+
+    public static String previewUrl(
+            Driver driver,
+            String host,
+            int port,
+            String database,
+            Map<String, String> jdbcProperties) {
+        Driver resolved = driver == null ? Driver.MYSQL : driver;
+        String base = resolved.jdbcUrl(host, port, database == null ? "" : database);
+        if (!resolved.isJdbc()) {
+            return base;
+        }
+        return appendJdbcProperties(base, jdbcProperties);
     }
 
     /** Human readable identity of this connection, safe to render in the UI. */
@@ -157,5 +276,59 @@ public record ConnectionConfig(
             throw new IllegalArgumentException(field + " must not be blank");
         }
         return value.trim();
+    }
+
+    private static Map<String, String> copyProperties(Map<String, String> source) {
+        if (source == null || source.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> copy = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : source.entrySet()) {
+            if (entry.getKey() == null || entry.getKey().isBlank()) {
+                continue;
+            }
+            copy.put(entry.getKey().trim(), Objects.requireNonNullElse(entry.getValue(), ""));
+        }
+        return Map.copyOf(copy);
+    }
+
+    private static int parsePreviewPort(String raw, int fallback) {
+        if (raw == null || raw.isBlank()) {
+            return fallback;
+        }
+        try {
+            int port = Integer.parseInt(raw.trim());
+            return port >= 1 && port <= 65_535 ? port : fallback;
+        } catch (NumberFormatException ignored) {
+            return fallback;
+        }
+    }
+
+    static String appendJdbcProperties(String url, Map<String, String> properties) {
+        if (url == null || properties == null || properties.isEmpty()) {
+            return url;
+        }
+        boolean h2 = url.startsWith("jdbc:h2:");
+        StringBuilder out = new StringBuilder(url);
+        boolean firstQuery = !url.contains("?");
+        for (Map.Entry<String, String> entry : properties.entrySet()) {
+            if (entry.getKey() == null || entry.getKey().isBlank()) {
+                continue;
+            }
+            String key = entry.getKey().trim();
+            String value = Objects.requireNonNullElse(entry.getValue(), "");
+            if (h2) {
+                out.append(';').append(key).append('=').append(value);
+            } else {
+                out.append(firstQuery ? '?' : '&');
+                firstQuery = false;
+                out.append(encodeQuery(key)).append('=').append(encodeQuery(value));
+            }
+        }
+        return out.toString();
+    }
+
+    private static String encodeQuery(String value) {
+        return java.net.URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 }

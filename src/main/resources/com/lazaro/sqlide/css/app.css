@@ -1440,8 +1440,225 @@
     -fx-font-size: 12px;
 }
 
-.connection-dialog {
-    -fx-padding: 12px;
+.connection-dialog.dialog-pane {
+    -fx-background-color: #1e1f22;
+    -fx-padding: 0;
+    -fx-border-color: #3c3f44;
+    -fx-border-width: 1px;
+}
+
+.connection-dialog.dialog-pane > .header-panel {
+    -fx-background-color: #2b2d30;
+    -fx-padding: 0;
+    -fx-max-height: 0;
+    -fx-pref-height: 0;
+    -fx-min-height: 0;
+    visibility: hidden;
+}
+
+.connection-dialog.dialog-pane > .content {
+    -fx-background-color: #1e1f22;
+    -fx-padding: 0;
+}
+
+.connection-dialog.dialog-pane > .button-bar {
+    -fx-padding: 0;
+    -fx-pref-height: 0;
+    -fx-min-height: 0;
+    -fx-max-height: 0;
+    visibility: hidden;
+}
+
+.connection-root {
+    -fx-background-color: #1e1f22;
+}
+
+.connection-body {
+    -fx-background-color: #1e1f22;
+    -fx-padding: 16 18 14 18;
+}
+
+.connection-section-header {
+    -fx-padding: 0 0 4 0;
+}
+
+.connection-section-title {
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #eceff4;
+}
+
+.connection-section-rule {
+    -fx-padding: 0;
+    -fx-background-color: #303237;
+}
+
+.connection-section-rule .line {
+    -fx-border-color: #303237 transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+}
+
+.connection-field-label {
+    -fx-text-fill: #a4acb9;
+    -fx-font-size: 12.5px;
+}
+
+.connection-hint {
+    -fx-text-fill: #7f848e;
+    -fx-font-size: 11.5px;
+}
+
+.connection-tabs .tab-header-background {
+    -fx-background-color: #17181b;
+}
+
+.connection-tabs .tab {
+    -fx-background-color: transparent;
+    -fx-padding: 6 14 6 14;
+}
+
+.connection-tabs .tab:selected {
+    -fx-background-color: #2f5d8c;
+}
+
+.connection-tabs .tab .tab-label {
+    -fx-text-fill: #a4acb9;
+}
+
+.connection-tabs .tab:selected .tab-label {
+    -fx-text-fill: #eceff4;
+}
+
+.connection-url-preview {
+    -fx-background-color: #17181b;
+    -fx-text-fill: #7f848e;
+    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+    -fx-font-size: 11.5px;
+    -fx-background-radius: 4px;
+    -fx-padding: 6 8 6 8;
+}
+
+.connection-button-bar {
+    -fx-padding: 8 0 0 0;
+}
+
+.connection-test,
+.connection-cancel {
+    -fx-background-color: #2b2d31;
+    -fx-text-fill: #eceff4;
+    -fx-background-radius: 6px;
+    -fx-padding: 7 16 7 16;
+    -fx-cursor: hand;
+}
+
+.connection-test:hover,
+.connection-cancel:hover {
+    -fx-background-color: #3c3f44;
+}
+
+.connection-connect,
+.connection-dialog .button.accent {
+    -fx-background-color: #2f5d8c;
+    -fx-text-fill: #eceff4;
+    -fx-background-radius: 6px;
+    -fx-padding: 7 18 7 18;
+    -fx-font-weight: bold;
+    -fx-cursor: hand;
+}
+
+.connection-connect:hover,
+.connection-dialog .button.accent:hover {
+    -fx-background-color: #3a6ea3;
+}
+
+.connection-test-spinner {
+    -fx-progress-color: #eceff4;
+    -fx-min-width: 14px;
+    -fx-pref-width: 14px;
+    -fx-max-width: 14px;
+    -fx-min-height: 14px;
+    -fx-pref-height: 14px;
+    -fx-max-height: 14px;
+}
+
+.connection-toggle {
+    -fx-text-fill: #eceff4;
+}
+
+.connection-browse,
+.connection-tool-button,
+.connection-delete {
+    -fx-background-color: #2b2d31;
+    -fx-text-fill: #d6d9de;
+    -fx-background-radius: 6px;
+    -fx-cursor: hand;
+}
+
+.connection-browse:hover,
+.connection-tool-button:hover,
+.connection-delete:hover {
+    -fx-background-color: #3c3f44;
+}
+
+.connection-save-check {
+    -fx-text-fill: #d6d9de;
+}
+
+.connection-dialog .check-box > .box {
+    -fx-background-color: #2b2d31;
+    -fx-background-radius: 3px;
+    -fx-border-color: #666666;
+    -fx-border-width: 1.5px;
+    -fx-border-radius: 3px;
+}
+
+.connection-dialog .check-box:selected > .box {
+    -fx-background-color: #2f5d8c;
+    -fx-border-color: #4fa6ee;
+}
+
+.connection-dialog .check-box:selected > .box > .mark {
+    -fx-background-color: #eceff4;
+}
+
+.connection-dialog .text-field,
+.connection-dialog .password-field,
+.connection-dialog .combo-box,
+.connection-dialog .combo-box-base {
+    -fx-background-color: #2b2d31;
+    -fx-text-fill: #d6d9de;
+}
+
+.connection-dialog .combo-box .list-cell {
+    -fx-text-fill: #d6d9de;
+}
+
+.connection-props-grid {
+    -fx-background-color: #1e1f22;
+    -fx-control-inner-background: #1e1f22;
+    -fx-table-cell-border-color: transparent;
+}
+
+.connection-props-grid .column-header-background {
+    -fx-background-color: #17181b;
+}
+
+.connection-props-grid .column-header {
+    -fx-background-color: #17181b;
+    -fx-border-color: transparent transparent #333333 transparent;
+}
+
+.connection-props-grid .column-header .label {
+    -fx-text-fill: #a4acb9;
+}
+
+.connection-props-grid .table-row-cell {
+    -fx-background-color: #1e1f22;
+    -fx-border-color: transparent transparent #333333 transparent;
+}
+
+.connection-props-grid .table-cell {
+    -fx-text-fill: #d6d9de;
 }
 
 .settings-dialog.dialog-pane {
@@ -1761,9 +1978,6 @@
     -fx-background-color: #3a6ea3;
 }
 
-.connection-dialog .connection-separator {
-    -fx-padding: 2 0 2 0;
-}
 
 .import-data-dialog {
     -fx-padding: 0;

@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -34,6 +35,24 @@ class RecordsTest {
 
         var redis = ConnectionConfig.redis("localhost", 6379, "secret");
         assertEquals("redis://localhost:6379", redis.jdbcUrl());
+
+        Map<String, String> props = new LinkedHashMap<>();
+        props.put("useSSL", "false");
+        props.put("serverTimezone", "UTC");
+        var withProps = new ConnectionConfig(
+                "db.internal", 3307, "sales", "root", "secret",
+                ConnectionConfig.Driver.MYSQL,
+                ConnectionConfig.Environment.PRODUCTION,
+                props,
+                ConnectionConfig.TunnelSettings.disabled());
+        assertEquals(
+                "jdbc:mysql://db.internal:3307/sales?useSSL=false&serverTimezone=UTC",
+                withProps.jdbcUrl());
+        assertEquals(ConnectionConfig.Environment.PRODUCTION, withProps.environment());
+        assertEquals(
+                "jdbc:mysql://localhost:3306/app",
+                ConnectionConfig.previewUrl(
+                        ConnectionConfig.Driver.MYSQL, "", "not-a-port", "app", Map.of()));
         assertEquals(ConnectionConfig.ConnectionType.REDIS, redis.connectionType());
         assertEquals("redis://localhost:6379", redis.displayLabel());
         assertEquals("", redis.user());
