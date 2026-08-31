@@ -681,8 +681,9 @@ public final class MainController {
     }
 
     /**
-     * Pulls the full schema once into the session's {@link SchemaCache}. Failures leave the
-     * previous snapshot intact so typing is not disrupted by a flaky refresh.
+     * Pulls table / routine names first so autocomplete works on large catalogs,
+     * then replaces the snapshot with columns and keys when that pass finishes.
+     * Failures leave the previous snapshot intact so typing is not disrupted.
      */
     private void refreshSchemaCache(ConnectionSession session) {
         if (session == null || !session.isConnected()) {
@@ -690,13 +691,27 @@ public final class MainController {
         }
         DataSourceDriver active = session.driver();
         SchemaCache cache = session.schemaCache();
-        active.getFullSchema().whenComplete((nodes, error) -> javafx.application.Platform.runLater(() -> {
-            if (error != null || nodes == null) {
+        active.getSchemaOutline().whenComplete((outline, outlineError) -> {
+            if (outline != null) {
+                javafx.application.Platform.runLater(() -> {
+                    if (!session.isConnected()) {
+                        return;
+                    }
+                    cache.replace(outline);
+                    editors.refreshAutocompleteEngines();
+                });
+            }
+            if (active.schemaOutlineIsAuthoritative()) {
                 return;
             }
-            cache.replace(nodes);
-            editors.refreshAutocompleteEngines();
-        }));
+            active.getFullSchema().whenComplete((nodes, error) -> javafx.application.Platform.runLater(() -> {
+                if (error != null || nodes == null || !session.isConnected()) {
+                    return;
+                }
+                cache.replace(nodes);
+                editors.refreshAutocompleteEngines();
+            }));
+        });
     }
 
     private void openCompareStructure() {
@@ -781,11 +796,38 @@ public final class MainController {
     }
 
     private void openObjectViewer(SchemaNode node) {
-        SchemaCache cache = resolveSession(editors.activeEditor())
-                .map(ConnectionSession::schemaCache)
-                .orElseGet(SchemaCache::new);
-        SchemaNode detailed = cache.findTable(node.name()).orElse(node);
+        Optional<ConnectionSession> session = resolveSession(editors.activeEditor())
+                .or(() -> sessions.focused().filter(ConnectionSession::isConnected));
+        SchemaCache cache = session.map(ConnectionSession::schemaCache).orElseGet(SchemaCache::new);
+        SchemaNode detailed = detailedFromCache(cache, node);
+        if (needsObjectDetails(detailed) && session.isPresent() && session.get().isConnected()) {
+            session.get().driver().getObjectDetails(detailed).whenComplete((fresh, error) ->
+                    javafx.application.Platform.runLater(() ->
+                            editors.openObjectViewer(fresh != null ? fresh : detailed)));
+            return;
+        }
         editors.openObjectViewer(detailed);
+    }
+
+    private static SchemaNode detailedFromCache(SchemaCache cache, SchemaNode node) {
+        if (node.type() == SchemaNode.NodeType.PROCEDURE) {
+            return cache.procedures(null).stream()
+                    .filter(procedure -> procedure.name().equalsIgnoreCase(node.name()))
+                    .findFirst()
+                    .orElse(node);
+        }
+        return cache.findTable(node.name()).orElse(node);
+    }
+
+    private static boolean needsObjectDetails(SchemaNode node) {
+        return switch (node.type()) {
+            case TABLE, VIEW -> node.children().isEmpty();
+            case PROCEDURE -> {
+                String ddl = node.metadata(SchemaNode.META_DDL);
+                yield ddl == null || ddl.isBlank();
+            }
+            default -> false;
+        };
     }
 
     private void openSchemaDiagram(SchemaNode node) {

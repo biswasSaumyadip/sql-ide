@@ -225,6 +225,16 @@ public final class RedisDriver implements DataSourceDriver {
     }
 
     @Override
+    public CompletableFuture<List<SchemaNode>> getSchemaOutline() {
+        return getSchemaTree();
+    }
+
+    @Override
+    public boolean schemaOutlineIsAuthoritative() {
+        return true;
+    }
+
+    @Override
     public CompletableFuture<List<SchemaNode>> getFullSchema() {
         return getSchemaTree();
     }

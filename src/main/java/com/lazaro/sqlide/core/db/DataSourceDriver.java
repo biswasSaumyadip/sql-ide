@@ -68,11 +68,36 @@ public interface DataSourceDriver extends AutoCloseable {
     CompletableFuture<List<SchemaNode>> getChildren(SchemaNode parent);
 
     /**
+     * Catalogs with table / view / routine names only. Autocomplete uses this so
+     * table names appear before {@link #getFullSchema()} finishes loading columns.
+     * Default is {@link #getFullSchema()}.
+     */
+    default CompletableFuture<List<SchemaNode>> getSchemaOutline() {
+        return getFullSchema();
+    }
+
+    /**
+     * {@code true} when {@link #getSchemaOutline()} is already the complete snapshot
+     * and {@link #getFullSchema()} would repeat the same work.
+     */
+    default boolean schemaOutlineIsAuthoritative() {
+        return false;
+    }
+
+    /**
      * Eagerly loads every catalog with tables, columns, indexes and foreign keys
      * populated. Intended for the client-side schema cache (autocomplete / object
      * viewer), not for painting the lazy tree.
      */
     CompletableFuture<List<SchemaNode>> getFullSchema();
+
+    /**
+     * Columns, keys, indexes and DDL for one table / view / routine. Used when the
+     * cache only has a name (large schemas skip per-object details until needed).
+     */
+    default CompletableFuture<SchemaNode> getObjectDetails(SchemaNode node) {
+        return CompletableFuture.completedFuture(node);
+    }
 
     /**
      * Sets the catalog/schema used for subsequent statements (MySQL {@code USE},

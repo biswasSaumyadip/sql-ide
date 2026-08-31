@@ -174,6 +174,21 @@ class SchemaIntrospectionServiceTest {
     }
 
     @Test
+    @DisplayName("schema outline lists table names without loading columns")
+    void schemaOutlineIsNamesOnly() throws Exception {
+        List<SchemaNode> outline = schemaService.fetchSchemaOutlineAsync().get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        SchemaNode database = find(outline, catalog);
+        SchemaNode customer = find(database.children(), "CUSTOMER");
+
+        assertTrue(customer.children().isEmpty(),
+                "outline must stay names-only so large catalogs can autocomplete tables immediately");
+        assertTrue(database.children().stream().anyMatch(node ->
+                node.type() == NodeType.TABLE && node.name().equals("CUSTOMER")));
+        assertTrue(database.children().stream().anyMatch(node ->
+                node.type() == NodeType.VIEW && node.name().equals("PREMIUM_CUSTOMER")));
+    }
+
+    @Test
     @DisplayName("full schema packs FK, index and DDL metadata onto table nodes")
     void fullSchemaEnrichesTableMetadata() throws Exception {
         List<SchemaNode> full = driver.getFullSchema().get(TIMEOUT_SECONDS, TIMEOUT_UNIT);

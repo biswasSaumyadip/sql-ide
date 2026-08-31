@@ -438,8 +438,30 @@ public final class JdbcSqlDriver implements DataSourceDriver {
     }
 
     @Override
+    public CompletableFuture<List<SchemaNode>> getSchemaOutline() {
+        return introspection.fetchSchemaOutlineAsync();
+    }
+
+    @Override
     public CompletableFuture<List<SchemaNode>> getFullSchema() {
         return introspection.fetchFullSchemaAsync();
+    }
+
+    @Override
+    public CompletableFuture<SchemaNode> getObjectDetails(SchemaNode node) {
+        if (node == null) {
+            return CompletableFuture.completedFuture(null);
+        }
+        String catalog = node.metadata(SchemaNode.META_CATALOG);
+        if (catalog == null || catalog.isBlank()) {
+            catalog = activeCatalog;
+        }
+        String owner = catalog == null ? "" : catalog;
+        return switch (node.type()) {
+            case TABLE, VIEW -> introspection.fetchTableDetailsAsync(owner, node.name());
+            case PROCEDURE -> introspection.fetchRoutineDetailsAsync(owner, node.name());
+            default -> CompletableFuture.completedFuture(node);
+        };
     }
 
     @Override

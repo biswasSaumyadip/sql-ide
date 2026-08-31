@@ -13,6 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -170,6 +171,32 @@ class SqlAutocompleteEngineTest {
         List<Suggestion> shopSuggestions = suggest(sql);
         assertTrue(shopSuggestions.stream().anyMatch(s -> s.insertText().equals("products")));
         assertTrue(shopSuggestions.stream().noneMatch(s -> s.insertText().equals("users")));
+    }
+
+    @Test
+    @DisplayName("FROM completions still find a table among 1000+ name-only objects")
+    void tableCompletionsScalePastAThousandNameOnlyTables() {
+        List<SchemaNode> children = new ArrayList<>();
+        for (int i = 0; i < 1_200; i++) {
+            children.add(SchemaNode.of("proc_" + i, NodeType.PROCEDURE, Map.of(
+                    SchemaNode.META_CATALOG, "app",
+                    SchemaNode.META_ROUTINE_KIND, SchemaNode.ROUTINE_PROCEDURE)));
+            children.add(SchemaNode.of("fn_" + i, NodeType.PROCEDURE, Map.of(
+                    SchemaNode.META_CATALOG, "app",
+                    SchemaNode.META_ROUTINE_KIND, SchemaNode.ROUTINE_FUNCTION)));
+            children.add(SchemaNode.of("t_" + i, NodeType.TABLE, Map.of(
+                    SchemaNode.META_CATALOG, "app")));
+        }
+        children.add(SchemaNode.of("users", NodeType.TABLE, Map.of(SchemaNode.META_CATALOG, "app")));
+        cache.replace(List.of(new SchemaNode("app", NodeType.DATABASE, children, Map.of())));
+        engine = new SqlAutocompleteEngine(cache, activeCatalog::get, dialect::get);
+
+        List<Suggestion> suggestions = suggest("SELECT * FROM us");
+        assertTrue(suggestions.stream().anyMatch(s ->
+                        s.kind() == Kind.TABLE && s.insertText().equals("users")),
+                suggestions.toString());
+        assertTrue(suggestions.stream().noneMatch(s -> s.kind() == Kind.PROCEDURE),
+                "FROM must not list procedures even when there are thousands");
     }
 
     @Test

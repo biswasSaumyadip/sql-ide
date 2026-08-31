@@ -25,6 +25,7 @@ public final class SchemaCache {
     }
 
     private final CopyOnWriteArrayList<SchemaNode> catalogs = new CopyOnWriteArrayList<>();
+    private volatile Map<String, List<SchemaNode>> tablesByLowerName = Map.of();
     private volatile boolean ready;
 
     public void replace(List<SchemaNode> fullSchema) {
@@ -33,10 +34,12 @@ public final class SchemaCache {
             catalogs.addAll(fullSchema);
         }
         ready = !catalogs.isEmpty();
+        tablesByLowerName = indexTables();
     }
 
     public void clear() {
         catalogs.clear();
+        tablesByLowerName = Map.of();
         ready = false;
     }
 
@@ -77,6 +80,18 @@ public final class SchemaCache {
             }
         }
         return List.copyOf(tables);
+    }
+
+    private Map<String, List<SchemaNode>> indexTables() {
+        Map<String, List<SchemaNode>> index = new LinkedHashMap<>();
+        for (SchemaNode table : tables()) {
+            index.computeIfAbsent(table.name().toLowerCase(Locale.ROOT), key -> new ArrayList<>()).add(table);
+        }
+        Map<String, List<SchemaNode>> frozen = new LinkedHashMap<>();
+        for (Map.Entry<String, List<SchemaNode>> entry : index.entrySet()) {
+            frozen.put(entry.getKey(), List.copyOf(entry.getValue()));
+        }
+        return Map.copyOf(frozen);
     }
 
     /**
@@ -130,22 +145,22 @@ public final class SchemaCache {
             return Optional.empty();
         }
         String needle = stripQuotes(name);
+        List<SchemaNode> matches = tablesByLowerName.get(needle.toLowerCase(Locale.ROOT));
+        if (matches == null || matches.isEmpty()) {
+            return Optional.empty();
+        }
+        if (preferredCatalog == null || preferredCatalog.isBlank()) {
+            return Optional.of(matches.getFirst());
+        }
         Optional<SchemaNode> fallback = Optional.empty();
-        for (SchemaNode table : tables()) {
-            if (!table.name().equalsIgnoreCase(needle)) {
-                continue;
-            }
-            if (preferredCatalog != null && !preferredCatalog.isBlank()) {
-                String meta = table.metadata(SchemaNode.META_CATALOG);
-                String owner = meta != null && !meta.isBlank() ? meta : catalogOf(table);
-                if (owner != null && owner.equalsIgnoreCase(preferredCatalog)) {
-                    return Optional.of(table);
-                }
-                if (fallback.isEmpty()) {
-                    fallback = Optional.of(table);
-                }
-            } else {
+        for (SchemaNode table : matches) {
+            String meta = table.metadata(SchemaNode.META_CATALOG);
+            String owner = meta != null && !meta.isBlank() ? meta : catalogOf(table);
+            if (owner != null && owner.equalsIgnoreCase(preferredCatalog)) {
                 return Optional.of(table);
+            }
+            if (fallback.isEmpty()) {
+                fallback = Optional.of(table);
             }
         }
         return fallback;

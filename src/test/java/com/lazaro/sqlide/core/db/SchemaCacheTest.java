@@ -4,6 +4,7 @@ import com.lazaro.sqlide.core.db.SchemaNode.NodeType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -54,5 +55,18 @@ class SchemaCacheTest {
 
         assertEquals(List.of("greet_user"), cache.procedures("app").stream().map(SchemaNode::name).toList());
         assertTrue(cache.tables("app").stream().noneMatch(n -> n.type() == NodeType.PROCEDURE));
+    }
+
+    @Test
+    void findTableUsesNameIndexAmongManyTables() {
+        List<SchemaNode> children = new ArrayList<>();
+        for (int i = 0; i < 1_200; i++) {
+            children.add(SchemaNode.of("t_" + i, NodeType.TABLE, Map.of(SchemaNode.META_CATALOG, "app")));
+        }
+        children.add(SchemaNode.of("users", NodeType.TABLE, Map.of(SchemaNode.META_CATALOG, "app")));
+        cache.replace(List.of(new SchemaNode("app", NodeType.DATABASE, children, Map.of())));
+
+        assertEquals("users", cache.findTable("users", "app").orElseThrow().name());
+        assertTrue(cache.findTable("missing", "app").isEmpty());
     }
 }

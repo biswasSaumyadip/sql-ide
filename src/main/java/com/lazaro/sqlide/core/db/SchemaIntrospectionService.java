@@ -41,9 +41,17 @@ public final class SchemaIntrospectionService {
             Set.of("SYSTEM TABLE", "SYSTEM VIEW", "SYSTEM INDEX", "INDEX", "SEQUENCE", "SYNONYM");
 
     private static final Set<String> SYSTEM_SCHEMAS =
-            Set.of("INFORMATION_SCHEMA", "PG_CATALOG", "PG_TOAST", "SYS", "SYSTEM LOBS");
+            Set.of("INFORMATION_SCHEMA", "PG_CATALOG", "PG_TOAST", "SYS", "SYSTEM LOBS",
+                    "MYSQL", "PERFORMANCE_SCHEMA");
 
     private static final Comparator<String> BY_NAME = String.CASE_INSENSITIVE_ORDER;
+
+    /**
+     * Per-table {@code getImportedKeys}/{@code getIndexInfo}/{@code getPrimaryKeys}
+     * is what blows up on large catalogs. Below this size we still enrich fully;
+     * above it, batched columns are enough for autocomplete.
+     */
+    private static final int DETAILED_KEYS_TABLE_LIMIT = 200;
 
     private final JdbcSqlDriver driver;
 
@@ -94,10 +102,7 @@ public final class SchemaIntrospectionService {
         List<SchemaNode> all = readTables(connection, catalog);
         List<SchemaNode> tables = all.stream().filter(node -> node.type() == NodeType.TABLE).toList();
         List<SchemaNode> views = all.stream().filter(node -> node.type() == NodeType.VIEW).toList();
-        List<SchemaNode> procedures = readRoutines(connection, catalog).stream()
-                .filter(node -> SchemaNode.ROUTINE_PROCEDURE.equalsIgnoreCase(
-                        node.metadata(SchemaNode.META_ROUTINE_KIND)))
-                .toList();
+        List<SchemaNode> procedures = readRoutines(connection, catalog, false);
         Map<String, String> catalogMeta = Map.of(SchemaNode.META_CATALOG, catalog);
         List<SchemaNode> folders = new ArrayList<>(3);
         folders.add(SchemaNode.folder(SchemaNode.FOLDER_TABLES, SchemaNode.FOLDER_TABLES, tables.size(), catalogMeta)
@@ -125,10 +130,7 @@ public final class SchemaIntrospectionService {
             case SchemaNode.FOLDER_VIEWS -> readTables(connection, catalog).stream()
                     .filter(node -> node.type() == NodeType.VIEW)
                     .toList();
-            case SchemaNode.FOLDER_PROCEDURES -> readRoutines(connection, catalog).stream()
-                    .filter(node -> SchemaNode.ROUTINE_PROCEDURE.equalsIgnoreCase(
-                            node.metadata(SchemaNode.META_ROUTINE_KIND)))
-                    .toList();
+            case SchemaNode.FOLDER_PROCEDURES -> readRoutines(connection, catalog, false);
             case SchemaNode.FOLDER_COLUMNS -> readColumns(connection, catalog, table);
             case SchemaNode.FOLDER_KEYS -> readKeyNodes(connection, catalog, table);
             case SchemaNode.FOLDER_INDEXES -> readIndexNodes(connection, catalog, table);
@@ -210,23 +212,26 @@ public final class SchemaIntrospectionService {
     }
 
     /**
-     * Eagerly loads every catalog with every table fully detailed. Used once per
-     * connection (and on Refresh) so autocomplete never hits the network per keystroke.
+     * Catalogs with table / view / routine <em>names</em> only — no columns, indexes
+     * or {@code SHOW CREATE} bodies. Cheap enough for 1000+ objects so autocomplete
+     * can offer table names before the detailed pass finishes.
+     */
+    public CompletableFuture<List<SchemaNode>> fetchSchemaOutlineAsync() {
+        return supplyAsync(SchemaIntrospectionService::readSchemaOutline);
+    }
+
+    /**
+     * Loads every catalog, then attaches columns (batched) plus indexes / foreign
+     * keys per table. Routine bodies are left unloaded; fetch them on demand.
+     * Used once per connection (and on Refresh) so autocomplete never hits the
+     * network per keystroke. A failure on one table keeps the name-only node.
      */
     public CompletableFuture<List<SchemaNode>> fetchFullSchemaAsync() {
         return supplyAsync(connection -> {
-            List<SchemaNode> databases = readDatabases(connection);
-            List<SchemaNode> loaded = new ArrayList<>(databases.size());
-            for (SchemaNode database : databases) {
-                List<SchemaNode> tables = readTables(connection, database.name());
-                List<SchemaNode> detailed = new ArrayList<>(tables.size());
-                for (SchemaNode table : tables) {
-                    detailed.add(readTableDetails(connection, database.name(), table.name(), table));
-                }
-                List<SchemaNode> children = new ArrayList<>(detailed.size() + 8);
-                children.addAll(detailed);
-                children.addAll(readRoutines(connection, database.name()));
-                loaded.add(database.withChildren(children));
+            List<SchemaNode> outline = readSchemaOutline(connection);
+            List<SchemaNode> loaded = new ArrayList<>(outline.size());
+            for (SchemaNode database : outline) {
+                loaded.add(enrichCatalog(connection, database));
             }
             return List.copyOf(loaded);
         });
@@ -239,13 +244,102 @@ public final class SchemaIntrospectionService {
     public CompletableFuture<SchemaNode> fetchDatabaseAsync(String catalog) {
         Objects.requireNonNull(catalog, "catalog must not be null");
         return supplyAsync(connection -> {
-            List<SchemaNode> tables = new ArrayList<>();
-            for (SchemaNode table : readTables(connection, catalog)) {
-                tables.add(readTableDetails(connection, catalog, table.name(), table));
-            }
-            tables.addAll(readRoutines(connection, catalog));
-            return new SchemaNode(catalog, NodeType.DATABASE, tables, Map.of());
+            List<SchemaNode> children = new ArrayList<>();
+            children.addAll(readTablesSafe(connection, catalog));
+            children.addAll(readRoutines(connection, catalog, false));
+            SchemaNode database = new SchemaNode(catalog, NodeType.DATABASE, children, Map.of());
+            return enrichCatalog(connection, database);
         });
+    }
+
+    /**
+     * {@code SHOW CREATE} / {@code INFORMATION_SCHEMA} body for one routine. Used
+     * by the object viewer so bulk schema loads do not issue one query per procedure.
+     */
+    public CompletableFuture<SchemaNode> fetchRoutineDetailsAsync(String catalog, String name) {
+        Objects.requireNonNull(name, "name must not be null");
+        String owner = Objects.requireNonNullElse(catalog, "");
+        return supplyAsync(connection -> {
+            Map<String, String> metadata = new LinkedHashMap<>();
+            metadata.put(SchemaNode.META_CATALOG, owner);
+            metadata.put(SchemaNode.META_ROUTINE_KIND, SchemaNode.ROUTINE_PROCEDURE);
+            return withRoutineDdl(connection, catalog, SchemaNode.of(name, NodeType.PROCEDURE, metadata));
+        });
+    }
+
+    // ---------------------------------------------------------------- outline / enrich
+
+    private static List<SchemaNode> readSchemaOutline(Connection connection) throws SQLException {
+        List<SchemaNode> databases = readDatabases(connection);
+        List<SchemaNode> loaded = new ArrayList<>(databases.size());
+        for (SchemaNode database : databases) {
+            List<SchemaNode> children = new ArrayList<>();
+            children.addAll(readTablesSafe(connection, database.name()));
+            children.addAll(readRoutines(connection, database.name(), false));
+            loaded.add(database.withChildren(children));
+        }
+        return List.copyOf(loaded);
+    }
+
+    private static List<SchemaNode> readTablesSafe(Connection connection, String catalog) {
+        try {
+            return readTables(connection, catalog);
+        } catch (SQLException ignored) {
+            return List.of();
+        }
+    }
+
+    /**
+     * Attaches columns (one {@code getColumns} per catalog) plus per-table keys /
+     * indexes. System catalogs stay name-only. A single table's metadata failure
+     * does not drop it from autocomplete.
+     */
+    private static SchemaNode enrichCatalog(Connection connection, SchemaNode database) {
+        String catalog = database.name();
+        if (isSystemCatalogName(catalog)) {
+            return database;
+        }
+        int tableCount = 0;
+        for (SchemaNode child : database.children()) {
+            if (child.type() == NodeType.TABLE || child.type() == NodeType.VIEW) {
+                tableCount++;
+            }
+        }
+        boolean loadKeys = tableCount <= DETAILED_KEYS_TABLE_LIMIT;
+        Map<String, List<SchemaNode>> columnsByTable = readAllColumnsGrouped(connection, catalog);
+        List<SchemaNode> children = new ArrayList<>(database.children().size());
+        for (SchemaNode child : database.children()) {
+            if (child.type() == NodeType.TABLE || child.type() == NodeType.VIEW) {
+                try {
+                    List<SchemaNode> columns = columnsByTable.getOrDefault(
+                            child.name().toLowerCase(Locale.ROOT), List.of());
+                    if (loadKeys) {
+                        children.add(readTableDetails(connection, catalog, child.name(), child, columns));
+                    } else if (!columns.isEmpty()) {
+                        children.add(withBatchedColumns(child, columns, catalog));
+                    } else {
+                        children.add(child);
+                    }
+                } catch (SQLException ignored) {
+                    children.add(child);
+                }
+            } else {
+                children.add(child);
+            }
+        }
+        return database.withChildren(children);
+    }
+
+    private static SchemaNode withBatchedColumns(SchemaNode base, List<SchemaNode> columns, String catalog) {
+        Map<String, String> metadata = new LinkedHashMap<>(base.metadata());
+        metadata.put(SchemaNode.META_CATALOG, Objects.requireNonNullElse(
+                firstNonBlank(base.metadata(SchemaNode.META_CATALOG), catalog), ""));
+        metadata.put(SchemaNode.META_DDL, generateDdl(base.type(), base.name(), columns, List.of(), List.of()));
+        return new SchemaNode(base.name(), base.type(), columns, metadata);
+    }
+
+    private static boolean isSystemCatalogName(String name) {
+        return name != null && SYSTEM_SCHEMAS.contains(name.toUpperCase(Locale.ROOT));
     }
 
     // ---------------------------------------------------------------- metadata reads
@@ -289,12 +383,19 @@ public final class SchemaIntrospectionService {
     /**
      * Stored procedures and functions for {@code catalog}. Drivers that do not
      * implement {@code getProcedures}/{@code getFunctions} return an empty list.
+     * {@code includeDdl} is false for bulk listing — {@code SHOW CREATE} per
+     * routine is what made 1000+ procedures stall schema load.
      */
-    private static List<SchemaNode> readRoutines(Connection connection, String catalog) throws SQLException {
+    private static List<SchemaNode> readRoutines(Connection connection, String catalog, boolean includeDdl)
+            throws SQLException {
         DatabaseMetaData metaData = connection.getMetaData();
         List<SchemaNode> routines = readRoutines(metaData, catalog, null);
         if (routines.isEmpty()) {
             routines = readRoutines(metaData, null, catalog);
+        }
+        if (!includeDdl) {
+            routines.sort(Comparator.comparing(SchemaNode::name, BY_NAME));
+            return List.copyOf(routines);
         }
         List<SchemaNode> withDdl = new ArrayList<>(routines.size());
         for (SchemaNode node : routines) {
@@ -304,13 +405,29 @@ public final class SchemaIntrospectionService {
         return List.copyOf(withDdl);
     }
 
-    private static List<SchemaNode> readRoutines(DatabaseMetaData metaData, String catalog, String schema)
-            throws SQLException {
+    private static List<SchemaNode> readRoutines(DatabaseMetaData metaData, String catalog, String schema) {
         Map<String, SchemaNode> byName = new LinkedHashMap<>();
         for (SchemaNode node : readJdbcProcedures(metaData, catalog, schema)) {
-            byName.putIfAbsent(node.name().toLowerCase(Locale.ROOT), node);
+            addRoutine(byName, node);
+        }
+        for (SchemaNode node : readJdbcFunctions(metaData, catalog, schema)) {
+            addRoutine(byName, node);
         }
         return new ArrayList<>(byName.values());
+    }
+
+    private static void addRoutine(Map<String, SchemaNode> byName, SchemaNode node) {
+        String key = node.name().toLowerCase(Locale.ROOT);
+        SchemaNode existing = byName.get(key);
+        if (existing == null) {
+            byName.put(key, node);
+            return;
+        }
+        if (SchemaNode.ROUTINE_FUNCTION.equalsIgnoreCase(node.metadata(SchemaNode.META_ROUTINE_KIND))
+                && !SchemaNode.ROUTINE_FUNCTION.equalsIgnoreCase(
+                        existing.metadata(SchemaNode.META_ROUTINE_KIND))) {
+            byName.put(key, node);
+        }
     }
 
     private static List<SchemaNode> readJdbcProcedures(DatabaseMetaData metaData, String catalog, String schema) {
@@ -329,13 +446,50 @@ public final class SchemaIntrospectionService {
                 String resolvedOwner = owner != null ? owner : firstNonBlank(catalog, schema);
                 Map<String, String> metadata = new LinkedHashMap<>();
                 metadata.put(SchemaNode.META_CATALOG, Objects.requireNonNullElse(resolvedOwner, ""));
-                metadata.put(SchemaNode.META_ROUTINE_KIND, SchemaNode.ROUTINE_PROCEDURE);
+                metadata.put(SchemaNode.META_ROUTINE_KIND, procedureKind(resultSet));
                 out.add(SchemaNode.of(name, NodeType.PROCEDURE, metadata));
             }
         } catch (SQLException ignored) {
             return List.of();
         }
         return out;
+    }
+
+    private static List<SchemaNode> readJdbcFunctions(DatabaseMetaData metaData, String catalog, String schema) {
+        List<SchemaNode> out = new ArrayList<>();
+        try (ResultSet resultSet = metaData.getFunctions(catalog, schema, "%")) {
+            while (resultSet.next()) {
+                String name = resultSet.getString("FUNCTION_NAME");
+                if (name == null || name.isBlank()) {
+                    continue;
+                }
+                String functionSchema = columnOrNull(resultSet, "FUNCTION_SCHEM");
+                if (isSystemObject(functionSchema, null)) {
+                    continue;
+                }
+                String owner = firstNonBlank(columnOrNull(resultSet, "FUNCTION_CAT"), functionSchema);
+                String resolvedOwner = owner != null ? owner : firstNonBlank(catalog, schema);
+                Map<String, String> metadata = new LinkedHashMap<>();
+                metadata.put(SchemaNode.META_CATALOG, Objects.requireNonNullElse(resolvedOwner, ""));
+                metadata.put(SchemaNode.META_ROUTINE_KIND, SchemaNode.ROUTINE_FUNCTION);
+                out.add(SchemaNode.of(name, NodeType.PROCEDURE, metadata));
+            }
+        } catch (SQLException ignored) {
+            return List.of();
+        }
+        return out;
+    }
+
+    private static String procedureKind(ResultSet resultSet) {
+        try {
+            int type = resultSet.getInt("PROCEDURE_TYPE");
+            if (!resultSet.wasNull() && type == DatabaseMetaData.procedureReturnsResult) {
+                return SchemaNode.ROUTINE_FUNCTION;
+            }
+        } catch (SQLException ignored) {
+            // column missing on some drivers
+        }
+        return SchemaNode.ROUTINE_PROCEDURE;
     }
 
     private static SchemaNode withRoutineDdl(Connection connection, String catalog, SchemaNode node) {
@@ -465,8 +619,14 @@ public final class SchemaIntrospectionService {
 
     private static List<SchemaNode> readTables(DatabaseMetaData metaData, String catalog, String schema)
             throws SQLException {
+        return readTables(metaData, catalog, schema, "%");
+    }
+
+    private static List<SchemaNode> readTables(
+            DatabaseMetaData metaData, String catalog, String schema, String tablePattern) throws SQLException {
+        String pattern = tablePattern == null || tablePattern.isBlank() ? "%" : tablePattern;
         List<SchemaNode> tables = new ArrayList<>();
-        try (ResultSet resultSet = metaData.getTables(catalog, schema, "%", null)) {
+        try (ResultSet resultSet = metaData.getTables(catalog, schema, pattern, null)) {
             while (resultSet.next()) {
                 String name = resultSet.getString("TABLE_NAME");
                 if (name == null || name.isBlank()) {
@@ -503,21 +663,124 @@ public final class SchemaIntrospectionService {
         return columns.stream().map(PositionedColumn::node).toList();
     }
 
+    /**
+     * All columns in {@code catalog} in one {@code DatabaseMetaData#getColumns}
+     * call, keyed by lower-cased table name. Empty when the driver rejects a
+     * wildcard table pattern — callers then fall back to per-table reads.
+     */
+    private static Map<String, List<SchemaNode>> readAllColumnsGrouped(Connection connection, String catalog) {
+        try {
+            DatabaseMetaData metaData = connection.getMetaData();
+            Map<String, List<PositionedColumn>> grouped = readAllColumnsGrouped(metaData, catalog, null);
+            if (grouped.isEmpty()) {
+                grouped = readAllColumnsGrouped(metaData, null, catalog);
+            }
+            Map<String, List<SchemaNode>> columns = new LinkedHashMap<>();
+            for (Map.Entry<String, List<PositionedColumn>> entry : grouped.entrySet()) {
+                List<PositionedColumn> positioned = new ArrayList<>(entry.getValue());
+                positioned.sort(Comparator.comparingInt(PositionedColumn::position));
+                columns.put(entry.getKey(), positioned.stream().map(PositionedColumn::node).toList());
+            }
+            return columns;
+        } catch (SQLException ignored) {
+            return Map.of();
+        }
+    }
+
+    private static Map<String, List<PositionedColumn>> readAllColumnsGrouped(
+            DatabaseMetaData metaData, String catalog, String schema) {
+        Map<String, List<PositionedColumn>> grouped = new LinkedHashMap<>();
+        try (ResultSet resultSet = metaData.getColumns(catalog, schema, "%", "%")) {
+            while (resultSet.next()) {
+                String table = resultSet.getString("TABLE_NAME");
+                String name = resultSet.getString("COLUMN_NAME");
+                if (table == null || table.isBlank() || name == null || name.isBlank()) {
+                    continue;
+                }
+                String tableSchema = resultSet.getString("TABLE_SCHEM");
+                if (isSystemObject(tableSchema, null)) {
+                    continue;
+                }
+                PositionedColumn column = columnFromResultSet(resultSet, name, catalog, schema);
+                grouped.computeIfAbsent(table.toLowerCase(Locale.ROOT), key -> new ArrayList<>()).add(column);
+            }
+        } catch (SQLException ignored) {
+            return Map.of();
+        }
+        return grouped;
+    }
+
+    private static PositionedColumn columnFromResultSet(
+            ResultSet resultSet, String name, String catalog, String schema) throws SQLException {
+        int decimalDigits = resultSet.getInt("DECIMAL_DIGITS");
+        if (resultSet.wasNull()) {
+            decimalDigits = 0;
+        }
+        boolean nullable = resultSet.getInt("NULLABLE") != DatabaseMetaData.columnNoNulls;
+        int position = resultSet.getInt("ORDINAL_POSITION");
+        Map<String, String> metadata = new LinkedHashMap<>();
+        metadata.put(SchemaNode.META_DATA_TYPE, formatType(
+                resultSet.getString("TYPE_NAME"), resultSet.getInt("COLUMN_SIZE"), decimalDigits));
+        metadata.put(SchemaNode.META_NULLABLE, Boolean.toString(nullable));
+        metadata.put(SchemaNode.META_PRIMARY_KEY, "false");
+        metadata.put(SchemaNode.META_CATALOG, Objects.requireNonNullElse(firstNonBlank(catalog, schema), ""));
+        return new PositionedColumn(SchemaNode.of(name, NodeType.COLUMN, metadata), position);
+    }
+
+    private static List<SchemaNode> withPrimaryKeys(
+            Connection connection, String catalog, String table, List<SchemaNode> columns) throws SQLException {
+        DatabaseMetaData metaData = connection.getMetaData();
+        Set<String> primaryKeys = readPrimaryKeys(metaData, catalog, null, table);
+        if (primaryKeys.isEmpty()) {
+            primaryKeys = readPrimaryKeys(metaData, null, catalog, table);
+        }
+        if (primaryKeys.isEmpty()) {
+            return columns;
+        }
+        List<SchemaNode> updated = new ArrayList<>(columns.size());
+        for (SchemaNode column : columns) {
+            boolean pk = false;
+            for (String pkName : primaryKeys) {
+                if (pkName.equalsIgnoreCase(column.name())) {
+                    pk = true;
+                    break;
+                }
+            }
+            if (!pk) {
+                updated.add(column);
+                continue;
+            }
+            Map<String, String> metadata = new LinkedHashMap<>(column.metadata());
+            metadata.put(SchemaNode.META_PRIMARY_KEY, "true");
+            updated.add(new SchemaNode(column.name(), column.type(), column.children(), metadata));
+        }
+        return List.copyOf(updated);
+    }
+
     private static SchemaNode readTableDetails(Connection connection, String catalog, String table)
             throws SQLException {
-        List<SchemaNode> tables = readTables(connection, catalog);
-        SchemaNode base = tables.stream()
-                .filter(node -> node.name().equalsIgnoreCase(table))
-                .findFirst()
-                .orElse(SchemaNode.of(table, NodeType.TABLE, Map.of(SchemaNode.META_CATALOG, catalog)));
-        return readTableDetails(connection, catalog, table, base);
+        DatabaseMetaData metaData = connection.getMetaData();
+        List<SchemaNode> matches = readTables(metaData, catalog, null, table);
+        if (matches.isEmpty()) {
+            matches = readTables(metaData, null, catalog, table);
+        }
+        SchemaNode base = matches.isEmpty()
+                ? SchemaNode.of(table, NodeType.TABLE, Map.of(SchemaNode.META_CATALOG, catalog))
+                : matches.getFirst();
+        return readTableDetails(connection, catalog, table, base, List.of());
     }
 
     private static SchemaNode readTableDetails(
-            Connection connection, String catalog, String table, SchemaNode base) throws SQLException {
+            Connection connection,
+            String catalog,
+            String table,
+            SchemaNode base,
+            List<SchemaNode> preloadedColumns) throws SQLException {
 
         DatabaseMetaData metaData = connection.getMetaData();
-        List<SchemaNode> columns = readColumns(connection, catalog, table);
+        List<SchemaNode> columns = preloadedColumns != null && !preloadedColumns.isEmpty()
+                ? withPrimaryKeys(connection, catalog, table, preloadedColumns)
+                : readColumns(connection, catalog, table);
 
         List<SchemaMetadataCodec.ForeignKey> foreignKeys = readForeignKeys(metaData, catalog, null, table);
         if (foreignKeys.isEmpty()) {
