@@ -56,7 +56,6 @@ import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ChoiceDialog;
-import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.Separator;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.Tab;
@@ -143,7 +142,6 @@ public final class MainController {
     private Button refreshButton;
     private Button compareStructureButton;
     private Button compareDataButton;
-    private ProgressIndicator toolbarActivity;
 
     private Task<?> activeTask;
     private volatile boolean cancelling;
@@ -154,6 +152,9 @@ public final class MainController {
     private String lastRerunHistorySql = "";
     private String lastRunSessionId;
     private final AtomicLong schemaIndexGeneration = new AtomicLong();
+    private boolean connectingBusy;
+    private boolean indexingBusy;
+    private String treeBusyConnectionId;
 
     public MainController(DriverRegistry registry, WorkspaceState state) {
         this.registry = registry;
@@ -310,12 +311,6 @@ public final class MainController {
         rollbackButton = labelledButton(Icons.rollback(), "Rollback", "Rollback current transaction",
                 this::rollbackTransaction);
 
-        toolbarActivity = new ProgressIndicator();
-        toolbarActivity.setMaxSize(16, 16);
-        toolbarActivity.getStyleClass().add("toolbar-activity");
-        toolbarActivity.setVisible(false);
-        toolbarActivity.setManaged(false);
-
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
@@ -329,7 +324,7 @@ public final class MainController {
                 connectButton, disconnectButton, refreshButton,
                 compareStructureButton, compareDataButton,
                 separator(),
-                runButton, stopButton, explainButton, explainAnalyzeButton, toolbarActivity,
+                runButton, stopButton, explainButton, explainAnalyzeButton,
                 separator(),
                 autoCommitToggle, beginButton, commitButton, rollbackButton,
                 spacer,
@@ -558,7 +553,7 @@ public final class MainController {
             return;
         }
         ConnectionSession session = sessions.open(profileId, displayName, config, state.maxRows());
-        setConnecting(true);
+        setConnecting(true, busyConnectionId(profileId, session));
         statusBar.setBusy("Connecting to " + config.displayLabel() + "\u2026");
         DataSourceDriver active = session.driver();
         Task<Void> task = new Task<>() {
@@ -571,7 +566,8 @@ public final class MainController {
         activeTask = task;
         task.setOnSucceeded(event -> {
             activeTask = null;
-            setConnecting(false);
+            connectingBusy = false;
+            connectButton.setDisable(false);
             String database = config.database().isBlank()
                     ? active.activeCatalog().orElse(null)
                     : config.database();
@@ -623,6 +619,9 @@ public final class MainController {
         } else {
             refreshStatusFromFocus();
         }
+        connectingBusy = false;
+        indexingBusy = false;
+        schemaTree.setBusyConnection(null);
         schemaTree.reload();
         onSessionsChanged();
         updateActionStates();
@@ -757,13 +756,15 @@ public final class MainController {
 
     private void showSchemaIndexing(String message) {
         statusBar.setIndexing(message);
-        schemaTree.setIndexing(message);
+        indexingBusy = true;
+        syncTreeBusy(focusedBusyConnectionId());
     }
 
     private void clearSchemaIndexing() {
         schemaIndexGeneration.incrementAndGet();
         statusBar.clearIndexing();
-        schemaTree.clearIndexing();
+        indexingBusy = false;
+        syncTreeBusy(null);
     }
 
     private void clearSchemaIndexing(long generation) {
@@ -771,7 +772,8 @@ public final class MainController {
             return;
         }
         statusBar.clearIndexing();
-        schemaTree.clearIndexing();
+        indexingBusy = false;
+        syncTreeBusy(null);
     }
 
     private void openCompareStructure() {
@@ -1329,7 +1331,7 @@ public final class MainController {
         DataSourceDriver active = sessionOpt.get().driver();
         boolean redis = isRedis(sessionOpt.get());
         cancelling = false;
-        setQueryRunning(true);
+        setQueryRunning(true, sessionOpt.get());
         final List<String> toRun = lastRerunStatements;
         final String historySql = lastRerunHistorySql;
         outcome.showLoading(toRun);
@@ -1478,7 +1480,7 @@ public final class MainController {
         }
 
         cancelling = false;
-        setQueryRunning(true);
+        setQueryRunning(true, session);
         outcome.showLoading(toRun);
         statusBar.setQueryRunning(redis);
 
@@ -1611,7 +1613,7 @@ public final class MainController {
         boolean redis = isRedis(session);
         lastRunSessionId = session.id();
         cancelling = false;
-        setQueryRunning(true);
+        setQueryRunning(true, session);
         outcome.showLoading(statements);
         statusBar.setQueryRunning(redis);
         Task<ScriptResult> task = new Task<>() {
@@ -2033,16 +2035,48 @@ public final class MainController {
     }
 
     private void setConnecting(boolean connecting) {
-        toolbarActivity.setVisible(connecting);
-        toolbarActivity.setManaged(connecting);
+        setConnecting(connecting, focusedBusyConnectionId());
+    }
+
+    private void setConnecting(boolean connecting, String connectionId) {
+        connectingBusy = connecting;
         connectButton.setDisable(connecting);
+        syncTreeBusy(connectionId);
         updateActionStates();
     }
 
     private void setQueryRunning(boolean running) {
-        toolbarActivity.setVisible(running);
-        toolbarActivity.setManaged(running);
+        setQueryRunning(running, null);
+    }
+
+    private void setQueryRunning(boolean running, ConnectionSession session) {
+        ConnectionSession target = session != null ? session : sessions.focused().orElse(null);
+        syncTreeBusy(running && target != null ? busyConnectionId(target) : null);
         updateActionStates();
+    }
+
+    private void syncTreeBusy(String connectionId) {
+        if (connectionId != null && !connectionId.isBlank()) {
+            treeBusyConnectionId = connectionId;
+        }
+        boolean queryBusy = activeTask != null && activeTask.isRunning();
+        boolean busy = connectingBusy || indexingBusy || queryBusy;
+        schemaTree.setBusyConnection(busy ? treeBusyConnectionId : null);
+    }
+
+    private String focusedBusyConnectionId() {
+        return sessions.focused().map(MainController::busyConnectionId).orElse(null);
+    }
+
+    private static String busyConnectionId(ConnectionSession session) {
+        return busyConnectionId(session.profileId().orElse(null), session);
+    }
+
+    private static String busyConnectionId(String profileId, ConnectionSession session) {
+        if (profileId != null && !profileId.isBlank()) {
+            return profileId;
+        }
+        return session == null ? null : session.id();
     }
 
     private void bindCaret(SqlEditorPane editor) {

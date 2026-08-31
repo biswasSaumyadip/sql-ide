@@ -12,6 +12,7 @@ import javafx.scene.control.Tooltip;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
 import javafx.scene.shape.Circle;
 
 /**
@@ -52,18 +53,25 @@ public final class StatusBar extends HBox {
         activity.setMaxSize(14, 14);
         activity.getStyleClass().add("status-activity");
         activity.setVisible(false);
-        activity.setManaged(false);
+        StackPane activitySlot = new StackPane(activity);
+        activitySlot.setMinSize(14, 14);
+        activitySlot.setPrefSize(14, 14);
+        activitySlot.setMaxSize(14, 14);
+        activitySlot.setMouseTransparent(true);
 
         connectionLabel.getStyleClass().add("status-text");
+        connectionLabel.setMinWidth(0);
+        connectionLabel.setMaxWidth(220);
+        connectionLabel.setTextOverrun(javafx.scene.control.OverrunStyle.ELLIPSIS);
         databaseLabel.getStyleClass().addAll("status-text", "status-database");
         transactionLabel.getStyleClass().addAll("status-text", "status-transaction");
         indexingLabel.getStyleClass().addAll("status-text", "status-indexing");
         indexingLabel.setVisible(false);
-        indexingLabel.setManaged(false);
+        indexingLabel.setManaged(true);
+        indexingLabel.setMinWidth(0);
         resultLabel.getStyleClass().addAll("status-text", "status-result");
         caretLabel.getStyleClass().addAll("status-text", "status-caret");
 
-        connectionLabel.setMinWidth(Region.USE_PREF_SIZE);
         databaseLabel.setMinWidth(Region.USE_PREF_SIZE);
         transactionLabel.setMinWidth(Region.USE_PREF_SIZE);
         caretLabel.setMinWidth(Region.USE_PREF_SIZE);
@@ -72,7 +80,7 @@ public final class StatusBar extends HBox {
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
         getChildren().addAll(
-                dot, activity, connectionLabel, databaseLabel, transactionLabel, indexingLabel,
+                dot, activitySlot, connectionLabel, databaseLabel, transactionLabel, indexingLabel,
                 spacer,
                 resultLabel, new Separator(Orientation.VERTICAL), caretLabel);
 
@@ -90,7 +98,7 @@ public final class StatusBar extends HBox {
         endpointText = endpoint == null || endpoint.isBlank() ? "Connected" : endpoint;
         connectionLabel.setText(endpointText);
         connectionLabel.pseudoClassStateChanged(ERROR, false);
-        connectionLabel.setTooltip(null);
+        connectionLabel.setTooltip(new Tooltip(endpointText));
         setActiveDatabase(database);
         // Transaction readout is owned by MainController via setTransactionState.
     }
@@ -216,7 +224,7 @@ public final class StatusBar extends HBox {
             hideIndexingLabel();
         }
         indexingLabel.setVisible(indexing);
-        indexingLabel.setManaged(indexing);
+        indexingLabel.setManaged(true);
         syncActivity();
     }
 
@@ -263,14 +271,12 @@ public final class StatusBar extends HBox {
     private void syncActivity() {
         boolean active = queryBusy || indexing || lifecycleBusy;
         activity.setVisible(active);
-        activity.setManaged(active);
     }
 
     private void hideIndexingLabel() {
         indexingLabel.setText("");
         indexingLabel.setTooltip(null);
         indexingLabel.setVisible(false);
-        indexingLabel.setManaged(false);
     }
 
     private void applyDotClass(String styleClass) {

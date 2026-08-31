@@ -65,6 +65,7 @@ public final class QueryOutcomePane extends VBox {
     public QueryOutcomePane() {
         getStyleClass().add("query-outcome-pane");
         setSpacing(0);
+        VBox.setVgrow(errorPanel, Priority.NEVER);
         VBox.setVgrow(body, Priority.ALWAYS);
         resultTabs.getStyleClass().add("result-tabs");
         resultTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.ALL_TABS);
@@ -106,7 +107,12 @@ public final class QueryOutcomePane extends VBox {
             onActionsChanged.run();
         });
 
-        getChildren().addAll(toolbar, errorPanel, body);
+        StackPane.setAlignment(errorPanel, Pos.BOTTOM_CENTER);
+        errorPanel.setMaxWidth(Double.MAX_VALUE);
+        errorPanel.prefWidthProperty().bind(body.widthProperty());
+        body.getChildren().add(errorPanel);
+
+        getChildren().addAll(toolbar, body);
         ensureOutputTab();
         showIdle();
     }

@@ -13,10 +13,12 @@ import com.lazaro.sqlide.core.session.ConnectionSession;
 import com.lazaro.sqlide.core.session.SessionManager;
 import com.lazaro.sqlide.ui.Icons;
 import javafx.application.Platform;
+import javafx.beans.binding.Bindings;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
+import javafx.scene.control.OverrunStyle;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.TextField;
 import javafx.scene.control.Tooltip;
@@ -26,9 +28,9 @@ import javafx.scene.control.TreeView;
 import javafx.scene.input.ContextMenuEvent;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.MouseButton;
-import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 
@@ -54,17 +56,12 @@ public final class SchemaTreeView extends VBox {
     private final TextField filterField = new TextField();
     private final SchemaSelectionControl schemaSelection = new SchemaSelectionControl();
     private final StackPane body = new StackPane();
-    private final VBox loadingState = new VBox(10);
     private final Label emptyHint = new Label();
-    private final Label loadingLabel = new Label("Loading schemas\u2026");
-    private final ProgressIndicator loadingSpinner = new ProgressIndicator();
-    private final HBox indexingBar = new HBox(6);
-    private final ProgressIndicator indexingSpinner = new ProgressIndicator();
-    private final Label indexingLabel = new Label();
 
     private ConnectionProfileManager profileManager = new ConnectionProfileManager();
     private SessionManager sessionManager;
     private String filterQuery = "";
+    private String busyConnectionId;
     private final List<TreeItem<SchemaNode>> allDataSources = new ArrayList<>();
 
     private Consumer<SchemaNode> onActivate = node -> { };
@@ -211,48 +208,36 @@ public final class SchemaTreeView extends VBox {
         emptyHint.setPadding(new Insets(12));
         emptyHint.setMouseTransparent(true);
 
-        buildLoadingState();
-        buildIndexingBar();
-
-        body.getChildren().addAll(tree, emptyHint, loadingState);
+        body.getChildren().addAll(tree, emptyHint);
         StackPane.setAlignment(emptyHint, Pos.CENTER);
-        StackPane.setAlignment(loadingState, Pos.CENTER);
         VBox.setVgrow(body, Priority.ALWAYS);
 
-        getChildren().addAll(header, filterBar, indexingBar, body);
+        getChildren().addAll(header, filterBar, body);
         rebuildDataSources();
     }
 
-    private void buildLoadingState() {
-        loadingSpinner.setMaxSize(22, 22);
-        loadingLabel.getStyleClass().add("empty-state-detail");
-        loadingState.getStyleClass().addAll("empty-state", "loading-state");
-        loadingState.setAlignment(Pos.CENTER);
-        loadingState.getChildren().addAll(loadingSpinner, loadingLabel);
-        loadingState.setVisible(false);
-        loadingState.setManaged(false);
+    /**
+     * Replaces the MySQL / database icon on the matching connection with a spinner
+     * while a connect or query is in flight. Pass {@code null} to restore the icon.
+     */
+    public void setBusyConnection(String connectionId) {
+        String next = connectionId == null || connectionId.isBlank() ? null : connectionId;
+        if (Objects.equals(busyConnectionId, next)) {
+            return;
+        }
+        busyConnectionId = next;
+        tree.refresh();
     }
 
-    private void buildIndexingBar() {
-        indexingSpinner.setMaxSize(12, 12);
-        indexingLabel.getStyleClass().add("schema-indexing-label");
-        indexingBar.getStyleClass().add("schema-indexing-bar");
-        indexingBar.setAlignment(Pos.CENTER_LEFT);
-        indexingBar.getChildren().addAll(indexingSpinner, indexingLabel);
-        indexingBar.setVisible(false);
-        indexingBar.setManaged(false);
-    }
-
-    /** Compact banner while other catalogs index in the background. */
-    public void setIndexing(String message) {
-        boolean on = message != null && !message.isBlank();
-        indexingLabel.setText(on ? message : "");
-        indexingBar.setVisible(on);
-        indexingBar.setManaged(on);
-    }
-
-    public void clearIndexing() {
-        setIndexing(null);
+    private boolean isBusy(SchemaNode node) {
+        if (busyConnectionId == null || node == null || node.type() != NodeType.DATA_SOURCE) {
+            return false;
+        }
+        if (busyConnectionId.equals(connectionIdOf(node))) {
+            return true;
+        }
+        String sessionId = node.metadata("sessionId");
+        return busyConnectionId.equals(sessionId);
     }
 
     private void refreshTreeItem(TreeItem<SchemaNode> item) {
@@ -686,7 +671,6 @@ public final class SchemaTreeView extends VBox {
         }
         publishDataSources();
         updateEmptyHint();
-        showLoadingOverlay(false);
         tree.setVisible(true);
         tree.setManaged(true);
     }
@@ -723,11 +707,6 @@ public final class SchemaTreeView extends VBox {
         emptyHint.setManaged(empty && filterQuery.isBlank());
     }
 
-    private void showLoadingOverlay(boolean loading) {
-        loadingState.setVisible(loading);
-        loadingState.setManaged(loading);
-    }
-
     private void applyFilter() {
         publishDataSources();
         updateEmptyHint();
@@ -744,7 +723,6 @@ public final class SchemaTreeView extends VBox {
             populateRedisDatabases(item, driver);
             return;
         }
-        item.replaceChildren(List.of(placeholderItem("Loading\u2026")));
         driver.getSchemaTree().whenComplete((nodes, error) -> Platform.runLater(() -> {
             applyLoadedChildren(item, driver, nodes, error, true);
         }));
@@ -754,7 +732,6 @@ public final class SchemaTreeView extends VBox {
      * Logical Redis databases under the connection node. Keys load when a DB expands.
      */
     private void populateRedisDatabases(DataSourceItem item, DataSourceDriver driver) {
-        item.replaceChildren(List.of(placeholderItem("Loading databases\u2026")));
         driver.getSchemaTree().whenComplete((nodes, error) -> Platform.runLater(() -> {
             applyLoadedChildren(item, driver, nodes, error, false);
         }));
@@ -881,7 +858,6 @@ public final class SchemaTreeView extends VBox {
             applyFilter();
             return;
         }
-        item.replaceChildren(List.of(placeholderItem("Loading\u2026")));
         driver.getChildren(node).whenComplete((children, error) -> Platform.runLater(() -> {
             if (error != null) {
                 item.replaceChildren(List.of(placeholderItem(rootCauseMessage(error))));
@@ -1366,20 +1342,33 @@ public final class SchemaTreeView extends VBox {
 
     private final class SchemaTreeCell extends TreeCell<SchemaNode> {
 
+        private static final double DISCLOSURE_RESERVE = 28;
+
+        private static final double ICON_SIZE = 14;
+
         private final SchemaSelectionControl selection;
         private final Label nameLabel = new Label();
         private final Label detailLabel = new Label();
         private final Label activeBadge = new Label("●");
         private final Label schemaBadge = new Label();
-        private final HBox left = new HBox(6);
-        private final BorderPane layout = new BorderPane();
+        private final Region spacer = new Region();
+        private final HBox row = new HBox(6);
+        private final StackPane iconSlot = new StackPane();
+        private final ProgressIndicator busySpinner = new ProgressIndicator();
 
         SchemaTreeCell(SchemaSelectionControl selection) {
             this.selection = selection;
             nameLabel.getStyleClass().add("schema-node-name");
+            nameLabel.setMinWidth(Region.USE_PREF_SIZE);
             detailLabel.getStyleClass().add("schema-node-detail");
+            detailLabel.setMinWidth(0);
+            detailLabel.setMaxWidth(Double.MAX_VALUE);
+            detailLabel.setTextOverrun(OverrunStyle.ELLIPSIS);
+            HBox.setHgrow(detailLabel, Priority.SOMETIMES);
             activeBadge.getStyleClass().add("schema-active-badge");
             schemaBadge.getStyleClass().add("schema-count-badge");
+            schemaBadge.setMinWidth(Region.USE_PREF_SIZE);
+            schemaBadge.setMaxWidth(Region.USE_PREF_SIZE);
             schemaBadge.setTooltip(new Tooltip("Choose which schemas appear under this connection"));
             schemaBadge.setOnMouseClicked(event -> {
                 if (event.getButton() != MouseButton.PRIMARY) {
@@ -1392,11 +1381,20 @@ public final class SchemaTreeView extends VBox {
                 selection.showFor(schemaBadge, connectionIdOf(node));
                 event.consume();
             });
-            left.setAlignment(Pos.CENTER_LEFT);
-            left.getStyleClass().add("tree-cell-graphic");
-            BorderPane.setAlignment(schemaBadge, Pos.CENTER_RIGHT);
-            layout.setLeft(left);
-            layout.getStyleClass().add("tree-cell-graphic");
+            busySpinner.getStyleClass().add("schema-busy-spinner");
+            busySpinner.setMinSize(ICON_SIZE, ICON_SIZE);
+            busySpinner.setPrefSize(ICON_SIZE, ICON_SIZE);
+            busySpinner.setMaxSize(ICON_SIZE, ICON_SIZE);
+            iconSlot.setMinSize(ICON_SIZE, ICON_SIZE);
+            iconSlot.setPrefSize(ICON_SIZE, ICON_SIZE);
+            iconSlot.setMaxSize(ICON_SIZE, ICON_SIZE);
+            iconSlot.setMouseTransparent(true);
+            HBox.setHgrow(spacer, Priority.ALWAYS);
+            spacer.setMinWidth(0);
+            row.setAlignment(Pos.CENTER_LEFT);
+            row.setMinWidth(0);
+            row.getStyleClass().add("tree-cell-graphic");
+            row.maxWidthProperty().bind(Bindings.max(0, widthProperty().subtract(DISCLOSURE_RESERVE)));
         }
 
         @Override
@@ -1427,8 +1425,9 @@ public final class SchemaTreeView extends VBox {
                             || item.type() == NodeType.KEY || item.type() == NodeType.INDEX
                             || item.type() == NodeType.REDIS_KEY
                             ? "schema-node-muted" : "schema-node-detail");
-            detailLabel.setVisible(!detailLabel.getText().isEmpty());
-            detailLabel.setManaged(detailLabel.isVisible());
+            boolean showDetail = !detailLabel.getText().isEmpty();
+            detailLabel.setVisible(showDetail);
+            detailLabel.setManaged(showDetail);
 
             boolean dataSource = item.type() == NodeType.DATA_SOURCE;
             boolean active = dataSource && item.metadataFlag(SchemaNode.META_ACTIVE);
@@ -1441,25 +1440,29 @@ public final class SchemaTreeView extends VBox {
             activeBadge.setVisible(active);
             activeBadge.setManaged(active);
 
-            left.getChildren().setAll(Icons.forNode(item), nameLabel);
-            if (active) {
-                left.getChildren().add(activeBadge);
-            }
-            if (detailLabel.isVisible()) {
-                left.getChildren().add(detailLabel);
-            }
-
             String connectionId = connectionIdOf(item);
             boolean showSchemaBadge = dataSource && selection.hasSchemas(connectionId);
             if (showSchemaBadge) {
                 schemaBadge.setText(selection.countLabel(connectionId));
-                layout.setRight(schemaBadge);
-            } else {
-                layout.setRight(null);
+            }
+
+            row.getChildren().clear();
+            iconSlot.getChildren().setAll(dataSource && isBusy(item) ? busySpinner : Icons.forNode(item));
+            row.getChildren().add(iconSlot);
+            row.getChildren().add(nameLabel);
+            if (active) {
+                row.getChildren().add(activeBadge);
+            }
+            if (showDetail) {
+                row.getChildren().add(detailLabel);
+            }
+            row.getChildren().add(spacer);
+            if (showSchemaBadge) {
+                row.getChildren().add(schemaBadge);
             }
 
             setText(null);
-            setGraphic(layout);
+            setGraphic(row);
             applyNodeTooltip(item);
         }
 
@@ -1484,6 +1487,10 @@ public final class SchemaTreeView extends VBox {
                 return null;
             }
             return switch (node.type()) {
+                case DATA_SOURCE -> {
+                    String endpoint = node.metadata("endpoint");
+                    yield endpoint == null || endpoint.isBlank() ? null : endpoint;
+                }
                 case PROCEDURE -> {
                     String ddl = node.metadata(SchemaNode.META_DDL);
                     if (ddl != null && !ddl.isBlank()) {
@@ -1513,7 +1520,7 @@ public final class SchemaTreeView extends VBox {
 
         private static String detailOf(SchemaNode node) {
             return switch (node.type()) {
-                case DATA_SOURCE -> Objects.requireNonNullElse(node.metadata("endpoint"), "");
+                case DATA_SOURCE -> "";
                 case FOLDER -> {
                     int count = node.childCountBadge();
                     yield count > 0 || node.metadata(SchemaNode.META_CHILD_COUNT) != null

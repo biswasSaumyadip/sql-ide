@@ -215,8 +215,13 @@ public final class SqlAutocompleteEngine {
             String qualifier = dot.group(1);
             String dotPrefix = dot.group(2);
             int dotStart = caret - dotPrefix.length();
-            // catalog.table — when qualifier is a known catalog, offer its tables.
-            if (isKnownCatalog(qualifier) && !aliases.containsKey(qualifier.toLowerCase(Locale.ROOT))) {
+            // catalog.table — FROM app. must list tables even though the regex
+            // scope maps "app" → "app" as if it were an unqualified table name.
+            // Only skip that when the qualifier is a real alias for another table
+            // (FROM users app WHERE app. → columns of users).
+            if (!qualifier.contains(".")
+                    && isKnownCatalog(qualifier)
+                    && !isExplicitAlias(aliases, qualifier)) {
                 return rank(tableSuggestionsInCatalog(qualifier, dotPrefix, dotStart, caret, scope));
             }
             String table = aliases.getOrDefault(qualifier.toLowerCase(Locale.ROOT), qualifier);
@@ -1194,6 +1199,15 @@ public final class SqlAutocompleteEngine {
             }
         }
         return false;
+    }
+
+    /** True when {@code qualifier} is an alias for a different physical table. */
+    private static boolean isExplicitAlias(Map<String, String> aliases, String qualifier) {
+        if (aliases == null || qualifier == null || qualifier.isBlank()) {
+            return false;
+        }
+        String physical = aliases.get(qualifier.toLowerCase(Locale.ROOT));
+        return physical != null && !physical.equalsIgnoreCase(qualifier);
     }
 
     private boolean joinTableInActiveCatalog(String tableName) {

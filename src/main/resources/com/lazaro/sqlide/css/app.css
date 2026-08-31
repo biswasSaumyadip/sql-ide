@@ -93,7 +93,8 @@
 
 .toolbar-activity,
 .status-activity,
-.dialog-activity {
+.dialog-activity,
+.schema-busy-spinner {
     -fx-progress-color: #4fa6ee;
 }
 
@@ -1157,20 +1158,6 @@
     -fx-text-fill: #e06c75;
     -fx-font-weight: bold;
     -fx-font-size: 12px;
-}
-
-.query-error-text {
-    -fx-control-inner-background: #1e1f22;
-    -fx-text-fill: #f0b4ba;
-    -fx-highlight-fill: #7a2e3a;
-    -fx-highlight-text-fill: #fce8ea;
-    -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
-    -fx-font-size: 12px;
-    -fx-background-color: #1e1f22;
-    -fx-background-radius: 4px;
-    -fx-border-color: #7a2e3a;
-    -fx-border-radius: 4px;
-    -fx-border-width: 1;
 }
 
 .query-error-action {

@@ -4,61 +4,67 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
-import javafx.scene.control.TextArea;
+import javafx.scene.control.OverrunStyle;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
 /**
- * Dedicated, non-modal surface for SQL errors. Sits below the editor so a failed
- * statement never blocks the next one with a dialog.
+ * One-line, non-modal strip for SQL errors. The full text lives in Output;
+ * this only flags the failure so the results pane does not jump.
  */
-public final class QueryErrorPanel extends VBox {
+public final class QueryErrorPanel extends HBox {
 
     private final Label title = new Label("Query failed");
-    private final TextArea message = new TextArea();
     private final Button copyButton = new Button("Copy");
     private final Button dismissButton = new Button("Dismiss");
+    private String fullText = "";
 
     public QueryErrorPanel() {
         getStyleClass().add("query-error-panel");
-        setSpacing(6);
-        setPadding(new Insets(8, 10, 8, 10));
+        setSpacing(8);
+        setPadding(new Insets(4, 12, 4, 12));
+        setAlignment(Pos.CENTER_LEFT);
+        setFillHeight(true);
+        setMinHeight(Region.USE_PREF_SIZE);
+        setMaxHeight(Region.USE_PREF_SIZE);
+        VBox.setVgrow(this, Priority.NEVER);
         setVisible(false);
         setManaged(false);
 
         title.getStyleClass().add("query-error-title");
-
-        message.setEditable(false);
-        message.setWrapText(true);
-        message.setPrefRowCount(3);
-        message.getStyleClass().add("query-error-text");
-        VBox.setVgrow(message, Priority.ALWAYS);
+        title.setMinWidth(Region.USE_PREF_SIZE);
+        title.setTextOverrun(OverrunStyle.CLIP);
 
         copyButton.getStyleClass().add("query-error-action");
         copyButton.setTooltip(new Tooltip("Copy error text"));
+        copyButton.setMinWidth(Region.USE_PREF_SIZE);
         copyButton.setOnAction(event -> copyToClipboard());
 
         dismissButton.getStyleClass().add("query-error-action");
+        dismissButton.setMinWidth(Region.USE_PREF_SIZE);
         dismissButton.setOnAction(event -> clear());
 
-        HBox actions = new HBox(6, copyButton, dismissButton);
-        actions.setAlignment(Pos.CENTER_RIGHT);
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        getChildren().addAll(title, message, actions);
+        getChildren().addAll(title, spacer, copyButton, dismissButton);
     }
 
     public void show(String errorText) {
-        message.setText(errorText == null || errorText.isBlank() ? "Unknown error" : errorText);
+        fullText = errorText == null || errorText.isBlank() ? "Unknown error" : errorText.strip();
+        title.setTooltip(new Tooltip(fullText));
         setVisible(true);
         setManaged(true);
     }
 
     public void clear() {
-        message.clear();
+        fullText = "";
+        title.setTooltip(null);
         setVisible(false);
         setManaged(false);
     }
@@ -68,12 +74,11 @@ public final class QueryErrorPanel extends VBox {
     }
 
     private void copyToClipboard() {
-        String text = message.getText();
-        if (text == null || text.isBlank()) {
+        if (fullText == null || fullText.isBlank()) {
             return;
         }
         ClipboardContent content = new ClipboardContent();
-        content.putString(text);
+        content.putString(fullText);
         Clipboard.getSystemClipboard().setContent(content);
     }
 }

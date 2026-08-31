@@ -363,6 +363,32 @@ class SqlAutocompleteEngineTest {
     }
 
     @Test
+    @DisplayName("FROM catalog. suggests that catalog's tables")
+    void suggestsTablesAfterCatalogDot() {
+        List<Suggestion> suggestions = suggest("SELECT * FROM shop.");
+        assertTrue(suggestions.stream().anyMatch(s ->
+                s.kind() == Kind.TABLE && s.insertText().equals("products")), suggestions.toString());
+        assertTrue(suggestions.stream().noneMatch(s -> s.insertText().equals("users")),
+                "must not leak the active catalog's tables into shop.: " + suggestions);
+        assertTrue(suggestions.stream().noneMatch(s -> s.kind() == Kind.COLUMN),
+                "catalog. is a table qualifier, not columns: " + suggestions);
+
+        List<Suggestion> prefixed = suggest("SELECT * FROM shop.pr");
+        assertTrue(prefixed.stream().anyMatch(s -> s.insertText().equals("products")), prefixed.toString());
+    }
+
+    @Test
+    @DisplayName("an alias that shares a catalog name still suggests columns")
+    void catalogNamedAliasStillSuggestsColumns() {
+        String sql = "SELECT * FROM users shop WHERE shop.";
+        List<Suggestion> suggestions = suggest(sql);
+        assertTrue(suggestions.stream().anyMatch(s -> s.kind() == Kind.COLUMN && s.insertText().equals("email")),
+                suggestions.toString());
+        assertTrue(suggestions.stream().noneMatch(s -> s.insertText().equals("products")),
+                "alias shop. is users, not catalog shop: " + suggestions);
+    }
+
+    @Test
     @DisplayName("schemas are suggested after USE / FROM")
     void suggestsSchemas() {
         List<Suggestion> afterUse = suggest("USE ");
