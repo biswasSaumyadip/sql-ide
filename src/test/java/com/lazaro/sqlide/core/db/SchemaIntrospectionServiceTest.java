@@ -70,6 +70,17 @@ class SchemaIntrospectionServiceTest {
         assertTrue(databases.stream().allMatch(node -> node.children().isEmpty()),
                 "the top level must stay shallow so the tree can load lazily");
         assertTrue(databases.stream().noneMatch(SchemaNode::isLeaf));
+        assertEquals(JdbcMetadataLayout.Slot.CATALOG, schemaService.metadataLayout().slot().orElseThrow(),
+                "H2 catalogs must be remembered so later metadata calls skip the schema slot");
+    }
+
+    @Test
+    @DisplayName("catalog layout stays cached across table and column reads")
+    void catalogLayoutIsReusedAfterListingDatabases() throws Exception {
+        assertEquals(JdbcMetadataLayout.Slot.CATALOG, schemaService.metadataLayout().slot().orElseThrow());
+        schemaService.fetchTablesAsync(catalog).get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        schemaService.fetchColumnsAsync(catalog, "CUSTOMER").get(TIMEOUT_SECONDS, TIMEOUT_UNIT);
+        assertEquals(JdbcMetadataLayout.Slot.CATALOG, schemaService.metadataLayout().slot().orElseThrow());
     }
 
     @Test

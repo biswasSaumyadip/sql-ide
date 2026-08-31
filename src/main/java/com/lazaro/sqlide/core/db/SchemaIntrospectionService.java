@@ -27,8 +27,9 @@ import java.util.concurrent.CompletionException;
  * with the underlying {@link SQLException} as the cause.
  *
  * <p>Catalog handling differs by vendor: MySQL exposes databases as catalogs, while
- * PostgreSQL exposes them as schemas. Each lookup tries the catalog position first
- * and falls back to the schema position, so a single code path serves both.
+ * PostgreSQL-style drivers expose them as schemas. The first successful metadata
+ * listing records which slot this connection uses ({@link JdbcMetadataLayout})
+ * so later calls skip the extra round-trip.
  */
 public final class SchemaIntrospectionService {
 
@@ -54,16 +55,26 @@ public final class SchemaIntrospectionService {
     private static final int DETAILED_KEYS_TABLE_LIMIT = 200;
 
     private final JdbcSqlDriver driver;
+    private final JdbcMetadataLayout metadataLayout = new JdbcMetadataLayout();
 
     public SchemaIntrospectionService(JdbcSqlDriver driver) {
         this.driver = Objects.requireNonNull(driver, "driver must not be null");
+    }
+
+    /** Forgets catalog vs schema so a reconnect can rediscover the layout. */
+    void resetMetadataLayout() {
+        metadataLayout.clear();
+    }
+
+    JdbcMetadataLayout metadataLayout() {
+        return metadataLayout;
     }
 
     // ---------------------------------------------------------------- public API
 
     /** All catalogs (databases) visible to the current user, without their tables. */
     public CompletableFuture<List<SchemaNode>> fetchDatabasesAsync() {
-        return supplyAsync(SchemaIntrospectionService::readDatabases);
+        return supplyAsync(this::readDatabases);
     }
 
     /** Tables and views inside {@code catalog}, without their columns. */
@@ -100,7 +111,7 @@ public final class SchemaIntrospectionService {
         };
     }
 
-    private static List<SchemaNode> catalogFolders(Connection connection, String catalog) throws SQLException {
+    private List<SchemaNode> catalogFolders(Connection connection, String catalog) throws SQLException {
         List<SchemaNode> all = readTables(connection, catalog);
         List<SchemaNode> tables = all.stream().filter(node -> node.type() == NodeType.TABLE).toList();
         List<SchemaNode> views = all.stream().filter(node -> node.type() == NodeType.VIEW).toList();
@@ -118,7 +129,7 @@ public final class SchemaIntrospectionService {
         return List.copyOf(folders);
     }
 
-    private static List<SchemaNode> folderChildren(Connection connection, SchemaNode folder) throws SQLException {
+    private List<SchemaNode> folderChildren(Connection connection, SchemaNode folder) throws SQLException {
         String kind = Objects.requireNonNullElse(folder.folderKind(), "");
         String catalog = Objects.requireNonNullElse(folder.metadata(SchemaNode.META_CATALOG), "");
         String table = folder.metadata(SchemaNode.META_TABLE);
@@ -137,7 +148,7 @@ public final class SchemaIntrospectionService {
         };
     }
 
-    private static List<SchemaNode> tableFolders(Connection connection, SchemaNode table) throws SQLException {
+    private List<SchemaNode> tableFolders(Connection connection, SchemaNode table) throws SQLException {
         String catalog = Objects.requireNonNullElse(table.metadata(SchemaNode.META_CATALOG), "");
         String tableName = table.name();
         List<SchemaNode> columns = readColumns(connection, catalog, tableName);
@@ -157,15 +168,15 @@ public final class SchemaIntrospectionService {
                         .withChildren(indexes));
     }
 
-    private static List<SchemaNode> readKeyNodes(Connection connection, String catalog, String table)
+    private List<SchemaNode> readKeyNodes(Connection connection, String catalog, String table)
             throws SQLException {
         DatabaseMetaData metaData = connection.getMetaData();
         List<SchemaNode> keys = new ArrayList<>();
 
-        List<String> pkColumns = readPrimaryKeyColumns(metaData, catalog, null, table);
-        if (pkColumns.isEmpty()) {
-            pkColumns = readPrimaryKeyColumns(metaData, null, catalog, table);
-        }
+        List<String> pkColumns = metadataLayout.probe(
+                catalog,
+                (cat, sch) -> readPrimaryKeyColumns(metaData, cat, sch, table),
+                JdbcMetadataLayout::isEmpty);
         Map<String, String> shared = Map.of(
                 SchemaNode.META_CATALOG, catalog,
                 SchemaNode.META_TABLE, table);
@@ -173,23 +184,23 @@ public final class SchemaIntrospectionService {
             keys.add(SchemaNode.key("PRIMARY", "PRIMARY", pkColumns, shared));
         }
 
-        List<SchemaMetadataCodec.ForeignKey> foreignKeys = readForeignKeys(metaData, catalog, null, table);
-        if (foreignKeys.isEmpty()) {
-            foreignKeys = readForeignKeys(metaData, null, catalog, table);
-        }
+        List<SchemaMetadataCodec.ForeignKey> foreignKeys = metadataLayout.probe(
+                catalog,
+                (cat, sch) -> readForeignKeys(metaData, cat, sch, table),
+                JdbcMetadataLayout::isEmpty);
         for (SchemaMetadataCodec.ForeignKey fk : foreignKeys) {
             keys.add(SchemaNode.key(fk.name(), "FOREIGN", List.of(fk.fkColumn()), shared));
         }
         return List.copyOf(keys);
     }
 
-    private static List<SchemaNode> readIndexNodes(Connection connection, String catalog, String table)
+    private List<SchemaNode> readIndexNodes(Connection connection, String catalog, String table)
             throws SQLException {
         DatabaseMetaData metaData = connection.getMetaData();
-        List<SchemaMetadataCodec.IndexInfo> indexes = readIndexes(metaData, catalog, null, table);
-        if (indexes.isEmpty()) {
-            indexes = readIndexes(metaData, null, catalog, table);
-        }
+        List<SchemaMetadataCodec.IndexInfo> indexes = metadataLayout.probe(
+                catalog,
+                (cat, sch) -> readIndexes(metaData, cat, sch, table),
+                JdbcMetadataLayout::isEmpty);
         Map<String, String> shared = Map.of(
                 SchemaNode.META_CATALOG, catalog,
                 SchemaNode.META_TABLE, table);
@@ -285,7 +296,7 @@ public final class SchemaIntrospectionService {
 
     // ---------------------------------------------------------------- outline / enrich
 
-    private static List<SchemaNode> readSchemaOutline(Connection connection, String preferredCatalog)
+    private List<SchemaNode> readSchemaOutline(Connection connection, String preferredCatalog)
             throws SQLException {
         List<SchemaNode> databases = readDatabases(connection);
         SchemaNode preferred = findPreferred(databases, preferredCatalog);
@@ -305,7 +316,7 @@ public final class SchemaIntrospectionService {
         return List.copyOf(loaded);
     }
 
-    private static List<SchemaNode> readFullSchema(Connection connection, String preferredCatalog)
+    private List<SchemaNode> readFullSchema(Connection connection, String preferredCatalog)
             throws SQLException {
         List<SchemaNode> outline = readSchemaOutline(connection, preferredCatalog);
         SchemaNode preferred = findPreferred(outline, preferredCatalog);
@@ -320,7 +331,7 @@ public final class SchemaIntrospectionService {
         return List.copyOf(loaded);
     }
 
-    private static List<SchemaNode> readSecondarySchema(Connection connection, String preferredCatalog)
+    private List<SchemaNode> readSecondarySchema(Connection connection, String preferredCatalog)
             throws SQLException {
         if (preferredCatalog == null || preferredCatalog.isBlank()) {
             return List.of();
@@ -337,7 +348,7 @@ public final class SchemaIntrospectionService {
         return List.copyOf(loaded);
     }
 
-    private static SchemaNode loadOutlineChildren(Connection connection, SchemaNode database)
+    private SchemaNode loadOutlineChildren(Connection connection, SchemaNode database)
             throws SQLException {
         List<SchemaNode> children = new ArrayList<>();
         children.addAll(readTablesSafe(connection, database.name()));
@@ -357,7 +368,7 @@ public final class SchemaIntrospectionService {
         return null;
     }
 
-    private static List<SchemaNode> readTablesSafe(Connection connection, String catalog) {
+    private List<SchemaNode> readTablesSafe(Connection connection, String catalog) {
         try {
             return readTables(connection, catalog);
         } catch (SQLException ignored) {
@@ -370,7 +381,7 @@ public final class SchemaIntrospectionService {
      * indexes. System catalogs stay name-only. A single table's metadata failure
      * does not drop it from autocomplete.
      */
-    private static SchemaNode enrichCatalog(Connection connection, SchemaNode database) {
+    private SchemaNode enrichCatalog(Connection connection, SchemaNode database) {
         String catalog = database.name();
         if (isSystemCatalogName(catalog)) {
             return database;
@@ -420,7 +431,7 @@ public final class SchemaIntrospectionService {
 
     // ---------------------------------------------------------------- metadata reads
 
-    private static List<SchemaNode> readDatabases(Connection connection) throws SQLException {
+    private List<SchemaNode> readDatabases(Connection connection) throws SQLException {
         DatabaseMetaData metaData = connection.getMetaData();
 
         List<String> names = new ArrayList<>();
@@ -431,12 +442,17 @@ public final class SchemaIntrospectionService {
                 addIfPresent(names, resultSet.getString("TABLE_CAT"));
             }
         }
-        if (names.isEmpty()) {
+        if (!names.isEmpty()) {
+            metadataLayout.remember(JdbcMetadataLayout.Slot.CATALOG);
+        } else {
             type = NodeType.SCHEMA;
             try (ResultSet resultSet = metaData.getSchemas()) {
                 while (resultSet.next()) {
                     addIfPresent(names, resultSet.getString("TABLE_SCHEM"));
                 }
+            }
+            if (!names.isEmpty()) {
+                metadataLayout.remember(JdbcMetadataLayout.Slot.SCHEMA);
             }
         }
 
@@ -445,13 +461,13 @@ public final class SchemaIntrospectionService {
         return names.stream().map(name -> SchemaNode.of(name, nodeType)).toList();
     }
 
-    private static List<SchemaNode> readTables(Connection connection, String catalog) throws SQLException {
+    private List<SchemaNode> readTables(Connection connection, String catalog) throws SQLException {
         DatabaseMetaData metaData = connection.getMetaData();
 
-        List<SchemaNode> tables = readTables(metaData, catalog, null);
-        if (tables.isEmpty()) {
-            tables = readTables(metaData, null, catalog);
-        }
+        List<SchemaNode> tables = metadataLayout.read(
+                catalog,
+                (cat, sch) -> readTables(metaData, cat, sch),
+                JdbcMetadataLayout::isEmpty);
         tables.sort(Comparator.comparing(SchemaNode::name, BY_NAME));
         return List.copyOf(tables);
     }
@@ -462,13 +478,13 @@ public final class SchemaIntrospectionService {
      * {@code includeDdl} is false for bulk listing — {@code SHOW CREATE} per
      * routine is what made 1000+ procedures stall schema load.
      */
-    private static List<SchemaNode> readRoutines(Connection connection, String catalog, boolean includeDdl)
+    private List<SchemaNode> readRoutines(Connection connection, String catalog, boolean includeDdl)
             throws SQLException {
         DatabaseMetaData metaData = connection.getMetaData();
-        List<SchemaNode> routines = readRoutines(metaData, catalog, null);
-        if (routines.isEmpty()) {
-            routines = readRoutines(metaData, null, catalog);
-        }
+        List<SchemaNode> routines = metadataLayout.read(
+                catalog,
+                (cat, sch) -> readRoutines(metaData, cat, sch),
+                JdbcMetadataLayout::isEmpty);
         if (!includeDdl) {
             routines.sort(Comparator.comparing(SchemaNode::name, BY_NAME));
             return List.copyOf(routines);
@@ -727,14 +743,14 @@ public final class SchemaIntrospectionService {
         return tables;
     }
 
-    private static List<SchemaNode> readColumns(Connection connection, String catalog, String table)
+    private List<SchemaNode> readColumns(Connection connection, String catalog, String table)
             throws SQLException {
         DatabaseMetaData metaData = connection.getMetaData();
 
-        List<PositionedColumn> columns = readColumns(metaData, catalog, null, table);
-        if (columns.isEmpty()) {
-            columns = readColumns(metaData, null, catalog, table);
-        }
+        List<PositionedColumn> columns = metadataLayout.read(
+                catalog,
+                (cat, sch) -> readColumns(metaData, cat, sch, table),
+                JdbcMetadataLayout::isEmpty);
         columns.sort(Comparator.comparingInt(PositionedColumn::position));
         return columns.stream().map(PositionedColumn::node).toList();
     }
@@ -744,13 +760,13 @@ public final class SchemaIntrospectionService {
      * call, keyed by lower-cased table name. Empty when the driver rejects a
      * wildcard table pattern — callers then fall back to per-table reads.
      */
-    private static Map<String, List<SchemaNode>> readAllColumnsGrouped(Connection connection, String catalog) {
+    private Map<String, List<SchemaNode>> readAllColumnsGrouped(Connection connection, String catalog) {
         try {
             DatabaseMetaData metaData = connection.getMetaData();
-            Map<String, List<PositionedColumn>> grouped = readAllColumnsGrouped(metaData, catalog, null);
-            if (grouped.isEmpty()) {
-                grouped = readAllColumnsGrouped(metaData, null, catalog);
-            }
+            Map<String, List<PositionedColumn>> grouped = metadataLayout.read(
+                    catalog,
+                    (cat, sch) -> readAllColumnsGrouped(metaData, cat, sch),
+                    JdbcMetadataLayout::isEmpty);
             Map<String, List<SchemaNode>> columns = new LinkedHashMap<>();
             for (Map.Entry<String, List<PositionedColumn>> entry : grouped.entrySet()) {
                 List<PositionedColumn> positioned = new ArrayList<>(entry.getValue());
@@ -803,13 +819,13 @@ public final class SchemaIntrospectionService {
         return new PositionedColumn(SchemaNode.of(name, NodeType.COLUMN, metadata), position);
     }
 
-    private static List<SchemaNode> withPrimaryKeys(
+    private List<SchemaNode> withPrimaryKeys(
             Connection connection, String catalog, String table, List<SchemaNode> columns) throws SQLException {
         DatabaseMetaData metaData = connection.getMetaData();
-        Set<String> primaryKeys = readPrimaryKeys(metaData, catalog, null, table);
-        if (primaryKeys.isEmpty()) {
-            primaryKeys = readPrimaryKeys(metaData, null, catalog, table);
-        }
+        Set<String> primaryKeys = metadataLayout.probe(
+                catalog,
+                (cat, sch) -> readPrimaryKeys(metaData, cat, sch, table),
+                JdbcMetadataLayout::isEmpty);
         if (primaryKeys.isEmpty()) {
             return columns;
         }
@@ -833,20 +849,20 @@ public final class SchemaIntrospectionService {
         return List.copyOf(updated);
     }
 
-    private static SchemaNode readTableDetails(Connection connection, String catalog, String table)
+    private SchemaNode readTableDetails(Connection connection, String catalog, String table)
             throws SQLException {
         DatabaseMetaData metaData = connection.getMetaData();
-        List<SchemaNode> matches = readTables(metaData, catalog, null, table);
-        if (matches.isEmpty()) {
-            matches = readTables(metaData, null, catalog, table);
-        }
+        List<SchemaNode> matches = metadataLayout.read(
+                catalog,
+                (cat, sch) -> readTables(metaData, cat, sch, table),
+                JdbcMetadataLayout::isEmpty);
         SchemaNode base = matches.isEmpty()
                 ? SchemaNode.of(table, NodeType.TABLE, Map.of(SchemaNode.META_CATALOG, catalog))
                 : matches.getFirst();
         return readTableDetails(connection, catalog, table, base, List.of());
     }
 
-    private static SchemaNode readTableDetails(
+    private SchemaNode readTableDetails(
             Connection connection,
             String catalog,
             String table,
@@ -858,15 +874,15 @@ public final class SchemaIntrospectionService {
                 ? withPrimaryKeys(connection, catalog, table, preloadedColumns)
                 : readColumns(connection, catalog, table);
 
-        List<SchemaMetadataCodec.ForeignKey> foreignKeys = readForeignKeys(metaData, catalog, null, table);
-        if (foreignKeys.isEmpty()) {
-            foreignKeys = readForeignKeys(metaData, null, catalog, table);
-        }
+        List<SchemaMetadataCodec.ForeignKey> foreignKeys = metadataLayout.probe(
+                catalog,
+                (cat, sch) -> readForeignKeys(metaData, cat, sch, table),
+                JdbcMetadataLayout::isEmpty);
 
-        List<SchemaMetadataCodec.IndexInfo> indexes = readIndexes(metaData, catalog, null, table);
-        if (indexes.isEmpty()) {
-            indexes = readIndexes(metaData, null, catalog, table);
-        }
+        List<SchemaMetadataCodec.IndexInfo> indexes = metadataLayout.probe(
+                catalog,
+                (cat, sch) -> readIndexes(metaData, cat, sch, table),
+                JdbcMetadataLayout::isEmpty);
 
         Map<String, String> metadata = new LinkedHashMap<>(base.metadata());
         metadata.put(SchemaNode.META_CATALOG, Objects.requireNonNullElse(

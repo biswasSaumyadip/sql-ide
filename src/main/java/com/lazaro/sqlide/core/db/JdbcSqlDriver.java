@@ -130,6 +130,7 @@ public final class JdbcSqlDriver implements DataSourceDriver {
         config = null;
         activeCatalog = null;
         autoCommit = true;
+        introspection.resetMetadataLayout();
         if (current != null && !current.isClosed()) {
             current.close();
         }
