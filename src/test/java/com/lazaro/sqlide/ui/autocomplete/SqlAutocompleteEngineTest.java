@@ -367,8 +367,11 @@ class SqlAutocompleteEngineTest {
     void suggestsSchemas() {
         List<Suggestion> afterUse = suggest("USE ");
         assertTrue(afterUse.stream().anyMatch(s -> s.kind() == Kind.SCHEMA && s.insertText().equals("app")));
+        assertTrue(afterUse.stream().noneMatch(s -> s.kind() == Kind.TABLE || s.kind() == Kind.VIEW),
+                "USE must not list tables: " + afterUse);
         List<Suggestion> afterFrom = suggest("SELECT * FROM ");
         assertTrue(afterFrom.stream().anyMatch(s -> s.kind() == Kind.SCHEMA && s.insertText().equals("app")));
+        assertTrue(afterFrom.stream().anyMatch(s -> s.kind() == Kind.TABLE && s.insertText().equals("users")));
     }
 
     @Test

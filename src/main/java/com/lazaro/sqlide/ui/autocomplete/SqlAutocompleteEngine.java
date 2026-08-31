@@ -124,7 +124,7 @@ public final class SqlAutocompleteEngine {
 
     private static final Set<String> TABLE_CONTEXTS = Set.of(
             "FROM", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "OUTER", "CROSS",
-            "UPDATE", "INTO", "TABLE", "TRUNCATE", "USE");
+            "UPDATE", "INTO", "TABLE", "TRUNCATE");
     private static final Set<String> COLUMN_CONTEXTS = Set.of(
             "SELECT", "WHERE", "HAVING", "ON", "AND", "OR", "SET", "BY", "WHEN", "RETURNING");
     private static final Set<String> JOIN_KEYWORDS = Set.of(
@@ -274,9 +274,7 @@ public final class SqlAutocompleteEngine {
         }
 
         if (SCHEMA_CONTEXTS.contains(previousUpper)) {
-            List<Suggestion> out = new ArrayList<>(schemaSuggestions(prefix, replaceStart, caret));
-            out.addAll(tableSuggestions(prefix, replaceStart, caret, scope));
-            return rank(out);
+            return rank(schemaSuggestions(prefix, replaceStart, caret));
         }
 
         if (INDEX_CONTEXTS.contains(previousUpper) && cache.isReady()) {
