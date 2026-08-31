@@ -93,7 +93,7 @@ public final class ResultToolbar extends HBox {
         }
     }
 
-    private final MenuButton exportButton = new MenuButton("Export", Icons.export());
+    private final MenuButton exportButton = new MenuButton();
     private final Button copyButton = new Button();
     private final ToggleButton findButton = new ToggleButton();
     private final ToggleButton columnFilterButton = new ToggleButton();
@@ -146,8 +146,9 @@ public final class ResultToolbar extends HBox {
         setPadding(new Insets(3, 8, 0, 8));
 
         buildExportMenu();
+        exportButton.setGraphic(Icons.export());
         exportButton.getStyleClass().addAll(Styles.FLAT, "result-toolbar-button", "export-menu-button");
-        exportButton.setGraphicTextGap(4);
+        exportButton.setGraphicTextGap(0);
         exportButton.setTooltip(new Tooltip("Export results (Ctrl+Shift+C / Ctrl+Shift+X)"));
 
         copyButton.setGraphic(Icons.copy());

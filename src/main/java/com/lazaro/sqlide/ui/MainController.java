@@ -56,6 +56,8 @@ import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ChoiceDialog;
+import javafx.scene.control.MenuButton;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.Separator;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.Tab;
@@ -131,8 +133,7 @@ public final class MainController {
 
     private Button runButton;
     private Button stopButton;
-    private Button explainButton;
-    private Button explainAnalyzeButton;
+    private MenuButton explainButton;
     private ToggleButton autoCommitToggle;
     private Button beginButton;
     private Button commitButton;
@@ -296,10 +297,7 @@ public final class MainController {
         runButton.getStyleClass().add("run-button");
         stopButton = labelledButton(Icons.stop(), "Stop", "Cancel running query (Ctrl+Break)", this::cancelQuery);
         stopButton.getStyleClass().add("stop-button");
-        explainButton = iconButton(Icons.explain(), "EXPLAIN selected statement (Ctrl+Shift+E)",
-                () -> runExplain(false));
-        explainAnalyzeButton = labelledButton(Icons.explain(), "Analyze",
-                "EXPLAIN ANALYZE selected statement (Ctrl+Shift+A)", () -> runExplain(true));
+        explainButton = explainMenu();
 
         autoCommitToggle = new ToggleButton("Auto-commit");
         autoCommitToggle.getStyleClass().add("toolbar-toggle");
@@ -324,7 +322,7 @@ public final class MainController {
                 connectButton, disconnectButton, refreshButton,
                 compareStructureButton, compareDataButton,
                 separator(),
-                runButton, stopButton, explainButton, explainAnalyzeButton,
+                runButton, stopButton, explainButton,
                 separator(),
                 autoCommitToggle, beginButton, commitButton, rollbackButton,
                 spacer,
@@ -2033,7 +2031,6 @@ public final class MainController {
         runButton.setDisable(!connected || busy);
         stopButton.setDisable(!busy || cancelling);
         explainButton.setDisable(!connected || busy || redis);
-        explainAnalyzeButton.setDisable(!connected || busy || redis);
         connectButton.setDisable(busy);
         disconnectButton.setDisable(!connected || busy);
         refreshButton.setDisable(!connected || busy);
@@ -2102,6 +2099,19 @@ public final class MainController {
     private static void consumeAnd(KeyEvent event, Runnable action) {
         event.consume();
         action.run();
+    }
+
+    private MenuButton explainMenu() {
+        MenuButton menu = new MenuButton();
+        menu.setGraphic(Icons.explain());
+        menu.getStyleClass().addAll("icon-button", "explain-menu-button");
+        menu.setTooltip(new Tooltip("EXPLAIN (Ctrl+Shift+E) / EXPLAIN ANALYZE (Ctrl+Shift+A)"));
+        MenuItem explain = new MenuItem("Explain");
+        explain.setOnAction(event -> runExplain(false));
+        MenuItem analyze = new MenuItem("Explain Analyze");
+        analyze.setOnAction(event -> runExplain(true));
+        menu.getItems().setAll(explain, analyze);
+        return menu;
     }
 
     private static Button iconButton(Node icon, String tooltip, Runnable action) {

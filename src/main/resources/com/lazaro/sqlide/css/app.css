@@ -61,6 +61,30 @@
     -fx-opacity: 0.38;
 }
 
+.explain-menu-button {
+    -fx-padding: 2px 2px 2px 6px;
+    -fx-min-width: 0;
+    -fx-graphic-text-gap: 0;
+}
+
+.explain-menu-button > .label {
+    -fx-padding: 0 2px 0 0;
+    -fx-min-width: 0;
+}
+
+.explain-menu-button > .arrow-button {
+    -fx-padding: 0 4px 0 0;
+    -fx-background-color: transparent;
+}
+
+.explain-menu-button > .arrow-button > .arrow {
+    -fx-background-color: #8b93a1;
+    -fx-shape: "M 0 0 L 4 4 L 8 0 Z";
+    -fx-scale-shape: true;
+    -fx-pref-width: 7px;
+    -fx-pref-height: 4px;
+}
+
 .run-button {
     -fx-font-weight: bold;
 }
@@ -338,12 +362,19 @@
 }
 
 .export-menu-button {
-    -fx-padding: 2px 6px;
-    -fx-graphic-text-gap: 4px;
+    -fx-padding: 2px 2px 2px 4px;
+    -fx-min-width: 0;
+    -fx-graphic-text-gap: 0;
+}
+
+.export-menu-button > .label {
+    -fx-padding: 0 2px 0 0;
+    -fx-min-width: 0;
 }
 
 .export-menu-button > .arrow-button {
-    -fx-padding: 0 2px 0 2px;
+    -fx-padding: 0 4px 0 0;
+    -fx-min-width: 0;
 }
 
 .icon-clear {
