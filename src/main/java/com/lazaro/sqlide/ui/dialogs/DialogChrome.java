@@ -79,10 +79,15 @@ final class DialogChrome {
         Button close = windowButton("\u00D7", "dialog-window-close", "Close");
         close.setOnAction(event -> {
             Node cancel = dialog.getDialogPane().lookupButton(ButtonType.CANCEL);
-            if (cancel instanceof Button button) {
-                button.fire();
+            if (cancel instanceof Button cancelButton && cancelButton.getScene() != null) {
+                ((Stage) cancelButton.getScene().getWindow()).close();
             } else {
-                dialog.hide();
+                Stage stage = stage();
+                if (stage != null) {
+                    stage.close();
+                } else {
+                    dialog.hide();
+                }
             }
         });
 

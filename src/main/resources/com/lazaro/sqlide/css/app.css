@@ -2204,13 +2204,18 @@
 }
 
 .import-mapping-source {
-    -fx-text-fill: #d6d9de;
+    -fx-text-fill: #cccccc;
     -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
     -fx-font-size: 12px;
 }
 
 .import-wizard-button {
-    -fx-padding: 4 12 4 12;
+    -fx-padding: 6 14 6 14;
+    -fx-background-color: #365880;
+    -fx-text-fill: #ffffff;
+    -fx-border-color: #4a6f9d;
+    -fx-border-radius: 4px;
+    -fx-background-radius: 4px;
 }
 
 .transfer-data-dialog {

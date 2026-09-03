@@ -22,6 +22,7 @@ public record TransferRequest(
         String targetTable,
         Map<String, String> columnMapping,
         boolean truncateTarget,
+        boolean createTargetIfMissing,
         ErrorHandling errorHandling,
         int batchSize,
         long expectedRowCount

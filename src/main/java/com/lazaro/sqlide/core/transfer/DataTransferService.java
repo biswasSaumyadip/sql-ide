@@ -69,6 +69,7 @@ public final class DataTransferService {
                     request.targetTable(),
                     request.columnMapping(),
                     request.truncateTarget(),
+                    request.createTargetIfMissing(),
                     request.errorHandling(),
                     request.batchSize(),
                     totalHint);
